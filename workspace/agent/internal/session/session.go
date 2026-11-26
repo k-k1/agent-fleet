@@ -392,12 +392,12 @@ type Session struct {
 	// the older of the first poll that observed the state (in memory, resets when the Agent
 	// restarts) and, for hook kinds, the status file's mtime. "" = not busy.
 	StateSince string `json:"stateSince,omitempty"`
-	// RateLimitResumeAt is set ONLY when State == agents.StateLimited: the time (RFC3339) of
-	// the scheduled automatic resume. Empty = stopped at the limit with no resume armed
-	// (auto-resume off, nothing to derive the reset time from, or a per-model limit —
-	// docs/log/47 §4-5). Display only, so the chip can say when it will move again; the
-	// waiting itself belongs to the CP's scheduled execution.
+	// RateLimitResumeAt is the automatic resume time (RFC3339) of a current window limit.
+	// It can survive a stop when the scheduler has a booking.
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
+	// StoppedLimit is the confirmed limit kind ("limited" or "spend_limit") of a stopped
+	// session. State and Alive retain their stopped-row values.
+	StoppedLimit string `json:"stoppedLimit,omitempty"`
 	// ForkAtTerminal: a Terminal (CLI) session that can still fork from a past message, because
 	// its kind forks through an API this launch route reaches (opencode 2 on af's shared serve).
 	// The Console offers "fork from here" on a Terminal session only when it is set; managed

@@ -99,6 +99,17 @@ const handoffChip = (idle: boolean): StateInfo => ({
   short: t("state.handoff_short"),
 });
 
+// An older Agent can confirm a stopped window limit by reporting a future booking alone.
+export function usageLimitState(
+  s: Pick<Session, "alive" | "state" | "rateLimitResumeAt" | "stoppedLimit">,
+  state = s.state,
+  now = Date.now(),
+): "limited" | "spend_limit" | undefined {
+  if (state === "limited" || state === "spend_limit") return state;
+  if (s.alive || (state && state !== "stopped")) return undefined;
+  return s.stoppedLimit ?? (Date.parse(s.rateLimitResumeAt ?? "") > now ? "limited" : undefined);
+}
+
 // resumeClock renders a reserved resume instant for the rate-limited chip: "19:50",
 // or "08/20 07:15" when it is not today (a weekly window can land days out, and a bare
 // time would then read as "in a few minutes"). "" for absent/unparsable input — the

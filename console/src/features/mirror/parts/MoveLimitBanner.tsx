@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { usageLimitState } from "../../../lib/sessionview.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { useInterval } from "../../../lib/useInterval.ts";
 import { agentOf } from "../../../agents/registry.ts";
@@ -18,16 +19,13 @@ import { useConnectedKinds, useMoveUsage } from "../../sessions/moveHooks.ts";
 import { useSessionUI } from "../../sessions/ui.ts";
 import type { Session } from "../../../types/session.ts";
 
-/** The states the Agent reports for a usage limit; the second one a wait does not clear. */
-export const isLimitState = (state?: string): boolean => state === "limited" || state === "spend_limit";
-
 /** How often an open band re-reads the preview and the usage; a limit lasts hours, so this is slow. */
 const REFRESH_MS = 60_000;
 
 export function MoveLimitBanner({ session, state, running }: { session?: Session | null; state?: string; running: boolean }) {
   // A moving or moved source refuses every start; its dialog (retry, cancel, resume anyway) is
   // reached from the row, not from a limit it is no longer waiting on.
-  const open = !!session && isLimitState(state) && running && agentOf(session.kind).caps.transcript && !session.moving && !session.movedTo;
+  const open = !!session && usageLimitState(session, state) && running && agentOf(session.kind).caps.transcript && !session.moving && !session.movedTo;
   // Keyed by the source: switching to another limited session starts from nothing, so the
   // previous one's preview and usage never speak for it. Split so that the reads (preview, connections, usage) exist only while a limit is showing.
   return open ? <LimitBand key={session.name} session={session} /> : null;
