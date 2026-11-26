@@ -204,6 +204,11 @@ interface LaunchSeedStore {
 	 *  acceptance is declared only once the launch succeeds — a cancelled launch must not be
 	 *  recorded as accepted, so, like handoffId, it cannot be declared when the seed is set. */
 	handoffOfferId: string;
+	/** The launch starts in a new space of the member's own, in a dialog of its own: a handoff
+	 *  from a session that ran in the sender's space has no repository to open it in. Set by
+	 *  setNewSpace after set() (which clears it), read by StartHost. */
+	newSpace: boolean;
+	setNewSpace(on: boolean): void;
 	/** The work item (docs/log/80) this launch came from. Held so the ledger gets its row only
 	 *  AFTER the launch succeeds — same reason as handoffOfferId: seeding must not claim the
 	 *  work was started, since the dialog can still be cancelled. `branch` is the Console's own
@@ -241,6 +246,8 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	handoffSession: "",
 	handoffId: "",
 	handoffOfferId: "",
+	newSpace: false,
+	setNewSpace: (newSpace) => set({ newSpace }),
 	workItem: null,
 	inboxItemId: "",
 	inboxMemoId: "",
@@ -253,10 +260,10 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	// set() drops inboxItemId: a seed left over from a cancelled inbox launch must not send an
 	// unrelated launch through the request route. The inbox calls setInboxItem after set().
 	set: (prompt, title = "", handoffSession = "", handoffId = "", handoffOfferId = "", workItem = null) =>
-		set({ prompt, title, handoffSession, handoffId, handoffOfferId, workItem, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", onLaunched: null }),
+		set({ prompt, title, handoffSession, handoffId, handoffOfferId, newSpace: false, workItem, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", onLaunched: null }),
 	setInboxItem: (inboxItemId) => set({ inboxItemId }),
 	setInboxMemo: (inboxMemoId) => set({ inboxMemoId }),
-	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", workItem: null, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", onLaunched: null }),
+	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", newSpace: false, workItem: null, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", onLaunched: null }),
 }));
 
 /** Poll every 60s while the tab is visible AND the workspace is running, so the

@@ -597,6 +597,7 @@ export const sessions = {
   "launch.history": "履歴",
   "launch.title": "作業を始める: {repo}",
   "launch.title_home": "作業を始める: ホーム",
+  "launch.title_new_space": "作業を始める: 新しいスペース",
   // エージェント一覧が空のときの説明。接続確認は各CLIの認証チェックを実際に叩くため
   // 1〜2秒かかる。その間と、確認が失敗/未認証だった場合とを区別して出す。
   "launch.agents_checking": "エージェントの接続を確認中…",
@@ -957,6 +958,8 @@ export const sessions = {
   "handoff.push_failed": "push が拒否されたため、引き継ぎは送っていません。git の報告:",
   "handoff.pushing": "push 中…",
   "handoff.ack_dirty": "未コミットの変更は引き継がれないことを承知のうえで送る",
+  "handoff.space_hint": "このセッションはスペースで動いています。スペースのファイルと、セッションの添付ファイルはあなたのホームに残ります。相手に届くのは引き継ぎの文章だけで、相手は自分の新しいスペースで始めます。",
+  "handoff.ack_space": "スペースのファイルは引き継がれないことを承知のうえで送る",
   "handoff.frozen_hint": "送ったあとに手元の引き継ぎ案を編集しても、相手に届いた内容は変わりません（変えるには取り下げて送り直します）。",
   "handoff.not_shared": "このセッションはまだ誰にも共有されていません。引き継げるのは、このセッションを共有している相手だけです。先に共有してください。",
   "handoff.share_first": "このセッションを共有する",
@@ -986,6 +989,8 @@ export const sessions = {
   "handoff.accept_repo": "作業コピー",
   "handoff.accept_no_repo": "作業コピーを選んでください。",
   "handoff.accept_no_repo_hint": "このワークスペースにはまだ作業コピーがありません。引き継ぎ元のリポジトリを取り込んでから受け取ってください。",
+  "handoff.space_offer_hint": "この引き継ぎはスペースからのものです。{who}さんのスペースにあるファイルや添付ファイルは相手のホームに残るため、届くのは上の文章だけです。受け取ると、あなたの新しいスペースで始まります。",
+  "handoff.space_unsupported": "このワークスペースの Agent は古く、スペースでは始められません。ワークスペースを停止して起動し直してから、もう一度受け取ってください。",
   "handoff.accept_cost_hint": "受け取ると、あなたのワークスペースで新しいセッションが始まります（費用もあなたに付きます）。",
   "handoff.decline": "辞退する",
   "handoff.row_badge": "引き継ぎが届いています",

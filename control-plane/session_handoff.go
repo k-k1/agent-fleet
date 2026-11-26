@@ -155,7 +155,7 @@ type handoffOfferWire struct {
 }
 
 // handoffOfferInboxWire is one entry of the recipient's inbox: the base form plus three
-// keys, 21 in all with every optional key. The three cannot be optional fields on the base type —
+// keys, 22 in all with every optional key. The three cannot be optional fields on the base type —
 // ownerUserKey is "" when the member is unknown and prompt is "" when the ciphertext cannot be
 // opened, and both still have to appear — so they are added by embedding, which JSON flattens.
 //
@@ -163,7 +163,7 @@ type handoffOfferWire struct {
 //
 // The effective JSON names of the base and the three additions must not collide:
 // encoding/json emits neither side of a collision, so a key would vanish silently. The
-// equivalence test catches that, and the counts 15 / 21 (optional keys set) are pinned
+// equivalence test catches that, and the counts 15 / 22 (optional keys set) are pinned
 // separately.
 type handoffOfferInboxWire struct {
 	handoffOfferWire
@@ -178,6 +178,10 @@ type handoffOfferInboxWire struct {
 	// still holds it after an unshare or archive (ListReceivedSessionHandoffOffers): it
 	// carries no body or coordinates, and nothing launches from it.
 	RecoveryOnly bool `json:"recoveryOnly,omitempty"`
+	// SourceSpace marks an offer from a session that ran in a space (#5233): the sender's files
+	// and attachments stay in their home, and the Console starts the launch in a new space of
+	// the recipient's own instead of asking for a repository. Absent for a repository handoff.
+	SourceSpace bool `json:"sourceSpace,omitempty"`
 	// OwnerEmail names the sender the way the recipient's shared-sessions list does (ownerEmail
 	// there too), absent when unknown; the Console falls back to ownerUserKey.
 	OwnerEmail string `json:"ownerEmail,omitempty"`
@@ -598,6 +602,7 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 		OwnerMembershipID: res.mv.MembershipID, RecipientMembershipID: recipient.MembershipID,
 		Title: in.Title, Ciphertext: ct, KeyRef: kr,
 		RepoRemote: stripURLUserinfo(str("remote")), Branch: str("branch"), HeadSha: str("headSha"),
+		SourceSpace:       hctx["space"] == true,
 		SourceSessionName: c.Name, SourceSessionKind: c.Kind, Status: "pending",
 		CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(handoffOfferTTL).Format(time.RFC3339),
 	}
@@ -665,6 +670,7 @@ func (a sessionHandoffAPI) listReceived(w http.ResponseWriter, r *http.Request, 
 			SourceSessionKind: o.SourceSessionKind,
 			TakeRev:           rev,
 			RecoveryOnly:      row.RecoveryOnly,
+			SourceSpace:       o.SourceSpace && !row.RecoveryOnly,
 			OwnerEmail:        members[o.OwnerMembershipID].Email,
 		}
 		if row.RecoveryOnly {

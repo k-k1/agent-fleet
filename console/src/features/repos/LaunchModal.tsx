@@ -194,6 +194,10 @@ interface LaunchModalProps {
    * `repo` is "" and the location tier is a fixed note instead of worktree / branch / subdir
    * pickers. Never combined with a worktree: the launch always sends worktree=false, subdir="". */
   home?: boolean;
+  /** A repo-less launch in a new space of the member's own, as a dialog of its own (a handoff
+   *  from a member's space has no repository to start in). The hub's space section is
+   *  `SpaceLaunchForm`; this keeps the dialog's prompt box and sends `space: { name: "" }`. */
+  newSpace?: boolean;
   onClose: () => void;
   /** Present when opened from the Start hub: the back action returns to it. */
   onBack?: () => void;
@@ -265,12 +269,12 @@ export function LaunchModal(props: LaunchModalProps) {
   // location): every field, draft and resolved branch name belongs to the target it was opened
   // for. The Modal around it is not — remounting it in the same commit costs its back-button
   // guard (see StartHost).
-  const target = [props.home ? "home" : "", repo, workItem?.provider ?? "", workItem?.key ?? "", props.initialExistingBranch ?? "", String(props.initialWorktree ?? "")].join("\u0000");
+  const target = [props.home ? "home" : "", props.newSpace ? "space" : "", repo, workItem?.provider ?? "", workItem?.key ?? "", props.initialExistingBranch ?? "", String(props.initialWorktree ?? "")].join("\u0000");
   return (
     <Modal
       title={
         <>
-          <Icon name="play" /> {props.home ? tr("launch.title_home") : tr("launch.title", { repo })}
+          <Icon name="play" /> {props.home ? tr("launch.title_home") : props.newSpace ? tr("launch.title_new_space") : tr("launch.title", { repo })}
         </>
       }
       onClose={onClose}
@@ -327,10 +331,12 @@ function useNarrowLaunchLabel(): boolean {
   return narrow;
 }
 
-function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef }: LaunchModalProps & FormExtras) {
+function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, newSpace = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef }: LaunchModalProps & FormExtras) {
   const settings = useSettings();
   // Neither home nor a space has a working copy: no templates file, skills, subdir or worktree.
-  const repoLess = home || space;
+  const repoLess = home || space || newSpace;
+  // A launch that starts in a new space, whether from the hub's section or as this dialog.
+  const spaceLaunch = space || newSpace;
   // Without a confirmed catalogue nothing is offered, whatever the caller listed.
   const kinds = useMemo(() => (access.kinds ? offeredKinds : []), [access.kinds, offeredKinds]);
   const last = readRepoLast(repo);
@@ -375,7 +381,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     if (fresh && !own.has("startMode")) setStartMode(resolveStartMode(k, repo, d.startMode));
     if (!own.has("perm")) setSkipPerm(tenantSkipPerm(uiState, k, settings));
     if (fresh && !own.has("route")) setRoute("");
-    if (!own.has("driver")) setDriverPick(space ? null : tenantDriver(uiState, k));
+    if (!own.has("driver")) setDriverPick(spaceLaunch ? null : tenantDriver(uiState, k));
     if (!own.has("budget")) setBudget(tenantBudget(uiState, k, settings));
   };
   // The member picked kind k: that is their choice, and what depended on the old kind starts over.
@@ -429,7 +435,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   useKindCatalogVersion();
   // A space launches managed wherever the harness has a managed driver (ADR 0142 decision 8), so
   // the tenant's and the member's driver default is not applied there; Details can still change it.
-  const [driverPick, setDriverPick] = useState<string | null>(() => (space ? null : tenantDriver(uiState, initialKind)));
+  const [driverPick, setDriverPick] = useState<string | null>(() => (spaceLaunch ? null : tenantDriver(uiState, initialKind)));
   // A managed-only kind has no Terminal choice, whatever a default or the catalog said earlier.
   const driver = agentOf(kind).managedDriver && agentOf(kind).terminalDriver === false ? "managed" : (driverPick ?? (agentOf(kind).managedDriver ? "managed" : ""));
   // The CP's answer, or the kinds list, can arrive after the dialog opened: fill in only what the
@@ -1040,7 +1046,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       useExisting,
       spendCapUsd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : undefined,
       // An existing space is named by its folder alone; the Agent refuses a name with one.
-      space: space ? (folder ? { folder, ...(place === "here" ? { allow_busy: true } : {}) } : { name: spaceName.trim() }) : undefined,
+      space: spaceLaunch ? (folder ? { folder, ...(place === "here" ? { allow_busy: true } : {}) } : { name: spaceName.trim() }) : undefined,
     }).catch(() => {
       noAnswer = true;
       return { ok: false };
@@ -1097,7 +1103,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   const runWith = kinds.length ? [kindDisplayName(kind), modelShown].filter(Boolean).join(" · ") : "";
   // The tooltip always carries the full sentence, whichever label the button shows.
   const fullLabel = runWith
-    ? tr(space ? (spaceFolder ? "start.space_launch_existing_with" : "start.space_launch_with") : worktree ? "launch.start_worktree_with" : "launch.start_with", { what: runWith })
+    ? tr(spaceLaunch ? (spaceFolder ? "start.space_launch_existing_with" : "start.space_launch_with") : worktree ? "launch.start_worktree_with" : "launch.start_with", { what: runWith })
     : undefined;
   const [policyErr, setPolicyErr] = useState<PolicyRefusal | null>(null);
   const [launchUnknown, setLaunchUnknown] = useState(false);
@@ -1436,7 +1442,14 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         {/* Location: an isolated worktree (the default) or directly in this copy. A worktree
             row has no choice (it launches inside that worktree), so it is a one-line note
             rather than a collapsible section. */}
-        {home ? (
+        {newSpace ? (
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.location")}</span>
+            <span className="ui-field-hint">
+              <Trans k="start.space_note" components={[<code />]} />
+            </span>
+          </div>
+        ) : home ? (
           <div className="ui-field">
             <span className="ui-field-label">{tr("launch.field.location")}</span>
             <span className="ui-field-hint">

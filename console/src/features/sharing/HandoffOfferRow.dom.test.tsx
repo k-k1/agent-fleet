@@ -14,16 +14,17 @@ import { answerConfirm, confirmDialog } from "../../test/confirmDialog.ts";
 import type { HandoffOffer } from "./handoffStore.ts";
 
 const apiJSON = vi.fn();
+const apiGet = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ offers: [] }));
 vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
-  return { ...real, apiJSON: (...a: unknown[]) => apiJSON(...a), api: vi.fn(async () => ({ offers: [] })) };
+  return { ...real, apiJSON: (...a: unknown[]) => apiJSON(...a), api: (...a: unknown[]) => apiGet(...a) };
 });
 vi.mock("../repos/useRepoRail.ts", () => ({ useRepoRailContext: () => ({ access: { kinds: { get: (k: string) => ({ kind: k }), has: () => true }, noRoute: false, allOff: false, refresh: () => {} }, launchKinds: ["claude"], connsSettling: false }) }));
 vi.mock("../repos/StartModal.tsx", () => ({ StartModal: () => null }));
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 vi.mock("../repos/LaunchModal.tsx", () => ({
-  LaunchModal: (p: { repo: string; branch?: string; initialPrompt?: string }) => (
-    <div data-testid="launch-dialog">
+  LaunchModal: (p: { repo: string; branch?: string; initialPrompt?: string; newSpace?: boolean }) => (
+    <div data-testid="launch-dialog" data-new-space={String(!!p.newSpace)}>
       {p.repo}|{p.branch}|{p.initialPrompt}
     </div>
   ),
@@ -68,6 +69,8 @@ const acceptButton = () =>
 
 beforeEach(() => {
   apiJSON.mockReset();
+  apiGet.mockReset();
+  apiGet.mockImplementation(async () => ({ offers: [] }));
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -112,6 +115,44 @@ describe("the received handoff row", () => {
     expect(useLaunchSeed.getState().handoffOfferId).toBe("offer-1");
     // Opening the dialog must not hold the offer: a cancelled dialog leaves it pending.
     expect(apiJSON).not.toHaveBeenCalled();
+  });
+
+  // #5233: a handoff from a session that ran in the sender's space has no repository.
+  describe("an offer from a space", () => {
+    const fromSpace: HandoffOffer = { ...offer, branch: "", repoRemote: "", headSha: "", sourceSpace: true };
+
+    it("says the sender's files stay behind and offers no working copy to pick", async () => {
+      await render([{ name: "private", path: "/r/private" }], false, fromSpace);
+      expect(host.textContent).toContain(t("handoff.space_offer_hint", { who: "alice" }));
+      expect(select()).toBeNull();
+      expect(host.textContent).not.toContain(t("handoff.accept_no_repo_hint"));
+      expect(acceptButton().disabled).toBe(false);
+    });
+
+    it("can be accepted with no working copy at all", async () => {
+      await render([], false, fromSpace);
+      expect(host.textContent).not.toContain(t("handoff.accept_no_repo_hint"));
+      expect(acceptButton().disabled).toBe(false);
+    });
+
+    it("opens the new-space dialog on accept, seeded with the text, and takes nothing yet", async () => {
+      await render([{ name: "private", path: "/r/private" }], true, fromSpace);
+      await act(async () => acceptButton().click());
+      const dialog = document.querySelector("[data-testid=launch-dialog]") as HTMLElement | null;
+      expect(dialog?.dataset.newSpace).toBe("true");
+      expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-1", prompt: "Continue the work.", title: "Carry on", newSpace: true });
+      expect(useLaunchTarget.getState().target).toBeNull();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("starts nothing and says so when the Agent is too old to start in a space", async () => {
+      apiGet.mockImplementation(async () => ({ error: { status: 404, code: "http_404", message: "not found" } }));
+      await render([], true, fromSpace);
+      await act(async () => acceptButton().click());
+      expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
+      expect(useLaunchSeed.getState().newSpace).toBe(false);
+      expect(document.body.textContent).toContain(t("handoff.space_unsupported"));
+    });
   });
 
   // #2058: a launch whose result stays unknown can be given back, by the recipient only, after a

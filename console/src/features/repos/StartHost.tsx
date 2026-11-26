@@ -40,6 +40,7 @@ export function StartHost() {
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
+  const seedNewSpace = useLaunchSeed((s) => s.newSpace);
   // A launch that came from a work item (docs/log/80). The ledger is written only AFTER the
   // launch succeeded.
   const seedWorkItem = useLaunchSeed((s) => s.workItem);
@@ -167,6 +168,29 @@ export function StartHost() {
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
             }
+            return r;
+          }}
+        />
+      )}
+      {/* A handoff from another member's space: no repository to open it in, so the launch is a
+          dialog of its own that starts in a new space of the recipient's (never home). The offer
+          is taken around the launch exactly as for a repository. */}
+      {seedNewSpace && !show && !launch && (
+        <LaunchModal
+          newSpace
+          repo=""
+          kinds={agentKinds}
+          access={ctx.access}
+          claudeExpired={ctx.claudeExpired}
+          settling={ctx.connsSettling}
+          allowWorktree={false}
+          initialPrompt={seedPrompt || undefined}
+          initialTitle={seedTitle || undefined}
+          onClose={clearSeed}
+          onLaunch={async (o) => {
+            const run = (take?: HandoffTake) => startWork({ dir: "", repo: "" }, o, take);
+            const r = seedOfferId ? await launchFromHandoffOffer(seedOfferId, run, toast) : await run();
+            if (r.ok) clearSeed();
             return r;
           }}
         />

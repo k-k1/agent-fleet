@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // gitRun runs git for a test, with the same env as gitInit.
@@ -138,4 +140,51 @@ func containsCredential(s string) bool {
 		}
 	}
 	return false
+}
+
+// A session in a space is handed over with the space warning, whether or not the folder is
+// also a git working copy: its files and attachments stay in the giver's home either way.
+func TestHandoffContextForSpaceWarns(t *testing.T) {
+	isolateAgentState(t)
+	dir := placeSpace(t, "notes")
+
+	// The stored place decides.
+	c := handoffContextFor(session.Meta{Dir: dir, Place: &session.Place{Kind: session.PlaceSpace, ID: "notes"}})
+	if !c.Space || c.Warning != handoffWarnSpace || c.Blocked != "" {
+		t.Fatalf("stored place: space=%v warning=%q blocked=%q, want the space warning and no block", c.Space, c.Warning, c.Blocked)
+	}
+	// A meta from before the place field falls back to the folder's marker.
+	if c = handoffContextFor(session.Meta{Dir: dir}); !c.Space || c.Warning != handoffWarnSpace {
+		t.Fatalf("no stored place: space=%v warning=%q, want the space warning", c.Space, c.Warning)
+	}
+	// A repository gets neither.
+	repo := filepath.Join(homeDir(), "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if c = handoffContextFor(session.Meta{Dir: repo, Place: &session.Place{Kind: session.PlaceRepo, ID: "app"}}); c.Space || c.Warning != "" {
+		t.Fatalf("repository: space=%v warning=%q, want neither", c.Space, c.Warning)
+	}
+}
+
+// A space that is also a git working copy still gates on the push, and its warning replaces
+// the dirty one: one acknowledgement, and it already says that only what git publishes travels.
+func TestHandoffContextForSpaceKeepsGitGate(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	isolateAgentState(t)
+	dir := placeSpace(t, "gitspace")
+	gitInit(t, dir)
+	gitRun(t, dir, "checkout", "-q", "-b", "temp/work")
+	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := handoffContextFor(session.Meta{Dir: dir, Place: &session.Place{Kind: session.PlaceSpace, ID: "gitspace"}})
+	if c.Blocked != handoffBlockNoUpstream {
+		t.Fatalf("blocked = %q, want %q (a space's git gate still applies)", c.Blocked, handoffBlockNoUpstream)
+	}
+	if !c.Dirty || c.Warning != handoffWarnSpace {
+		t.Fatalf("dirty=%v warning=%q, want dirty with the space warning", c.Dirty, c.Warning)
+	}
 }

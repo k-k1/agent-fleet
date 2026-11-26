@@ -42,6 +42,8 @@ interface HandoffContext {
   dirty?: boolean;
   blocked?: string;
   warning?: string;
+  /** The session runs in a space: its files and attachments do not travel. */
+  space?: boolean;
   /** Where "push, then send" would publish (the push URL, credentials removed) and how many
    *  commits; set only when a push can clear the gate and lands where the offer points. */
   pushRemote?: string;
@@ -281,6 +283,7 @@ export function HandoffOfferModal({
                   })}
                 </p>
               )}
+              {ctx?.space && <p className="ui-field-hint handoff-blocked">{tr("handoff.space_hint")}</p>}
               {!ctxReady && <p className="ui-field-hint">{tr("handoff.gate_checking")}</p>}
               {blocked && <p className="ui-field-hint handoff-blocked">{tr(blockedKey(blocked))}</p>}
               {pushable && (
@@ -306,7 +309,7 @@ export function HandoffOfferModal({
               {(!blocked || pushing) && warning && (
                 <label className="ui-field-inline">
                   <input type="checkbox" checked={ackWarning} onChange={(e) => setAckWarning(e.target.checked)} />
-                  {tr("handoff.ack_dirty")}
+                  {tr(warning === "space_files_stay" ? "handoff.ack_space" : "handoff.ack_dirty")}
                 </label>
               )}
               <label className="ui-field">

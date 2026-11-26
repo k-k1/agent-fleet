@@ -19,7 +19,7 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { apiJSON, errText } from "../../core/api/client.ts";
+import { api, apiJSON, errText, isTransientErr } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import { senderLabel, useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
@@ -44,6 +44,28 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
   const [repoName, setRepoName] = useState(() => (repos.some((r) => r.name === guess) ? guess : repos[0]?.name || ""));
   const [busy, setBusy] = useState(false);
 
+  // The same probe the Start hub makes before it offers a space (StartModal): an older Agent
+  // ignores the space field and would start the session in home, which is not what this offer is.
+  const spacesSupported = async (): Promise<boolean> => {
+    const d = await api("api/spaces").catch(() => null);
+    const e = d?.error;
+    return !(e && !isTransientErr(d) && (e.status === 404 || e.status === 405 || e.code === "http_404" || e.code === "http_405"));
+  };
+  const acceptInSpace = async () => {
+    if (busy) return;
+    setBusy(true);
+    const ok = await spacesSupported();
+    setBusy(false);
+    if (!ok) {
+      toast(tr("handoff.space_unsupported"));
+      return;
+    }
+    // A space offer has no repository to open it in: the launch is a dialog that starts in a
+    // new space of the recipient's own, and StartHost takes the offer on its launch press.
+    useLaunchSeed.getState().set(offer.prompt || "", offer.title, "", "", offer.id);
+    useLaunchSeed.getState().setNewSpace(true);
+    onDone();
+  };
   const accept = () => {
     const repo = repos.find((r) => r.name === repoName);
     if (!repo?.path) {
@@ -131,30 +153,36 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
         <strong>{offer.title}</strong>
         <span className="muted">{tr("handoff.from", { who: senderLabel(offer) })}</span>
       </header>
-      <p className="ui-field-hint">
-        {tr("handoff.coordinates", {
-          branch: offer.branch || "-",
-          sha: (offer.headSha || "").slice(0, 8),
-          remote: offer.repoRemote || "-",
-        })}
-      </p>
+      {offer.sourceSpace ? (
+        <p className="ui-field-hint handoff-blocked">{tr("handoff.space_offer_hint", { who: senderLabel(offer) })}</p>
+      ) : (
+        <p className="ui-field-hint">
+          {tr("handoff.coordinates", {
+            branch: offer.branch || "-",
+            sha: (offer.headSha || "").slice(0, 8),
+            remote: offer.repoRemote || "-",
+          })}
+        </p>
+      )}
       {/* The prompt is shown unfolded: the one-button flow assumes the recipient read it
           before pressing. */}
       <pre className="mirror-handoff-prompt">{offer.prompt}</pre>
-      <label className="ui-field">
-        <span className="ui-field-label">{tr("handoff.accept_repo")}</span>
-        <select value={repoName} onChange={(e) => setRepoName(e.target.value)}>
-          {repos.map((r) => (
-            <option key={r.name} value={r.name}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      {!offer.sourceSpace && (
+        <label className="ui-field">
+          <span className="ui-field-label">{tr("handoff.accept_repo")}</span>
+          <select value={repoName} onChange={(e) => setRepoName(e.target.value)}>
+            {repos.map((r) => (
+              <option key={r.name} value={r.name}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {/* With no working copy at all the accept button cannot fire. Without a reason that
           only reads as a dead button, so the next step (clone it yourself) is spelled
           out. */}
-      {repos.length === 0 && <p className="ui-field-hint handoff-blocked">{tr("handoff.accept_no_repo_hint")}</p>}
+      {!offer.sourceSpace && repos.length === 0 && <p className="ui-field-hint handoff-blocked">{tr("handoff.accept_no_repo_hint")}</p>}
       <p className="ui-field-hint">{tr("handoff.accept_cost_hint")}</p>
       {takeHint}
       <div className="handoff-inbox-actions">
@@ -162,7 +190,7 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
         <Button variant="ghost" disabled={busy} onClick={() => void decline()}>
           {tr("handoff.decline")}
         </Button>
-        <Button variant="primary" disabled={busy || !repoName} onClick={accept}>
+        <Button variant="primary" disabled={busy || (!offer.sourceSpace && !repoName)} onClick={offer.sourceSpace ? () => void acceptInSpace() : accept}>
           <Icon name="run" /> {tr("handoff.accept")}
         </Button>
       </div>

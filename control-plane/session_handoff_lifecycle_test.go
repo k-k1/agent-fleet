@@ -326,6 +326,35 @@ func TestHandoffLifecycleOfferTakeAccept(t *testing.T) {
 	}
 }
 
+// TestHandoffOfferFromSpaceCarriesItsOrigin is #5233: the Agent says the session runs in a
+// space and asks for the space acknowledgement, the offer records that, and only the
+// recipient's inbox reports it. A repository offer reports nothing.
+func TestHandoffOfferFromSpaceCarriesItsOrigin(t *testing.T) {
+	f := newHandoffLife(t)
+	f.setAgent(map[string]any{"space": true, "warning": "space_files_stay", "remote": nil, "branch": nil, "headSha": nil})
+	rec := f.offer(nil)
+	f.requireConflict(rec, "handoff_warning", "")
+	if e := errorOf(t, rec); e["reason"] != "space_files_stay" {
+		t.Fatalf("warning answered reason %v, want space_files_stay", e["reason"])
+	}
+	o := f.mustOffer(map[string]any{"ackWarning": true})
+	if !f.row(o.ID).SourceSpace {
+		t.Fatalf("the stored offer does not record the space: %+v", f.row(o.ID))
+	}
+	if in := f.inbox(f.recipient); len(in) != 1 || !in[0].SourceSpace {
+		t.Fatalf("recipient inbox = %+v, want one offer marked sourceSpace", in)
+	}
+
+	g := newHandoffLife(t)
+	p := g.mustOffer(nil)
+	if g.row(p.ID).SourceSpace {
+		t.Fatal("a repository offer was recorded as a space offer")
+	}
+	if in := g.inbox(g.recipient); len(in) != 1 || in[0].SourceSpace {
+		t.Fatalf("recipient inbox = %+v, want an offer without sourceSpace", in)
+	}
+}
+
 // TestHandoffTakeBeforeLaunch is issue #2020 through the handlers: the take happens before
 // the session is created, the owner cannot withdraw while it holds, a failed launch gives
 // it back, and a take on an offer the owner already withdrew is refused with the reason

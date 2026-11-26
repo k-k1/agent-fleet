@@ -1,0 +1,2 @@
+-- Whether a member handoff came from a session running in a space (#5233). Additive. A row written before this has no origin recorded, which reads as a repository handoff.
+ALTER TABLE session_handoff_offer ADD COLUMN source_space INTEGER NOT NULL DEFAULT 0;

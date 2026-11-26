@@ -103,6 +103,27 @@ describe("HandoffOfferModal", () => {
     expect(sendButton()?.disabled).toBe(false);
   });
 
+  // #5233: a session in a space has no repository to hand over. The giver is told the files stay
+  // behind, in the space wording, and has to acknowledge it before sending.
+  it("tells the giver a space's files stay behind and asks for the space acknowledgement", async () => {
+    await render({ members: MEMBERS, context: { vcs: "", space: true, warning: "space_files_stay" } });
+    const { t } = await import("../../lib/i18n/index.ts");
+    expect(document.body.textContent).toContain(t("handoff.space_hint"));
+    expect(document.body.textContent).toContain(t("handoff.ack_space"));
+    expect(document.body.textContent).not.toContain(t("handoff.ack_dirty"));
+    expect(sendButton()?.disabled).toBe(true);
+    await act(async () => {
+      (find('input[type="checkbox"]') as HTMLInputElement).click();
+    });
+    expect(sendButton()?.disabled).toBe(false);
+  });
+
+  it("shows no space note for a repository", async () => {
+    await render({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 0 } });
+    const { t } = await import("../../lib/i18n/index.ts");
+    expect(document.body.textContent).not.toContain(t("handoff.space_hint"));
+  });
+
   // "Push, then send" (#2072). The opt-in exists only for the two reasons a push clears, says
   // what it will publish, and sends pushFirst so the CP pushes and re-asks the Agent; the
   // verdict after the push is never decided here.

@@ -40,21 +40,27 @@ type SessionHandoffOffer struct {
 	// ConfirmedSessionHandoffTake, for the CP to look its create up on the recipient's Agent;
 	// it never leaves the CP.
 	TakenAt, TakeConfirmedAt string
+	// SourceSpace records that the offer came from a session running in a space (#5233), whose
+	// files stay in the sender's home. The recipient's launch then starts in a new space of their
+	// own instead of picking a repository. False for an offer made before the column existed.
+	SourceSpace bool
 }
 
 const handoffOfferCols = `id,tenant_id,catalog_id,owner_membership_id,recipient_membership_id,title,
 	ciphertext,key_ref,repo_remote,branch,head_sha,source_session_name,source_session_kind,
-	status,created_at,expires_at,decided_at,accepted_session_name,taken_at,take_confirmed_at`
+	status,created_at,expires_at,decided_at,accepted_session_name,taken_at,take_confirmed_at,source_space`
 
 func scanHandoffOffer(row interface{ Scan(...any) error }) (SessionHandoffOffer, bool, error) {
 	var r SessionHandoffOffer
+	var space int
 	err := row.Scan(&r.ID, &r.TenantID, &r.CatalogID, &r.OwnerMembershipID, &r.RecipientMembershipID,
 		&r.Title, &r.Ciphertext, &r.KeyRef, &r.RepoRemote, &r.Branch, &r.HeadSha,
 		&r.SourceSessionName, &r.SourceSessionKind, &r.Status, &r.CreatedAt, &r.ExpiresAt,
-		&r.DecidedAt, &r.AcceptedSessionName, &r.TakenAt, &r.TakeConfirmedAt)
+		&r.DecidedAt, &r.AcceptedSessionName, &r.TakenAt, &r.TakeConfirmedAt, &space)
 	if err == sql.ErrNoRows {
 		return SessionHandoffOffer{}, false, nil
 	}
+	r.SourceSpace = space != 0
 	return r, err == nil, err
 }
 
@@ -67,11 +73,11 @@ func scanHandoffOffer(row interface{ Scan(...any) error }) (SessionHandoffOffer,
 func (s *SQL) CreateSessionHandoffOffer(ctx context.Context, r SessionHandoffOffer) (bool, error) {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO session_handoff_offer
 		(id,tenant_id,catalog_id,owner_membership_id,recipient_membership_id,title,ciphertext,key_ref,
-		 repo_remote,branch,head_sha,source_session_name,source_session_kind,status,created_at,expires_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 repo_remote,branch,head_sha,source_session_name,source_session_kind,status,created_at,expires_at,source_space)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.ID, r.TenantID, r.CatalogID, r.OwnerMembershipID, r.RecipientMembershipID, r.Title,
 		r.Ciphertext, r.KeyRef, r.RepoRemote, r.Branch, r.HeadSha, r.SourceSessionName,
-		r.SourceSessionKind, r.Status, r.CreatedAt, r.ExpiresAt)
+		r.SourceSessionKind, r.Status, r.CreatedAt, r.ExpiresAt, boolInt(r.SourceSpace))
 	if err != nil && isUniqueViolation(err) {
 		return false, nil
 	}
@@ -406,15 +412,16 @@ func (s *SQL) ListReceivedSessionHandoffOffers(ctx context.Context, membershipID
 	out := []ReceivedHandoffOffer{}
 	for rows.Next() {
 		var r ReceivedHandoffOffer
-		var recovery int
+		var recovery, space int
 		o := &r.SessionHandoffOffer
 		if err := rows.Scan(&o.ID, &o.TenantID, &o.CatalogID, &o.OwnerMembershipID, &o.RecipientMembershipID,
 			&o.Title, &o.Ciphertext, &o.KeyRef, &o.RepoRemote, &o.Branch, &o.HeadSha,
 			&o.SourceSessionName, &o.SourceSessionKind, &o.Status, &o.CreatedAt, &o.ExpiresAt,
-			&o.DecidedAt, &o.AcceptedSessionName, &o.TakenAt, &o.TakeConfirmedAt,
+			&o.DecidedAt, &o.AcceptedSessionName, &o.TakenAt, &o.TakeConfirmedAt, &space,
 			&recovery, &r.ConfirmedTakeToken); err != nil {
 			return nil, err
 		}
+		o.SourceSpace = space != 0
 		r.RecoveryOnly = recovery == 1
 		out = append(out, r)
 	}
