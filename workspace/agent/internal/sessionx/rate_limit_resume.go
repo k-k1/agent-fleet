@@ -656,48 +656,27 @@ func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) r
 // StateBlocked. codex managed says the same thing through its own turn error, which is
 // likewise cleared by the next turn starting.
 func rateLimitWaiting(m session.Meta, now time.Time) (state, resumeAt string, ok bool) {
+	st, state := currentRateLimitEpisode(m, now)
+	if state != agents.StateLimited {
+		return state, "", state != ""
+	}
+	// A past instant is no longer useful even if the episode is within its cleanup grace.
+	return state, futureInstant(st.ResumeAt, now), true
+}
+
+func currentRateLimitEpisode(m session.Meta, now time.Time) (rateLimitState, string) {
 	st, has := RateLimitStates.Read(m.Name)
 	if !has || episodeStale(st, now) {
-		return "", "", false
+		return rateLimitState{}, ""
 	}
 	kind, atLimit := atUsageLimit(m)
 	if !atLimit {
-		return "", "", false
+		return rateLimitState{}, ""
 	}
 	if kind == agents.LimitSpend {
-		return agents.StateSpendLimit, "", true // no booking exists: no instant clears this
+		return st, agents.StateSpendLimit
 	}
-	// A booked instant that has passed is not an answer to "when does this move again": the
-	// resume fired and the session is plainly still at its limit. The chip then says only that
-	// it is waiting, which stays true while the next booking is worked out (docs/log/47 §4-13 -
-	// a chip reading "waiting until 10:25" at 10:41 is what the user reported).
-	return agents.StateLimited, futureInstant(st.ResumeAt, now), true
-}
-
-// rateLimitBookedAt is the display-side answer for a STOPPED session: the instant its booked
-// auto-resume is due, "" when none is. The booking lives in the episode file and the CP
-// scheduler, both of which outlive the session, so a stop does not cancel it - but wireSession's
-// live reinterpretation never ran for the row and the user saw a plain "Stopped" with a resume
-// button. It carries the instant ALONE: the state stays "stopped", which the reaper and the idle
-// logic read, so this never makes a stopped row look busy.
-//
-// Requires a ScheduleID (an instant without a booking is a promise nobody keeps), a still-future
-// instant, a window limit (a spend limit books nothing), and the same at-limit evidence the live
-// path uses, so a session whose limit has since moved on does not claim a resume. No network and
-// no full-file read: an episode file stat/read plus the kind's tail read.
-func rateLimitBookedAt(m session.Meta, now time.Time) string {
-	st, has := RateLimitStates.Read(m.Name)
-	if !has || st.ScheduleID == "" || episodeStale(st, now) {
-		return ""
-	}
-	at := futureInstant(st.ResumeAt, now)
-	if at == "" {
-		return ""
-	}
-	if kind, atLimit := atUsageLimit(m); !atLimit || kind == agents.LimitSpend {
-		return ""
-	}
-	return at
+	return st, agents.StateLimited
 }
 
 // futureInstant passes an RFC3339 instant through only while it is still ahead of now.
