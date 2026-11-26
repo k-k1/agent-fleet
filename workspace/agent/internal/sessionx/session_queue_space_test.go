@@ -170,3 +170,32 @@ func TestListEnvelopeCarriesQueueSpace(t *testing.T) {
 		t.Fatalf("list envelope queueSpace = %s (err %v), want 1", env["queueSpace"], err)
 	}
 }
+
+// armMeta reads the place it stores again: a repository that passed the checks while the working
+// copy was resolved, and was replaced by a link to the space of the same name before the meta is
+// made, is refused there instead of launched into. The stages are called directly, so the
+// replacement needs no timing.
+func TestQueueArmMetaRefusesARepositoryReplacedByALink(t *testing.T) {
+	p := newCreateProbe(t)
+	sp, err := spacex.Create("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(p.home, "repos", sp.Folder)
+	gitInit(t, repo)
+	rec := httptest.NewRecorder()
+	run := &createRun{w: rec, r: httptest.NewRequest(http.MethodPost, "/sessions", nil), name: "qarm0001",
+		origin: session.OriginQueue, req: &CreateReq{Dir: "repos/" + sp.Folder, QueueDelivery: &QueueDelivery{ID: "d1", Queue: "cat-1"}}}
+	if !run.resolveWorkingCopy() {
+		t.Fatalf("the real repository was refused: %d %s", rec.Code, rec.Body)
+	}
+	if err := os.Rename(repo, repo+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sp.Dir, repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := run.armMeta(); ok || rec.Code != http.StatusBadRequest || spaceErrCode(t, rec.Body.Bytes()) != "queue_dir_not_repository" {
+		t.Fatalf("armMeta after the swap: ok=%v %d %s, want 400 queue_dir_not_repository", ok, rec.Code, rec.Body)
+	}
+}

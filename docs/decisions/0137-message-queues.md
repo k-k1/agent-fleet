@@ -1201,14 +1201,17 @@ in `repos/<folder>`, failing with `bad_dir` or, when a repository of that name e
   the attribution is the one the bucket is decided from; a meta written before places were stored falls back to the
   space marker, never the name. `""` stays unfiled; any other name still goes through the worktree mapping of §2. An
   edit, an unfiling, a worktree folder or an explicit `spaces/<folder>` never reads the session. With no session to name,
-  the MCP process sends such a move without `from` unless it runs in a space, where it refuses rather than guess.
+  the MCP process sends such a move without `from`, except when the name is the folder of the space its directory is
+  in (at the space's root or in any subdir), or its directory cannot be read: then it refuses rather than guess, and
+  points at `spaces/<folder>`. Another repository's name goes without `from` from inside a space too.
 - **Running.** `memoQueuePlace` (`control-plane/memo_delivery.go`) resolves a repository name only to `repos/<name>` and
   a space bucket only to the Agent's `space: {folder}` target, with no `dir` and the worktree setting ignored. The Agent
   then applies the Console launch's checks (`space_not_found`, "being deleted") after the durable key is claimed, so a
   refusal closes the run as not sent. A bucket that starts with `spaces/` but names no valid folder is refused with
   `memo_queue_bad_repo`. The Agent also refuses a queue's `dir` that exists but is not a repository or a worktree
   directly under `~/repos` (`queue_dir_not_repository`): a symlink there could lead a repository's queue into a space.
-  It checks the dir as named (a dir it cannot read is `bad_dir`) and again the dir the session starts in.
+  It checks the dir as named (a dir it cannot read is `bad_dir`), again the dir the session starts in, and the place
+  `armMeta` stores; binding the checked directory to the launch itself is #5250.
 - **No repository.** A space's category has no settings file: the repository settings routes answer
   `memo_queue_no_repo`, the re-read skips it, and the Console hides the card and the worktree switch.
 - **Rolling update.** The Agent's session list carries `queueSpace: 1`; a space's delivery is sent only to an Agent that

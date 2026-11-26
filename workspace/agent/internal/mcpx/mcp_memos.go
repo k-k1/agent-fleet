@@ -675,11 +675,14 @@ func memoPatchRepo(args json.RawMessage) string {
 	return in.Repo
 }
 
+// memoGetwd is os.Getwd, a variable so a test can make the directory unreadable.
+var memoGetwd = os.Getwd
+
 // memoCwdSpace is the space this MCP process runs in: the space whose folder holds its directory,
 // at any depth (a session may run in a subdir), "" when none does. known is false when the
 // directory cannot be read, so nothing can be said either way.
 func memoCwdSpace() (space string, known bool) {
-	cwd, err := os.Getwd()
+	cwd, err := memoGetwd()
 	if err != nil {
 		return "", false
 	}

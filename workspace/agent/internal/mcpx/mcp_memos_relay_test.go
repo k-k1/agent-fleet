@@ -2,6 +2,7 @@ package mcpx
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -237,6 +238,21 @@ func TestUpdateMemoNamesTheServersOwnSession(t *testing.T) {
 			t.Errorf("in %s the Agent got the queries %q, want three calls without from", dir, got)
 		}
 	}
+
+	// No session to name and a directory that cannot be read: nothing says the bare name is not
+	// the caller's space, so it is refused, pointing at spaces/<folder>; other moves still go.
+	prevGetwd := memoGetwd
+	t.Cleanup(func() { memoGetwd = prevGetwd })
+	memoGetwd = func() (string, error) { return "", errors.New("getwd: no such file") }
+	agent = memoFakeAgent(t)
+	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"}); !strings.Contains(resp, "isError") || !strings.Contains(resp, "spaces/") {
+		t.Errorf("with an unreadable directory a bare-name move was not refused with the explicit form: %s", resp)
+	}
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app@one"})
+	if got := agent.memoCalls(); len(got) != 1 || !strings.Contains(got[0], `"repo":"app@one"`) {
+		t.Errorf("with an unreadable directory the Agent got %q, want the worktree move alone", got)
+	}
+	memoGetwd = prevGetwd
 
 	oldWrite := writeEnabled()
 	t.Cleanup(func() { setWriteEnabled(oldWrite) })
