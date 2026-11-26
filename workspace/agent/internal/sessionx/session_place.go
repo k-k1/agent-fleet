@@ -19,7 +19,8 @@ import (
 // too). Anything else is PlaceOther. Never nil.
 //
 // The parent is compared physically: a spelling with ".." is resolved before it is judged, so
-// ~/repos/link/../app is filed where it really runs, never as ~/repos/app.
+// ~/repos/link/../app is never filed as ~/repos/app; and a ".." that steps back over a symlink
+// is no place at all (crossesLink), since the link may later point elsewhere.
 func PlaceOf(dir string) *session.Place {
 	other := &session.Place{Kind: session.PlaceOther}
 	if dir == "" || !filepath.IsAbs(dir) {
@@ -84,7 +85,7 @@ func splitPhysical(dir string) (parent, last string, ok bool) {
 	last = filepath.Base(p)
 	if last == ".." {
 		real, err := filepath.EvalSymlinks(p)
-		if err != nil {
+		if err != nil || crossesLink(p, real) {
 			return "", "", false
 		}
 		return filepath.Dir(real), filepath.Base(real), true
@@ -98,12 +99,22 @@ func splitPhysical(dir string) (parent, last string, ok bool) {
 	}
 	if filepath.Clean(parent) != parent {
 		real, err := filepath.EvalSymlinks(parent)
-		if err != nil {
+		if err != nil || crossesLink(parent, real) {
 			return "", "", false
 		}
 		parent = real
 	}
 	return parent, last, true
+}
+
+// crossesLink reports whether the ".." in p, which resolves physically to real, steps back over a
+// symlink: read lexically it then names another directory (or none). Such a spelling is no place,
+// because the link can be pointed elsewhere while the session is stopped, and the stored place
+// would go on naming a copy the session no longer runs in (the copy-delete plan and the handoff
+// act on it). A ".." that does not cross a link reads the same both ways.
+func crossesLink(p, real string) bool {
+	lexical, err := filepath.EvalSymlinks(filepath.Clean(p))
+	return err != nil || lexical != real
 }
 
 // trimSelf drops trailing "/" and "/." elements, which name the directory before them.

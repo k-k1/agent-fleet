@@ -90,6 +90,10 @@ func TestPlaceOf(t *testing.T) {
 	if err := os.Symlink(filepath.Join(repos, "foo@wt"), filepath.Join(home, "links", "foo@wt")); err != nil {
 		t.Fatal(err)
 	}
+	// ~/links/sub/.. runs in ~/repos/foo today, and wherever sub points after it is re-pointed.
+	if err := os.Symlink(filepath.Join(repos, "foo", "sub"), filepath.Join(home, "links", "sub")); err != nil {
+		t.Fatal(err)
+	}
 	// ~/repos/hop/../foo runs in ~/elsewhere/foo, wherever Clean would fold it lexically.
 	gitInit(t, filepath.Join(home, "elsewhere", "inner"))
 	gitInit(t, filepath.Join(home, "elsewhere", "foo"))
@@ -158,7 +162,9 @@ func TestPlaceOf(t *testing.T) {
 		{filepath.Join(home, "links", "foo@wt"), session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo/.", session.Place{Kind: session.PlaceOther}},
-		{filepath.Join(home, "elsewhere", "back") + "/../team app", session.Place{Kind: session.PlaceRepo, ID: "team app"}},
+		// A ".." over a link is no place: the link can be pointed elsewhere later (#5262 review).
+		{filepath.Join(home, "elsewhere", "back") + "/../team app", session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(home, "links", "sub") + "/..", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "sep"), session.Place{Kind: session.PlaceRepo, ID: "sep"}},
 		{filepath.Join(repos, "sep@wt"), session.Place{Kind: session.PlaceWorktree, ID: "sep@wt"}},
 		{filepath.Join(repos, "vendor@wt"), session.Place{Kind: session.PlaceWorktree, ID: "vendor@wt"}},

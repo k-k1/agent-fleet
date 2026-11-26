@@ -56,6 +56,14 @@ describe("handoffLaunchTarget", () => {
     expect(handoffLaunchTarget(linked, [GIT, a], false)).toMatchObject({ repo: { name: "current", path: "/home/dev/links/current" } });
   });
 
+  it("does not pick a parent from a stored place the dir no longer proves", () => {
+    // A meta stored while `current/..` led to app@wip-x (an earlier Agent placed it so); the link
+    // now leads under a worktree of another repository, whose branch the list reports.
+    const other: Repo = { name: "lib", path: "/home/dev/repos/lib", branch: "main" };
+    const stale = sess({ repo: "..", dir: "/home/dev/links/current/..", worktree: true, place: { kind: "worktree", id: "app@wip-x", parent: "app" }, currentBranch: "temp/lib" });
+    expect(handoffLaunchTarget(stale, [GIT, WT, other], true)).toEqual({ error: "no_parent" });
+  });
+
   it("reports no_dir for a session with no working directory", () => {
     expect(handoffLaunchTarget(sess({}), [GIT], false)).toEqual({ error: "no_dir" });
   });
