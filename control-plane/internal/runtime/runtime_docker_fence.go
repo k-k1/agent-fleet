@@ -110,6 +110,10 @@ func (d *dockerRuntime) healAgentAddr(ctx context.Context) {
 	}
 }
 
+// HealAgentAddr is healAgentAddr for the start path, which returns before Start on a
+// workspace that is already running (AgentAddrHealer).
+func (d *dockerRuntime) HealAgentAddr(ctx context.Context) { d.healAgentAddr(ctx) }
+
 // dropStaleAgentAddr removes an address on file once docker says the container is gone
 // (removed by hand, or the deployment was torn down around its data directory). The
 // address may belong to someone else's container by then, and the CP would send this

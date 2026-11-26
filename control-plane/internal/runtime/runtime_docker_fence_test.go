@@ -376,3 +376,27 @@ func TestDockerFenceStateDropsStaleAddr(t *testing.T) {
 		t.Errorf("a failed probe dropped the address: %s", got)
 	}
 }
+
+// The start path reaches the heal through AgentAddrHealer when the workspace is already
+// running and Runtime.Start is skipped (#5257).
+func TestDockerRuntimeHealsMissingAddrThroughTheStartPathInterface(t *testing.T) {
+	d := &dockerRuntime{
+		name: "af-ws-u1", network: "af-net-u1", dataDir: t.TempDir(), agentHost: "127.0.0.1", agentPort: "7712",
+		egressGateway: "af-egress",
+		inspect: func(_ context.Context, typ, _, _ string) string {
+			if typ == "network" {
+				return "true"
+			}
+			return "172.20.0.2"
+		},
+	}
+	var rt Runtime = d
+	h, ok := rt.(AgentAddrHealer)
+	if !ok {
+		t.Fatal("dockerRuntime is not an AgentAddrHealer")
+	}
+	h.HealAgentAddr(context.Background())
+	if got := d.Endpoint(); got != "http://172.20.0.2:7700" {
+		t.Errorf("healed endpoint: %s", got)
+	}
+}

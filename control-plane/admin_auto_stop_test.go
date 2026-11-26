@@ -184,3 +184,28 @@ func TestAdminMembersReportWorkspaceRowApartFromState(t *testing.T) {
 		t.Fatalf("member row = %v, want state none with has_workspace true", row)
 	}
 }
+
+// healStub is a running workspace whose container was launched by a CP that exited before
+// it recorded the address.
+type healStub struct {
+	deadlineStub
+	healed int
+}
+
+func (r *healStub) HealAgentAddr(context.Context) { r.healed++ }
+
+// A start that finds the workspace already running skips Runtime.Start, so it must heal
+// the missing address itself (#5257).
+func TestStartOnRunningWorkspaceHealsTheAgentAddr(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, ws, mgr := reaperLifecycleFixture(t)
+	rt := &healStub{deadlineStub: deadlineStub{state: "running"}}
+	res := &resolved{rt: rt, ws: ws, mv: store.MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}}
+	if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStartedRT(ctx, res, rt); aerr != nil {
+		t.Fatalf("start on a running workspace: %+v", aerr)
+	}
+	if rt.healed != 1 {
+		t.Errorf("HealAgentAddr calls = %d, want 1", rt.healed)
+	}
+}
