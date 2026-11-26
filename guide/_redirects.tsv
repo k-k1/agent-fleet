@@ -292,7 +292,8 @@ member/20-settings.md#keyboard	user/start/shortcuts.md#change-the-keys
 member/lite.md#1-what-you-can-do-with-agent-fleet	user/start/overview.md
 member/lite.md#2-logging-in-and-reading-the-screen	user/start/console-tour.md
 member/lite.md#3-one-time-setup	user/start/quickstart.md
-member/lite.md#an-important-ground-rule	user/start/without-terminal.md#dont-answer-questions-meant-for-someone-else
+member/lite.md#an-important-ground-rule	user/team/share.md#read-a-conversation-shared-with-you
+user/start/without-terminal.md#dont-answer-questions-meant-for-someone-else	user/team/share.md#read-a-conversation-shared-with-you
 member/18-agent-memory.md#import--export	user/memory/import-export.md
 member/18-agent-memory.md#memory-snapshots	user/memory/snapshots.md
 member/18-agent-memory.md#history	user/memory/snapshots.md#see-the-history

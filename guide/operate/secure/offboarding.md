@@ -110,6 +110,6 @@ Step 2 exists because syncing at sign-in would never reach a leaver who no longe
 ## Related
 
 - [Remove a member](../../admin/members/remove.md): the tenant administrator's steps
-- [Cannot log in](../diagnose/cannot-login.md): when someone you removed can still get in
+- [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md): when someone you removed can still get in
 - [Other operational controls](controls.md#keep-the-sign-in-allowlist): the allowlist rules
 - [Handle the deployment keys](deployment-keys.md): what `AF_COOKIE_SECRET` must be

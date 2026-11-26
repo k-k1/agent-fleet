@@ -84,6 +84,6 @@ Clicking an arrow opens its conversation or lane.
 
 ## Related
 
-- [See every running session](overview.md)
+- [View sessions as cards](overview.md)
 - [Start child sessions from a session](child-sessions.md)
 - [Hand off to another session or agent](../sessions/handoff.md)

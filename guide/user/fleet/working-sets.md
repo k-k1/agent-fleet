@@ -53,9 +53,9 @@ Right-click a row or open its ⋯ menu, and choose a set under "Working sets". C
 
 - The sets are yours alone and appear on your other devices too. Other members do not see them
 - Which set you are looking at is remembered per browser, so a PC and a tablet can each show a different piece of work
-- The sessions overview narrows to the same set as the left pane ([See every running session](overview.md))
+- The sessions overview narrows to the same set as the left pane ([View sessions as cards](overview.md))
 
 ## Related
 
-- [See every running session](overview.md)
+- [View sessions as cards](overview.md)
 - [Launch a session from a repository](../code/launch-from-repo.md)

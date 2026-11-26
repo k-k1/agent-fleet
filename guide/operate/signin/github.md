@@ -109,4 +109,4 @@ The log has a `github login disabled — …` line: `AF_GITHUB_ALLOWED_ORGS` is 
 
 - [Set up how people sign in](overview.md)
 - [Approve a tenant's own sign-in](tenant-idp.md) (when a tenant registers a GitHub organisation)
-- [Cannot log in](../diagnose/cannot-login.md)
+- [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md)

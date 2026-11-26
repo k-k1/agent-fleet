@@ -125,11 +125,11 @@ the way that target's runbook says (they open from [Operating a deployment](../R
    - Landing on a page that says a **new workspace** was created means this deployment has never seen that address. It is there so people notice before they start work in the wrong place
    - Accounts with different email addresses cannot be merged afterwards. Somebody who has both accounts can add the other one under **Settings → Personal → Account**, "**Add a sign-in method**". Only a method that claims the same email address can be added, and it must meet that method's own organisation and domain conditions
 
-If it still does not work, see [Cannot log in](../diagnose/cannot-login.md).
+If it still does not work, see [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md).
 
 ## Related
 
 - [Approve a tenant's own sign-in](tenant-idp.md)
-- [Cannot log in](../diagnose/cannot-login.md)
+- [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md)
 - [Choose how people sign in](../../admin/access/signin-methods.md) (what a tenant administrator does)
 - [Roles — who may do what](../../ref/roles.md)

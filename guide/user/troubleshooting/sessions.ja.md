@@ -146,7 +146,7 @@ claude の会話ログが消えていて、Agent Fleet のバックアップも�
 - shell と ssm のセッションは、状態の通知を出しません
 - 「**ライブ更新を一時停止中 — クリックで再開**」が出ているウィンドウは、しばらく操作がなかったので更新を止めています。押すと再開します
 
-通知の種類の切り替えは [セッションの状態を読む](../sessions/status.ja.md#通知を受ける) にあります。
+通知の種類の切り替えは [セッションの状態を確認する](../sessions/status.ja.md#通知を受ける) にあります。
 
 ## claude が `/list-agents` を知らない・ほかのセッションに送れないと言う
 
@@ -163,5 +163,5 @@ Claude Code 自身のセッション間のメッセージは、Agent Fleet で�
 
 - [セッションを止める・再開する](../sessions/stop-resume.ja.md)
 - [終わったセッションを片付ける](../sessions/cleanup.ja.md)
-- [セッションの状態を読む](../sessions/status.ja.md)
+- [セッションの状態を確認する](../sessions/status.ja.md)
 - [別のセッションやエージェントに引き継ぐ](../sessions/handoff.ja.md)

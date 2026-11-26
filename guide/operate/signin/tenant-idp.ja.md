@@ -107,5 +107,5 @@ IdP を登録することは、「この人が誰か」を宣言する権限を�
 
 - [サインインの方法を決める](../../admin/access/signin-methods.ja.md)（テナント管理者が埋める欄）
 - [サインインの方法を設定する](overview.ja.md)
-- [ログインできない](../diagnose/cannot-login.ja.md)
+- [Agent Fleet にサインインできない](../diagnose/cannot-login.ja.md)
 - [ロール — 誰が何をできるか](../../ref/roles.ja.md)

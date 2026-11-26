@@ -109,4 +109,4 @@ third-party OAuth apps, an org owner must approve this OAuth app before anyone c
 
 - [サインインの方法を設定する](overview.ja.md)
 - [テナント独自のサインインを承認する](tenant-idp.ja.md)（テナントが GitHub の組織を登録したとき）
-- [ログインできない](../diagnose/cannot-login.ja.md)
+- [Agent Fleet にサインインできない](../diagnose/cannot-login.ja.md)

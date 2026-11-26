@@ -70,7 +70,7 @@ When the app needs to know its own URL, or you want others to see it or sign in 
 - **Do not hard-code `http://localhost:8080` as the API to call.** To the browser, `localhost` is the PC of whoever is looking.
   Route `/api` to 8080 with the dev server's proxy (Vite's `server.proxy`, Next.js's `rewrites()`) and the same settings work on your own PC and on the preview
 - **Leave the proxy's target at `http://127.0.0.1:8080`.** Rewriting it to the preview URL makes every API call answer 401
-  (`preview requires sign-in`): the proxy is a request from the server inside the container, and it does not carry your browser's sign-in
+  (`preview requires sign-in`). The development server's request does not carry the browser's preview authentication cookie
 - If the screen on 3000 must call 8080 directly, turn on "**Allow calls between ports**". Then a third party's page that knows the URL can also call it through your browser
 - **Spring Boot**: set `server.forward-headers-strategy=framework`
 - **Next.js** needs `allowedDevOrigins`. Without it, access to `/_next/*` from another origin is blocked, and only the

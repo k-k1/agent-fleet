@@ -62,9 +62,9 @@ WARNING: google login disabled — set both GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OA
 
 ### Google は通るのに Agent Fleet が拒否する
 
-Google ではなく、許可リストの問題です。[ログインできない](../diagnose/cannot-login.ja.md) を見てください。
+Google ではなく、許可リストの問題です。[Agent Fleet にサインインできない](../diagnose/cannot-login.ja.md) を見てください。
 
 ## 関連
 
 - [サインインの方法を設定する](overview.ja.md)
-- [ログインできない](../diagnose/cannot-login.ja.md)
+- [Agent Fleet にサインインできない](../diagnose/cannot-login.ja.md)

@@ -74,4 +74,4 @@ AF_OIDC_OKTA_TRUST=email_verified
 
 - [サインインの方法を設定する](overview.ja.md)
 - [Microsoft Entra ID でサインインする](entra.ja.md)
-- [ログインできない](../diagnose/cannot-login.ja.md)
+- [Agent Fleet にサインインできない](../diagnose/cannot-login.ja.md)

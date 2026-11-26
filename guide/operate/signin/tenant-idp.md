@@ -107,5 +107,5 @@ so the tenant's row needs `oid` under **How the same account is recognised**.
 
 - [Choose how people sign in](../../admin/access/signin-methods.md) (the fields a tenant administrator fills in)
 - [Set up how people sign in](overview.md)
-- [Cannot log in](../diagnose/cannot-login.md)
+- [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md)
 - [Roles — who may do what](../../ref/roles.md)

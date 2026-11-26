@@ -65,7 +65,7 @@ To avoid adding settings, or to narrow the cause down, use **"Open in pane"**. I
 
 ## Every API call in the preview returns 401 (`preview requires sign-in`)
 
-- **Check that you did not point the dev server's proxy at the preview URL.** Keep Vite's `server.proxy` `target` and Next.js's `rewrites()` `destination` at `http://127.0.0.1:8080`. The proxy call leaves from inside the workspace and carries no browser sign-in
+- **Check that you did not point the dev server's proxy at the preview URL.** Keep Vite's `server.proxy` `target` and Next.js's `rewrites()` `destination` at `http://127.0.0.1:8080`. The development server's request does not carry the browser's preview authentication cookie
 - **If the browser calls the 8080 URL directly**, each port needs its own sign-in. Open `https://<random>-8080.…` in a tab once and sign in there. If the page on 3000 calls 8080, also turn on **"Allow calls between ports"** in ⚙ Settings → Preview subdomains (off by default)
 
 ## The browser pane shows `crashed` or `disconnected`, or keeps dying

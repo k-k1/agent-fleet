@@ -44,7 +44,7 @@ The commands are the compose ones, run from `deploy/compose/`.
 | A started workspace cannot be reached | Are the Control Plane and Caddy both `network_mode: host`? ([constraint A](#three-constraints-of-driving-docker-from-a-container)) |
 | Workspaces cannot reach the Control Plane URL that the host can | See [Workspaces cannot reach the public URL](#workspaces-cannot-reach-the-public-url) below |
 | The TLS certificate is not issued | See [The TLS certificate is not issued](#the-tls-certificate-is-not-issued) below |
-| Cannot sign in, a button is missing, a removed person still gets in | [Cannot log in](cannot-login.md) |
+| Cannot sign in, a button is missing, a removed person still gets in | [Cannot sign in to Agent Fleet](cannot-login.md) |
 | Exits at startup with `AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms` | A key per home needs the KMS custodian. Set `AF_KEY_CUSTODIAN=kms` (and `AF_KMS_KEY_ID`), or unset `AF_WORKSPACE_DEK` ([Give each home its own key](../keys/home-keys.md)) |
 | A workspace start fails with `open the home's credential-store key` | KMS is unreachable, or the key is disabled or refusing. There is no fallback to the master key. Fix access to KMS, then start it again ([Give each home its own key](../keys/home-keys.md)) |
 | After a restore, a workspace refuses to write credentials and the log says its credential store is `unreadable` | The home was restored from before the store moved to the home's key. Run `af-cp home-dek-status --remigrate <membership-id>` where the Control Plane runs, then restart the workspace ([Give each home its own key](../keys/home-keys.md#restoring-a-copy-from-before-the-move)) |
@@ -149,6 +149,6 @@ The Control Plane does not speak SAML-only IdPs or LDAP. Put a gateway in front 
 
 ## Related
 
-- [Cannot log in](cannot-login.md)
+- [Cannot sign in to Agent Fleet](cannot-login.md)
 - [Operating a deployment](../README.md)
 - [Roles — who may do what](../../ref/roles.md)

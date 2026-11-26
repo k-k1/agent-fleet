@@ -62,9 +62,9 @@ The consent screen is **External** and still in testing. Google stops every acco
 
 ### Google lets them through but Agent Fleet refuses
 
-That is the allowlist, not Google. See [Cannot log in](../diagnose/cannot-login.md).
+That is the allowlist, not Google. See [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md).
 
 ## Related
 
 - [Set up how people sign in](overview.md)
-- [Cannot log in](../diagnose/cannot-login.md)
+- [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md)

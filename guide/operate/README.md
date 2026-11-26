@@ -53,7 +53,7 @@ What people running Agent Fleet on their own infrastructure want to do, one task
 | Page | What you can do |
 |---|---|
 | [Find the cause from the symptom](diagnose/checklist.md) | Read the log and health, and narrow the cause down from the symptom table: the three constraints of driving Docker from a container, TLS, the FAQ |
-| [Cannot log in](diagnose/cannot-login.md) | Find out why sign-in is refused, a button is missing, or a removed person still gets in |
+| [Cannot sign in to Agent Fleet](diagnose/cannot-login.md) | Find out why sign-in is refused, a button is missing, or a removed person still gets in |
 
 ## Security
 

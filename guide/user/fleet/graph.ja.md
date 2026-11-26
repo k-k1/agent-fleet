@@ -84,6 +84,6 @@ source_of_truth: "Console のフリート俯瞰図ペイン"
 
 ## 関連
 
-- [動いているセッションを一覧する](overview.ja.md)
+- [セッションをカードで見る](overview.ja.md)
 - [セッションから子セッションを起動する](child-sessions.ja.md)
 - [別のセッションやエージェントに引き継ぐ](../sessions/handoff.ja.md)

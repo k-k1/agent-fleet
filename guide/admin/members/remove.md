@@ -7,8 +7,9 @@ source_of_truth: "the Console's tenant settings, Operations › Members, the mem
 
 English | [日本語](remove.ja.md)
 
-When someone leaves or moves, a tenant administrator can carry the whole sequence through alone.
-Take them off the roster to stop their access, erase their home and backups, and finally delete their row from the roster.
+When someone leaves or moves, a tenant administrator can complete every step.
+First, use **Remove member** to stop their access. Their row stays in the roster so you can delete their home directory and backups.
+Once the remaining steps are complete, you can permanently delete the member from the roster.
 
 ## How it works
 
@@ -24,7 +25,7 @@ Go through **Operations** in the member detail in this order. The buttons for st
 
 ![The member detail's "Operations": the "Force-stop the workspace", "Rotate git token", "Clean home" and "Remove member" buttons](../../assets/admin-member-ops-en-light.webp)
 
-1. Press **Remove member**. They leave the roster and lose access from the next request. Do this first
+1. Press **Remove member**. They lose access from the next request, and the roster shows them as removed
 2. If the card still says Running or Starting, press **Force-stop the workspace**
 3. Press **Clean home**. **This cannot be undone**
 4. If **Delete backups** is offered, press it. **This cannot be undone**
