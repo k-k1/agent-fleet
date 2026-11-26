@@ -2247,6 +2247,12 @@ func decideDeleteRepo(w http.ResponseWriter, r *http.Request, dir, parent string
 				len(running), strings.Join(running, ", ")))
 		return nil
 	}
+	// A session being started here is one the guard above cannot see yet (ReserveLaunch).
+	if LaunchingUnder(dir) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
+			"a session is starting in this working copy; deleting it would break it. Stop that session first.")
+		return nil
+	}
 	// Deletion lock (docs/log/45): the working copy's own lock, and locked sessions living
 	// in it being taken down with it. Neither is passable with force=true — unlocking is the
 	// only way through.

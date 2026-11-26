@@ -1220,6 +1220,13 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// Held until the meta is written (reserveLaunch).
+	releaseLaunch, lref := reserveLaunch(meta, launchFresh)
+	if lref != nil {
+		httpx.WriteErr(w, lref.Status, lref.Code, lref.Message)
+		return
+	}
+	defer releaseLaunch()
 	if meta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(meta)
 		if !ok {
@@ -1750,6 +1757,15 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// Held until the meta is written (reserveLaunch).
+	releaseLaunch, lref := reserveLaunch(newMeta, launchFresh)
+	if lref != nil {
+		undoStudio()
+		unarchiveAfterFailedRecreate(m.Name)
+		httpx.WriteErr(w, lref.Status, lref.Code, lref.Message)
+		return
+	}
+	defer releaseLaunch()
 	if newMeta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(newMeta)
 		if !ok {

@@ -179,3 +179,53 @@ func TestSessionUnderDeletionMatchesTheStoredDir(t *testing.T) {
 		}
 	}
 }
+
+// A launch's reservation is seen by a delete of its folder or of any folder above it, by the
+// spelling it was named with and by its real path, and not by a sibling's; a launch into a copy
+// being deleted is refused, and a released reservation is gone.
+func TestLaunchReservationsMeetDeletes(t *testing.T) {
+	root := t.TempDir()
+	space := filepath.Join(root, "spaces", "notes")
+	if err := os.MkdirAll(filepath.Join(space, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(space, link); err != nil {
+		t.Fatal(err)
+	}
+	// Meta.Dir at home, the cwd inside the space through a symlink.
+	release, ok := ReserveLaunch("s1", root, filepath.Join(link, "sub"))
+	if !ok {
+		t.Fatal("a launch with no delete in flight was refused")
+	}
+	if !LaunchingUnder(space) || !LaunchingUnder(link) || !LaunchingUnder(filepath.Join(space, "sub")) {
+		t.Fatal("the delete of the folder the launch runs in does not see the launch")
+	}
+	if LaunchingUnder(filepath.Join(root, "spaces", "notes2")) {
+		t.Fatal("a sibling folder's delete sees the launch")
+	}
+	release()
+	release() // idempotent
+	if LaunchingUnder(space) {
+		t.Fatal("a released reservation still holds the folder")
+	}
+
+	end, ok, _ := BeginDelete(link, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	if _, ok := ReserveLaunch("s2", filepath.Join(space, "sub")); ok {
+		t.Fatal("a launch into a folder being deleted was reserved")
+	}
+	if r, ok := ReserveLaunch("s3", filepath.Join(root, "elsewhere")); !ok {
+		t.Fatal("a launch elsewhere was refused")
+	} else {
+		r()
+	}
+	end()
+	if r, ok := ReserveLaunch("s2", filepath.Join(space, "sub")); !ok {
+		t.Fatal("a launch was refused after the delete ended")
+	} else {
+		r()
+	}
+}

@@ -148,6 +148,11 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 		if ref := startRefusalOf(m); ref != nil {
 			return &StartRefusalError{ref}
 		}
+		release, ref := reserveLaunch(m, launchExisting)
+		if ref != nil {
+			return &StartRefusalError{ref}
+		}
+		defer release()
 		if _, err := mcpx.StartManagedSession(d, m); err != nil {
 			log.Printf("managed resume %s: %v", name, err)
 			return err
@@ -176,6 +181,11 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	if ref := recallAndRefuse(&m); ref != nil {
 		return &StartRefusalError{ref}
 	}
+	release, ref := reserveLaunch(m, launchExisting)
+	if ref != nil {
+		return &StartRefusalError{ref}
+	}
+	defer release()
 	if err := startSessionTmux(m, ssmForce); err != nil {
 		log.Printf("resume %s: %v", name, err)
 		return err

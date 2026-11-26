@@ -110,6 +110,16 @@ of one base clone (three at once took about as long as one, and left no entry), 
 `git worktree prune` takes the write side of a per-base-clone lock, because it would otherwise drop the entry of
 a worktree whose folder another remove has just deleted. A rename-then-background-remove was not needed.
 
+*Amended 2026-11-26 (#5122 part 1): launches take the gate too.* A session that is starting has no process or
+meta the guards can see, and a launch that read its folder before a delete decided does not see the mark. Every
+path that starts a process for a session (create, `/start`, a Managed input, a driver switch, fork, recreate)
+therefore reserves the folder it runs in, its `Meta.Dir` and its effective cwd, inside the gate
+(`gitx.ReserveLaunch`) and holds the reservation until its process and meta are published. A launch into a
+marked folder is refused with 409 `delete_in_progress`; a delete (of a working copy or of a space) that meets a
+reservation is refused like one that meets a running session. Under the gate a new session's folder must still
+exist, and an existing session's meta is read again, so a start never revives a session a delete settled since
+it was read. The Managed runtime's own reconcile after a runtime death does not reserve.
+
 A session whose working folder is gone can still be read, on the shelf or in the list, but not resumed
 ("Folder missing").
 

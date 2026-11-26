@@ -244,6 +244,12 @@ func decideDeleteSpace(w http.ResponseWriter, folder, dir string) (end func()) {
 			fmt.Sprintf("%d session(s) are running in this space (%s); stop them first", len(running), strings.Join(running, ", ")))
 		return nil
 	}
+	// A session being started here is one the guard above cannot see yet (gitx.ReserveLaunch).
+	if gitx.LaunchingUnder(dir) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
+			"a session is starting in this space; stop it first")
+		return nil
+	}
 	if locked := sessionx.LockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeSpaceLockedSessions,
 			fmt.Sprintf("%d locked session(s) live in this space (%s); unlock them first", len(locked), strings.Join(locked, ", ")))

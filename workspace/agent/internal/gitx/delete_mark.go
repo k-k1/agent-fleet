@@ -180,3 +180,69 @@ func DeleteTouches(dir, parent string) bool {
 	}
 	return false
 }
+
+// Launch reservations (#5122). A launch reads its folder, and a delete reads the running
+// sessions, at moments of their own: a session whose process and meta are not published yet is
+// invisible to the delete's guards, and a delete that decided after the launch read its folder is
+// invisible to the launch. Each launch therefore reserves the folder it runs in inside the
+// deletion gate, the same gate a delete decides in, and holds the reservation until its process
+// and its meta are published. Under the gate one of the two always sees the other: the launch
+// meets the mark and is refused, or the delete meets the reservation (and, once it is released,
+// the running session) and is refused.
+
+var launchRes = struct {
+	mu   sync.Mutex
+	next uint64
+	// m maps a reservation to the folders it holds, each both as named (cleaned) and as its real
+	// path, the two ways the delete's guards match a session's Meta.Dir.
+	m map[uint64][]launchPath
+}{m: map[uint64][]launchPath{}}
+
+type launchPath struct{ raw, real string }
+
+// ReserveLaunch reserves the folders a launch runs in (its Meta.Dir and its effective cwd). It
+// refuses (ok=false) when one of them is a copy being deleted or lies inside one, matched the way
+// a lock is (UnderDeletion, SessionUnderDeletion's string match). Call it inside the deletion
+// gate. release is safe to call more than once.
+func ReserveLaunch(name string, paths ...string) (release func(), ok bool) {
+	var held []launchPath
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if UnderDeletion(p) || SessionUnderDeletion(name, p) {
+			return nil, false
+		}
+		held = append(held, launchPath{raw: filepath.Clean(p), real: markKey(p)})
+	}
+	launchRes.mu.Lock()
+	launchRes.next++
+	id := launchRes.next
+	launchRes.m[id] = held
+	launchRes.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			launchRes.mu.Lock()
+			delete(launchRes.m, id)
+			launchRes.mu.Unlock()
+		})
+	}, true
+}
+
+// LaunchingUnder reports whether a launch holds a reservation on dir or on a folder inside it. A
+// delete asks it inside the gate, beside its running-session guard: such a launch is a running
+// session the guard cannot see yet.
+func LaunchingUnder(dir string) bool {
+	raw, real := filepath.Clean(dir), markKey(dir)
+	launchRes.mu.Lock()
+	defer launchRes.mu.Unlock()
+	for _, held := range launchRes.m {
+		for _, p := range held {
+			if underPath(p.raw, raw) || underPath(p.real, real) {
+				return true
+			}
+		}
+	}
+	return false
+}

@@ -157,6 +157,14 @@ func resumeManagedAs(d agents.Driver, m session.Meta, input, deliberate bool) (a
 			return nil, fmt.Errorf("%w: %v", errActNotRecorded, err)
 		}
 	}
+	if !ManagedAlive(m) {
+		// A start, not a reattach: see reserveLaunch.
+		release, ref := reserveLaunch(m, launchExisting)
+		if ref != nil {
+			return nil, &StartRefusalError{ref}
+		}
+		defer release()
+	}
 	h, err := d.Resume(m)
 	if err != nil {
 		return nil, err
