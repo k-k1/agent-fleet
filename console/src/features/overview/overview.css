@@ -398,3 +398,9 @@
 .ovw-where .ovw-ords {
   flex: none;
 }
+/* The foot of a group: stopped sessions that left the 24-hour window are counted, not listed. */
+.act-older {
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: 0.85em;
+}

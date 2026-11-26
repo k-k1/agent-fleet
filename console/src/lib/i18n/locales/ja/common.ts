@@ -384,6 +384,8 @@ export const common = {
   "active.hidden_waiting_hint_other": "畳んだ子セッションのうち {count} 本があなたの回答を待っています",
   "active.group_waiting_hint_one": "このグループの {count} 本があなたの回答を待っています",
   "active.group_waiting_hint_other": "このグループの {count} 本があなたの回答を待っています",
+  "active.older_stopped_one": "24 時間より前に停止したセッション {count} 本",
+  "active.older_stopped_other": "24 時間より前に停止したセッション {count} 本",
   "rail.badge.waiting_one": "返事待ちのセッション {count} 件",
   "rail.badge.waiting_other": "返事待ちのセッション {count} 件",
   "rail.badge.news_one": "新着 {count} 件",

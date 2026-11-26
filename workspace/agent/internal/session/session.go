@@ -338,10 +338,15 @@ type Session struct {
 	Label         string         `json:"label"`     // claude --name display name (claude only)
 	Started       string         `json:"started"`   // "01/02 15:04" local time, for the list
 	CreatedAt     string         `json:"createdAt"` // RFC3339
-	RemoteUrl     string         `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
-	State         string         `json:"state"`     // claude live state: working | idle | question | ""
-	Alive         bool           `json:"alive"`     // true = live tmux session; false = stopped
-	Resumable     bool           `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
+	// StoppedAt is when the Agent first saw this session's pane gone (Meta.StoppedAt, RFC3339), set
+	// only on a stopped row and omitted on a live one or one stopped before the Agent stamped it.
+	// The Console's Active view lists a stopped session for a day after this instant, so a missing
+	// value must read as "unknown", never as "just now".
+	StoppedAt string `json:"stoppedAt,omitempty"`
+	RemoteUrl string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
+	State     string `json:"state"`     // claude live state: working | idle | question | ""
+	Alive     bool   `json:"alive"`     // true = live tmux session; false = stopped
+	Resumable bool   `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
 	// BackgroundBusy: state is idle (turn done) but work an earlier turn started is still
 	// running — claude: a run_in_background task under the pane; muse: a tool call still in
 	// progress; managed codex: a background terminal. Lets the Console mark a session that is

@@ -382,6 +382,8 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "active.hidden_waiting_hint_other": "{count} folded child sessions are waiting for your answer",
   "active.group_waiting_hint_one": "{count} session in this group is waiting for your answer",
   "active.group_waiting_hint_other": "{count} sessions in this group are waiting for your answer",
+  "active.older_stopped_one": "{count} more session stopped over 24 hours ago",
+  "active.older_stopped_other": "{count} more sessions stopped over 24 hours ago",
   "rail.badge.waiting_one": "{count} session waiting for your answer",
   "rail.badge.waiting_other": "{count} sessions waiting for your answer",
   "rail.badge.news_one": "{count} new update",

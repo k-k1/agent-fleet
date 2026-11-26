@@ -95,6 +95,18 @@ describe("ActiveSection", () => {
     expect(host.querySelector(".ovw-project")).toBeNull();
   });
 
+  it("lists a session that stopped within a day and counts the older ones in a line at the group's foot", async () => {
+    const ago = (h: number) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+    await render([
+      sess("a", { repo: "app" }),
+      sess("recent", { repo: "app", alive: false, stoppedAt: ago(2) }),
+      sess("old", { repo: "app", alive: false, stoppedAt: ago(30) }),
+      sess("older", { repo: "app", alive: false }),
+    ]);
+    expect(cards()).toEqual(["a", "recent"]);
+    expect(host.querySelector(".act-older")?.textContent).toBe("2 more sessions stopped over 24 hours ago");
+  });
+
   it("asks the server for nothing", async () => {
     useSpacesStore.getState().clear();
     await render([sess("sp", { space: "q3-abcdef" })]);

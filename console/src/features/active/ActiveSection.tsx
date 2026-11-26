@@ -67,7 +67,8 @@ export const ActiveSection = memo(function ActiveSection() {
 
   const expandedSet = useMemo(() => new Set(expanded), [expanded]);
   const groups = useMemo(
-    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded),
+    // The window moves with the clock; the list is polled, so a read per change is fresh enough.
+    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, Date.now()),
     // `locale` is not named in the body: compareText reads it.
     [sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, locale],
   );
@@ -128,6 +129,11 @@ export const ActiveSection = memo(function ActiveSection() {
                     </div>
                   );
                 })}
+                {g.older > 0 && (
+                  <div className="act-older" role="listitem">
+                    {tCount("active.older_stopped", g.older)}
+                  </div>
+                )}
               </div>
               )}
             </section>

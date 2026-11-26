@@ -32,6 +32,10 @@ type SessionRow struct {
 	// Agent reported none. Without it a stopped Workspace's list files a space session under the
 	// repository that shares its folder name.
 	Place *SessionPlace
+	// StoppedAt is when the Agent first saw the session stopped (RFC3339), "" for a live row or
+	// one the Agent reported without it. The Console's Active view lists a stopped session for a
+	// day after it, so a stopped Workspace's list has to carry it.
+	StoppedAt string
 	// Links are the work items and PRs the session is linked to (#3134), in the Agent's order.
 	// Written to session_work_link with the row; ListSessions does not fill it (ListSessionLinks
 	// does), so a reader that only counts sessions does not read every link title.
@@ -112,9 +116,9 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID), dropNUL(r.QueueCategoryID), placeColumn(r.Place)); err != nil {
+			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place, stopped_at)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID), dropNUL(r.QueueCategoryID), placeColumn(r.Place), r.StoppedAt); err != nil {
 			return err
 		}
 		if err := insertSessionLinks(ctx, tx, workspaceID, r.Name, r.Links); err != nil {
@@ -167,7 +171,7 @@ func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session str
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place
+		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place, stopped_at
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -177,7 +181,7 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 	for rows.Next() {
 		r := SessionRow{WorkspaceID: workspaceID}
 		var place sql.NullString
-		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession, &r.ScheduleID, &r.QueueCategoryID, &place); err != nil {
+		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession, &r.ScheduleID, &r.QueueCategoryID, &place, &r.StoppedAt); err != nil {
 			return nil, err
 		}
 		r.Place = placeOfColumn(place)

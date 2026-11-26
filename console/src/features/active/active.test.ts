@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeGroups, activeScope, unattendedScope, cycleCuts, needsMember, OTHER_GROUP } from "./active.ts";
+import { activeGroups, activeScope, unattendedScope, cycleCuts, needsMember, olderStopped, stoppedRecently, RECENT_STOP_MS, OTHER_GROUP } from "./active.ts";
 import { waitingSessions } from "../../app/activity/badges.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Space } from "../spaces/store.ts";
@@ -266,5 +266,60 @@ describe("unattended groups", () => {
     const g = activeGroups(w, [], [], null);
     expect(g.find((x) => x.kind === "autorun")!.waiting).toBe(1);
     expect(waitingSessions(w)).toBe(1);
+  });
+});
+
+describe("recently stopped sessions (#5155)", () => {
+  const now = Date.parse("2026-11-26T12:00:00Z");
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const H = 3600 * 1000;
+
+  it("lists a session for 24 hours after stoppedAt, then drops it", () => {
+    const list = [
+      s("fresh", { alive: false, stoppedAt: ago(H) }),
+      s("edge", { alive: false, stoppedAt: ago(RECENT_STOP_MS) }),
+      s("old", { alive: false, stoppedAt: ago(RECENT_STOP_MS + 1000) }),
+    ];
+    expect(names(activeScope(list, null, undefined, [], now))).toEqual(["fresh", "edge"]);
+  });
+
+  it("does not list a stopped session with no stoppedAt (an older Agent) or an unreadable one", () => {
+    const list = [s("none", { alive: false }), s("junk", { alive: false, stoppedAt: "yesterday" })];
+    expect(names(activeScope(list, null, undefined, [], now))).toEqual([]);
+    expect(stoppedRecently(list[0], now)).toBe(false);
+    expect(stoppedRecently(list[1], now)).toBe(false);
+  });
+
+  it("never reads a live session's stoppedAt", () => {
+    expect(stoppedRecently(s("live", { stoppedAt: ago(H) }), now)).toBe(false);
+  });
+
+  it("counts a stopped instant ahead of the browser's clock as recent", () => {
+    expect(stoppedRecently(s("skew", { alive: false, stoppedAt: new Date(now + 5 * 60000).toISOString() }), now)).toBe(true);
+  });
+
+  it("still leaves shells and unattended runs out", () => {
+    const list = [s("sh", { kind: "shell", alive: false, stoppedAt: ago(H) }), s("run", { origin: "queue", alive: false, stoppedAt: ago(H) })];
+    expect(names(activeScope(list, null, undefined, [], now))).toEqual([]);
+  });
+
+  it("counts the stopped sessions that left the window at the foot of their group, not as rows", () => {
+    const repos = [repo("app", { remote: "github.com", remotePath: "acme/app" })];
+    const list = [
+      s("live", { dir: "/h/repos/app", repo: "app" }),
+      s("recent", { dir: "/h/repos/app", repo: "app", alive: false, stoppedAt: ago(H) }),
+      s("old1", { dir: "/h/repos/app", repo: "app", alive: false, stoppedAt: ago(30 * H) }),
+      s("old2", { dir: "/h/repos/app", repo: "app", alive: false }),
+    ];
+    const groups = activeGroups(list, repos, [], null, new Set(), undefined, true, now);
+    expect(groups).toHaveLength(1);
+    expect(names(groups[0].sessions)).toEqual(["live", "recent"]);
+    expect(groups[0].older).toBe(2);
+    expect(names(olderStopped(list, null, undefined, repos, now))).toEqual(["old1", "old2"]);
+  });
+
+  it("makes no group out of sessions that are only old", () => {
+    const list = [s("old", { alive: false, stoppedAt: ago(48 * H) })];
+    expect(activeGroups(list, [], [], null, new Set(), undefined, true, now)).toEqual([]);
   });
 });

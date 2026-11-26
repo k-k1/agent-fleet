@@ -644,7 +644,7 @@ export function App() {
                 loads, so it mounts with the shell: nothing to defer. */}
             <RailView id="active" active={railView} shown={railShown} scoped>
               <SoloSection>
-                {workspaceRunning ? <ActiveSection /> : <StoppedRailSection id="active" title={tr("rail.view.active")} icon="pulse" />}
+                <ActiveSection />
               </SoloSection>
             </RailView>
             {/* Shells and SSM logins (ADR 0142 decision 10). Mounted on first show: it reads the
