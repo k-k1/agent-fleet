@@ -21,13 +21,19 @@ export function targetDir(target: { repo: Repo } | { space: string; dir: string 
   return "space" in target ? target.dir : target.repo.path || "";
 }
 
-/** The repos rail's row for this session's working copy. Matched on `dir`/`path` first —
- *  the only reliable link between a session and its copy — with the folder name as the
- *  fallback for a row the list has not caught up with. */
+/** The repos rail's row for this session's working copy. Matched on `dir`/`path` first;
+ *  then on the working-copy id the Agent reads from the directory now, when exactly one row
+ *  carries it (a session started through a link spells another path, and its stored place
+ *  names no copy); then on the folder name, for a row the list has not caught up with. */
 function repoOf(session: Session | null | undefined, repos: Repo[]): Repo | undefined {
   const dir = session?.dir || session?.path || "";
+  const byPath = repos.find((r) => !!r.path && r.path === dir);
+  if (byPath) return byPath;
+  const id = session?.workingCopyId;
+  const byId = id ? repos.filter((r) => r.workingCopyId === id) : [];
+  if (byId.length === 1) return byId[0];
   const folder = session ? sessionRepo(session) : "";
-  return repos.find((r) => !!r.path && r.path === dir) || (folder ? repos.find((r) => r.name === folder) : undefined);
+  return folder ? repos.find((r) => r.name === folder) : undefined;
 }
 
 /** Build the launch target for a handoff proposal.

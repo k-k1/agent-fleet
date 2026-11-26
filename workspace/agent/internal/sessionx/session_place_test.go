@@ -78,9 +78,9 @@ func TestPlaceOf(t *testing.T) {
 	}
 	// GET /repos lists any folder name, spaces included, so the place does too.
 	gitInit(t, filepath.Join(repos, "team app"))
-	// A symlink entry under ~/repos is skipped by GET /repos, so it is filed under the repository
-	// or worktree it points to, and so is a link elsewhere; a link into a space, or to a directory
-	// that is no place, stays other.
+	// A symlink entry under ~/repos is skipped by GET /repos and is no repository here either, and
+	// a link elsewhere is filed by its own spelling, never by where it points now (it can be
+	// pointed elsewhere while the session is stopped).
 	if err := os.Symlink(filepath.Join(repos, "foo"), filepath.Join(repos, "alias")); err != nil {
 		t.Fatal(err)
 	}
@@ -88,12 +88,6 @@ func TestPlaceOf(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(repos, "foo@wt"), filepath.Join(home, "links", "foo@wt")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(spacex.Root(), "foo"), filepath.Join(home, "links", "space")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(home, "elsewhere"), filepath.Join(home, "links", "plain")); err != nil {
 		t.Fatal(err)
 	}
 	// ~/repos/hop/../foo runs in ~/elsewhere/foo, wherever Clean would fold it lexically.
@@ -159,11 +153,9 @@ func TestPlaceOf(t *testing.T) {
 		{filepath.Join(repos, "foo") + "/.", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
 		{filepath.Join(repos, "foo", "sub") + "/..", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
 		{filepath.Join(repos, "team app"), session.Place{Kind: session.PlaceRepo, ID: "team app"}},
-		{filepath.Join(repos, "alias"), session.Place{Kind: session.PlaceRepo, ID: "foo"}},
-		{filepath.Join(repos, "alias") + "/", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
-		{filepath.Join(home, "links", "foo@wt"), session.Place{Kind: session.PlaceWorktree, ID: "foo@wt", Parent: "foo"}},
-		{filepath.Join(home, "links", "space"), session.Place{Kind: session.PlaceOther}},
-		{filepath.Join(home, "links", "plain"), session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(repos, "alias"), session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(repos, "alias") + "/", session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(home, "links", "foo@wt"), session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo/.", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(home, "elsewhere", "back") + "/../team app", session.Place{Kind: session.PlaceRepo, ID: "team app"}},
@@ -479,13 +471,22 @@ func TestSessionPlaceFollowsTheLaunchRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(repos, "hop") + "/../app"
-	if got := sessionPlaceOf(dir, "src"); *got != (session.Place{Kind: session.PlaceRepo, ID: "app"}) {
-		t.Errorf("with a subdir: %+v", got)
+	src := session.Meta{Name: "plsd", Dir: dir, Subdir: "src", Kind: session.KindShell}
+	// The subdir is gone (a branch switch removed it): CWD falls back to the raw dir, and so
+	// does the place.
+	if cwd, got := src.CWD(), sessionPlaceOf(dir, "src"); cwd != dir || got.Kind != session.PlaceOther {
+		t.Errorf("subdir missing: CWD %q, place %+v", cwd, got)
+	}
+	if err := os.MkdirAll(filepath.Join(repos, "app", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if cwd, got := src.CWD(), sessionPlaceOf(dir, "src"); cwd != filepath.Join(repos, "app", "src") || *got != (session.Place{Kind: session.PlaceRepo, ID: "app"}) {
+		t.Errorf("subdir present: CWD %q, place %+v", cwd, got)
 	}
 	if got := sessionPlaceOf(dir, ""); got.Kind != session.PlaceOther {
 		t.Errorf("without a subdir: %+v", got)
 	}
-	if got := forkMeta(session.Meta{Name: "plsd", Dir: dir, Subdir: "src", Kind: session.KindShell}, "plsdf", "", "plsd", "").Place; got == nil || got.Kind != session.PlaceRepo {
+	if got := forkMeta(src, "plsdf", "", "plsd", "").Place; got == nil || got.Kind != session.PlaceRepo {
 		t.Errorf("fork with a subdir: %+v", got)
 	}
 }

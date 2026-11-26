@@ -726,7 +726,7 @@ func (c *createRun) queueDirIsRepository() bool {
 		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+dir)
 		return false
 	}
-	switch strictPlaceOf(dir).Kind {
+	switch PlaceOf(dir).Kind {
 	case session.PlaceRepo, session.PlaceWorktree:
 		return true
 	}
@@ -815,12 +815,15 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
 		MuseContributorMode: contributorModeOn(c.kind),
 	}
-	if strict := strictPlaceOf(req.Dir).Kind; c.queueRepo && strict != session.PlaceRepo && strict != session.PlaceWorktree {
-		// Read again after queueDirIsRepository, by the spelling alone: a working copy replaced
-		// by a link since (even to another listed copy) is caught where it is seen, not launched into.
-		httpx.WriteErr(c.w, http.StatusBadRequest, "queue_dir_not_repository",
-			"a queue runs in a repository directly under ~/repos, and this is not one: "+req.Dir)
-		return session.Meta{}, false
+	if c.queueRepo {
+		// Read again after queueDirIsRepository, on the dir itself (the stored place follows a
+		// subdir's launch rule): a working copy replaced by a link since is caught where it is
+		// seen, not launched into.
+		if k := PlaceOf(req.Dir).Kind; k != session.PlaceRepo && k != session.PlaceWorktree {
+			httpx.WriteErr(c.w, http.StatusBadRequest, "queue_dir_not_repository",
+				"a queue runs in a repository directly under ~/repos, and this is not one: "+req.Dir)
+			return session.Meta{}, false
+		}
 	}
 	if c.origin == session.OriginSchedule {
 		meta.ScheduleID = cleanScheduleID(req.ScheduleID)

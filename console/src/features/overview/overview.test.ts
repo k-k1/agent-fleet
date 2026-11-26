@@ -70,6 +70,11 @@ describe("overviewGroups", () => {
     expect(names(overviewGroups(list, repos, w, false)).map((n) => n.sort())).toEqual([["a", "qa"]]);
     const listed = [...repos, repo("qa-copy", { worktree: true, parent: "app", remote: "github.com", remotePath: "acme/app" })];
     expect(names(overviewGroups(list, listed, w, false)).map((n) => n.sort())).toEqual([["a", "qa"]]);
+    // A worktree of a repository outside ~/repos stores no parent; the list's row guesses app from
+    // its git directory's folder name, and must not pull it into app's set.
+    const ext = [s("a", { repo: "app" }), s("x", { repo: "ext-wt", place: { kind: "worktree", id: "ext-wt" } })];
+    const guessed = [...repos, repo("ext-wt", { worktree: true, parent: "app" })];
+    expect(names(overviewGroups(ext, guessed, w, false)).flat()).toEqual(["a"]);
   });
 
   it("counts the running cards per heading", () => {

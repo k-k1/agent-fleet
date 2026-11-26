@@ -46,6 +46,20 @@ describe("handoffLaunchTarget", () => {
     expect(t).toEqual({ error: "no_parent" });
   });
 
+  // #5219: a session started through a link spells another path and stores no repository place;
+  // the working-copy id the Agent reads from the directory now leads back to the copy, even when
+  // the link was pointed elsewhere since the session started.
+  it("matches a session started through a link by its current working-copy id, when one row has it", () => {
+    const a: Repo = { ...WT, workingCopyId: "wc_a" };
+    const b: Repo = { name: "app@wip-y", path: "/home/dev/repos/app@wip-y", worktree: true, parent: "app", branch: "temp/y", workingCopyId: "wc_b" };
+    const linked = sess({ repo: "current", dir: "/home/dev/links/current", worktree: true, place: { kind: "other" }, workingCopyId: "wc_b", currentBranch: "temp/y" });
+    expect(handoffLaunchTarget(linked, [GIT, a, b], true)).toEqual({ repo: { ...GIT, branch: "temp/y" } });
+    expect(handoffLaunchTarget(linked, [GIT, a, b], false)).toMatchObject({ repo: { name: "app@wip-y", path: "/home/dev/links/current" } });
+    // two rows with one id (a file copy of a clone) say nothing about which one it is
+    const twin: Repo = { ...b, name: "app@twin", path: "/home/dev/repos/app@twin" };
+    expect(handoffLaunchTarget(linked, [GIT, b, twin], true)).toEqual({ error: "no_parent" });
+  });
+
   it("reports no_dir for a session with no working directory", () => {
     expect(handoffLaunchTarget(sess({}), [GIT], false)).toEqual({ error: "no_dir" });
   });

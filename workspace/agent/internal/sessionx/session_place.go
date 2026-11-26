@@ -15,53 +15,16 @@ import (
 // and nothing re-derives it from the folder name afterwards, because a space and a repository
 // can share a basename. A space is told by spacex.FolderOf (its marker under ~/spaces); home
 // by being the home directory itself; a repository or worktree by being a real directory
-// directly under ~/repos under any folder name. A spelling that names no place there (a symlink
-// entry under ~/repos, which GET /repos skips, or a link elsewhere) is filed under the repository
-// or worktree it resolves to, so a session started through a link to ~/repos/app is filed under
-// app, never under the link's name. A link into a space or to home stays PlaceOther: the space's
-// names, busy check and deletion go by the spelt path. Anything else is PlaceOther. Never nil.
-// A queue's create, which must not be redirected by a link, judges the spelling alone
-// (strictPlaceOf).
+// directly under ~/repos under any folder name (a symlink entry never: GET /repos skips those
+// too). Anything else is PlaceOther. Never nil.
 //
 // The parent is compared physically: a spelling with ".." is resolved before it is judged, so
 // ~/repos/link/../app is filed where it really runs, never as ~/repos/app.
 func PlaceOf(dir string) *session.Place {
-	if dir == "" || !filepath.IsAbs(dir) {
-		return &session.Place{Kind: session.PlaceOther}
-	}
-	p := placeOfSpelling(dir)
-	if p.Kind != session.PlaceOther {
-		return p
-	}
-	if real, err := filepath.EvalSymlinks(dir); err == nil && real != filepath.Clean(dir) {
-		if r := placeOfSpelling(real); r.Kind == session.PlaceRepo || r.Kind == session.PlaceWorktree {
-			return r
-		}
-	}
-	return p
-}
-
-// strictPlaceOf is PlaceOf without following a link: what the spelling itself names.
-func strictPlaceOf(dir string) *session.Place {
-	if dir == "" || !filepath.IsAbs(dir) {
-		return &session.Place{Kind: session.PlaceOther}
-	}
-	return placeOfSpelling(dir)
-}
-
-// sessionPlaceOf is the place of a session in dir with subdir, judged on the directory its
-// process enters by the rule Meta.CWD launches with: with a subdir the path is Joined, which
-// cleans `link/..` lexically, so the cleaned dir is the root; without one the raw dir is entered.
-func sessionPlaceOf(dir, subdir string) *session.Place {
-	if subdir != "" && dir != "" {
-		return PlaceOf(filepath.Clean(dir))
-	}
-	return PlaceOf(dir)
-}
-
-// placeOfSpelling classifies dir as it is spelt; PlaceOf retries it resolved.
-func placeOfSpelling(dir string) *session.Place {
 	other := &session.Place{Kind: session.PlaceOther}
+	if dir == "" || !filepath.IsAbs(dir) {
+		return other
+	}
 	if f := spacex.FolderOf(dir); f != "" {
 		return &session.Place{Kind: session.PlaceSpace, ID: f}
 	}
@@ -78,7 +41,7 @@ func placeOfSpelling(dir string) *session.Place {
 	}
 	full := filepath.Join(parent, folder)
 	if fi, err := os.Lstat(full); err != nil || !fi.IsDir() {
-		return other // missing, a file, or a symlink entry (PlaceOf retries its target)
+		return other // missing, a file, or a symlink entry, which GET /repos skips too
 	}
 	if main, linked := gitx.LinkedWorktreeMain(full); linked {
 		p := &session.Place{Kind: session.PlaceWorktree, ID: folder}
@@ -88,6 +51,17 @@ func placeOfSpelling(dir string) *session.Place {
 		return p
 	}
 	return &session.Place{Kind: session.PlaceRepo, ID: folder}
+}
+
+// sessionPlaceOf is the place of a session in dir with subdir, judged on the directory its
+// process enters by the rule Meta.CWD launches with: an existing subdir is Joined, which cleans
+// `link/..` lexically, so the cleaned dir is the root; without one (or with one that is gone,
+// where CWD falls back to the raw dir) the raw dir is entered.
+func sessionPlaceOf(dir, subdir string) *session.Place {
+	if subdir != "" && dir != "" && session.DirExists(filepath.Join(dir, filepath.FromSlash(subdir))) {
+		return PlaceOf(filepath.Clean(dir))
+	}
+	return PlaceOf(dir)
 }
 
 // repoName is what a meta records in Repo for a session in dir placed at p: the directory's base

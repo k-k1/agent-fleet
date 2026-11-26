@@ -206,8 +206,8 @@ func TestQueueArmMetaRefusesARepositoryReplacedByALink(t *testing.T) {
 	}
 }
 
-// The same re-read refuses a repository replaced by a link to ANOTHER listed repository, which the
-// session's displayed place would follow: a queue's create judges the spelling alone.
+// The same re-read refuses a repository replaced by a link to ANOTHER listed repository: a queue
+// must not be redirected to a copy it was not given.
 func TestQueueArmMetaRefusesARepositoryReplacedByALinkToAnother(t *testing.T) {
 	p := newCreateProbe(t)
 	repo := filepath.Join(p.home, "repos", "target")

@@ -113,17 +113,21 @@ export function sessionInSet(set: WorkingSet, s: Session): boolean {
   return set.repos.includes(folderBase(folder));
 }
 
-/** Is a session in the set, judged the way the Sessions tree places its row: a session in a
- * working copy the list knows goes by that copy (repoInSet), so a worktree whose folder is not
- * named `<base>@…` still follows its parent. The folder-name guess (sessionInSet) is only for
- * a folder the list does not know (the list not loaded yet, or a copy that is gone). A direct
- * assignment always counts. */
+/** Is a session in the set, judged the way the Sessions tree places its row: a row with a stored
+ * place by that place (sessionInSet); otherwise a session in a working copy the list knows goes
+ * by that copy (repoInSet), so a worktree whose folder is not named `<base>@…` still follows its
+ * parent. The folder-name guess (sessionInSet) is only for a folder the list does not know (the
+ * list not loaded yet, or a copy that is gone). A direct assignment always counts. */
 export function sessionInWorkingSet(
   set: WorkingSet,
   s: Session,
   byFolder: ReadonlyMap<string, Pick<Repo, "name" | "worktree" | "parent">>,
 ): boolean {
   if (set.sessions.includes(s.name)) return true;
+  // A stored place names its own parent, which the list's row can only guess (a worktree of a
+  // repository outside ~/repos gets the parent folder of a same-named one), so it decides before
+  // and after the row arrives alike.
+  if (s.place) return sessionInSet(set, s);
   const folder = sessionFolder(s);
   const repo = folder ? byFolder.get(folder) : undefined;
   return repo ? repoInSet(set, repo) : sessionInSet(set, s);
