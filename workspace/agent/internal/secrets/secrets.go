@@ -382,6 +382,10 @@ type MCPServer struct {
 	// 0119 decision 9); never set on a user row. It carries no secret: a confidential client's
 	// secret stays in the CP, which then runs the token and revocation requests.
 	OAuthClient *MCPTenantClient `json:"oauthClient,omitempty"`
+	// Elicitation is "" or "relay". "relay" has the Agent's relay answer the server's form
+	// elicitation (input_required) itself, with a person's choice from the Console, instead of
+	// passing it to the CLI (ADR 0146 decision 6). Only an OAuth definition goes through the relay.
+	Elicitation string `json:"elicitation,omitempty"`
 
 	Enabled   bool       `json:"enabled"`
 	Targets   MCPTargets `json:"targets"`

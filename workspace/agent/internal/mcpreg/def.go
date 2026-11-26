@@ -113,6 +113,8 @@ const (
 	CodeOAuthUserSecret = "mcp_oauth_user_secret"
 	CodeOAuthClient     = "mcp_oauth_client_invalid"
 	CodeOAuthClientUser = "mcp_oauth_client_tenant_only"
+	CodeElicitUnknown   = "mcp_elicitation_unknown"
+	CodeElicitOAuth     = "mcp_elicitation_oauth_only"
 )
 
 // AuthOAuth marks a definition whose server is signed in to with OAuth.
@@ -187,6 +189,16 @@ func Validate(d ServerDef) error {
 	}
 	if d.Auth != AuthOAuth && d.OAuthClient != nil {
 		return invalid(CodeOAuthClient, "a pre-registered client belongs to an OAuth server")
+	}
+	switch d.Elicitation {
+	case "":
+	case ElicitationRelay:
+		// The relay fronts OAuth definitions only; any other one reaches its server directly.
+		if d.Auth != AuthOAuth {
+			return invalid(CodeElicitOAuth, "the relay answers elicitation only for an OAuth server")
+		}
+	default:
+		return invalid(CodeElicitUnknown, "unknown elicitation handling: %q", d.Elicitation)
 	}
 	switch d.Transport {
 	case TransportStdio:

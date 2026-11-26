@@ -6,7 +6,9 @@ package mcpreg
 // long session, and a CLI that meets a 401 starts its own OAuth flow whose loopback callback the
 // member's browser cannot reach. Instead the config names this listener and a relay key; the
 // relay holds the grant (AccessToken / RefreshAccessToken) and forwards each request to the
-// registered URL. It is transport-level only: no MCP message is parsed, no body is logged.
+// registered URL. It is transport-level only: no MCP message is parsed, no body is logged. The one
+// exception is a definition flagged for form elicitation (ADR 0146 decision 6), whose requests and
+// tool results the relay reads to answer confirmations (relay_elicit.go).
 //
 // Rules that must not erode:
 //
@@ -236,17 +238,17 @@ func relayFail(w http.ResponseWriter, status int, msg string) {
 
 const consoleHint = "open the Agent Fleet Console, Settings > Connections > MCP servers (used by sessions), and sign in to this server again"
 
-// relayGrantProblem says what the CLI is told when the grant cannot serve the request. It is a
+// relayGrantProblem is what the CLI is told when the grant cannot serve the request. It is a
 // 502, not a 401: a CLI answers a 401 by trying OAuth against the relay's own origin, and a 403
 // reads as a scope problem. 502 means "the upstream failed", which is true, and carries the text.
-func relayGrantProblem(w http.ResponseWriter, id string, err error) {
+func relayGrantProblem(id string, err error) *relayProblem {
 	switch {
 	case errors.Is(err, ErrNotSignedIn), errors.Is(err, ErrSignInAgain):
-		relayFail(w, http.StatusBadGateway, "this MCP server is not signed in (or its sign-in expired); "+consoleHint)
+		return &relayProblem{http.StatusBadGateway, "this MCP server is not signed in (or its sign-in expired); " + consoleHint}
 	default:
 		// The authorization server could not be reached or refused for another reason.
 		log.Printf("mcp relay: %s: the grant could not be renewed", id)
-		relayFail(w, http.StatusBadGateway, "the sign-in for this MCP server could not be renewed right now; try again, and if it persists "+consoleHint)
+		return &relayProblem{http.StatusBadGateway, "the sign-in for this MCP server could not be renewed right now; try again, and if it persists " + consoleHint}
 	}
 }
 
@@ -269,7 +271,7 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 		relayFail(w, http.StatusNotFound, "no such MCP server")
 		return
 	}
-	target, err := relayTarget(id)
+	def, target, err := relayTarget(id)
 	if err != nil {
 		relayFail(w, http.StatusNotFound, err.Error())
 		return
@@ -284,20 +286,50 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 		}
 	}
 
-	ctx := r.Context()
-	token, res, err := refreshGrantRes(ctx, id, "")
-	if err != nil {
-		relayGrantProblem(w, id, err)
+	if def.Elicitation == ElicitationRelay && r.Method == http.MethodPost {
+		if call, ok := parseElicitRequest(body); ok {
+			body = call.body
+			if call.method == "tools/call" {
+				serveElicitingCall(w, r, def, target, call)
+				return
+			}
+		}
+	}
+
+	resp, p := relayExchange(r.Context(), r, id, target, body)
+	if p != nil {
+		p.write(w)
 		return
 	}
+	relayFinish(w, r, id, resp)
+}
+
+// relayProblem is a request the relay could not complete: the status and text the CLI is told.
+// A zero status means the CLI went away and is told nothing.
+type relayProblem struct {
+	status int
+	msg    string
+}
+
+func (p *relayProblem) write(w http.ResponseWriter) {
+	if p.status != 0 {
+		relayFail(w, p.status, p.msg)
+	}
+}
+
+// relayExchange sends body to target with the grant's token, renewing it once on a 401, and
+// returns the server's answer. A non-nil problem means there is none.
+func relayExchange(ctx context.Context, r *http.Request, id string, target *url.URL, body []byte) (*http.Response, *relayProblem) {
+	token, res, err := refreshGrantRes(ctx, id, "")
+	if err != nil {
+		return nil, relayGrantProblem(id, err)
+	}
 	if !relayBound(res, target) {
-		relayChanged(w, id)
-		return
+		return nil, relayChanged(id)
 	}
 	resp, err := relayForward(ctx, r, target, body, token)
 	if err != nil {
-		relayUpstreamDown(w, id, err)
-		return
+		return nil, relayUpstreamDown(id, err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		_ = resp.Body.Close()
@@ -305,29 +337,29 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 		// it is not followed by a second renewal, and a second 401 ends the exchange.
 		next, res, rerr := refreshGrantRes(ctx, id, token)
 		if rerr != nil {
-			relayGrantProblem(w, id, rerr)
-			return
+			return nil, relayGrantProblem(id, rerr)
 		}
 		// The server may have been re-pointed or signed in again while the first attempt was
 		// out: the renewed token is for whatever grant exists now, the target is the old URL.
 		if !relayBound(res, target) {
-			relayChanged(w, id)
-			return
+			return nil, relayChanged(id)
 		}
 		if resp, err = relayForward(ctx, r, target, body, next); err != nil {
-			relayUpstreamDown(w, id, err)
-			return
+			return nil, relayUpstreamDown(id, err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			_ = resp.Body.Close()
-			relayFail(w, http.StatusBadGateway, "the MCP server refused the renewed sign-in; "+consoleHint)
-			return
+			return nil, &relayProblem{http.StatusBadGateway, "the MCP server refused the renewed sign-in; " + consoleHint}
 		}
 	}
-	defer resp.Body.Close()
+	return resp, nil
+}
 
+// relayFinish passes the server's answer on to the CLI, minus what the relay never forwards.
+func relayFinish(w http.ResponseWriter, r *http.Request, id string, resp *http.Response) {
+	defer resp.Body.Close()
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		relayFail(w, http.StatusBadGateway, "the MCP server answered with a redirect, which the relay does not follow; check the registered URL")
+		relayFail(w, http.StatusBadGateway, relayRedirectMsg)
 		return
 	}
 	if resp.StatusCode == http.StatusForbidden {
@@ -335,6 +367,8 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 	}
 	relayCopyResponse(w, r, resp)
 }
+
+const relayRedirectMsg = "the MCP server answered with a redirect, which the relay does not follow; check the registered URL"
 
 // relayBound reports whether a token made for resource may be sent to target. The token and the
 // destination come from two reads of the store; this is the check that they are the same
@@ -346,9 +380,9 @@ func relayBound(resource string, target *url.URL) bool {
 	return ok1 && ok2 && a == b
 }
 
-func relayChanged(w http.ResponseWriter, id string) {
+func relayChanged(id string) *relayProblem {
 	log.Printf("mcp relay: %s: the registered URL and the sign-in no longer match", id)
-	relayFail(w, http.StatusBadGateway, "this MCP server's address or sign-in changed while the request was in flight; "+consoleHint)
+	return &relayProblem{http.StatusBadGateway, "this MCP server's address or sign-in changed while the request was in flight; " + consoleHint}
 }
 
 // noteInsufficientScope records a 403 whose challenge says insufficient_scope, with the scope it
@@ -370,25 +404,25 @@ func noteInsufficientScope(id string, challenges []string) {
 // registry, so a member's own row and a tenant-distributed one are relayed alike (a member's
 // opt-out reads as switched off), and a path that names anything else (a builtin, a server with
 // a static header, a user row shadowed by a tenant one) is not a relayed server.
-func relayTarget(id string) (*url.URL, error) {
+func relayTarget(id string) (ServerDef, *url.URL, error) {
 	reg, err := Load()
 	if err != nil {
-		return nil, errors.New("the credential store could not be read")
+		return ServerDef{}, nil, errors.New("the credential store could not be read")
 	}
 	for _, d := range reg.Servers {
 		if d.ID != id || d.Auth != AuthOAuth || d.Transport != TransportHTTP {
 			continue
 		}
 		if !d.Enabled {
-			return nil, errors.New("this MCP server is switched off")
+			return ServerDef{}, nil, errors.New("this MCP server is switched off")
 		}
 		u, perr := url.Parse(d.URL)
 		if perr != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
-			return nil, errors.New("this MCP server's URL is not usable")
+			return ServerDef{}, nil, errors.New("this MCP server's URL is not usable")
 		}
-		return u, nil
+		return d, u, nil
 	}
-	return nil, errors.New("no such MCP server")
+	return ServerDef{}, nil, errors.New("no such MCP server")
 }
 
 // Hop-by-hop headers (RFC 9110 §7.6.1) plus what the relay owns itself.
@@ -451,9 +485,9 @@ func relayForward(ctx context.Context, in *http.Request, target *url.URL, body [
 	return relayHTTP.Do(req)
 }
 
-func relayUpstreamDown(w http.ResponseWriter, id string, err error) {
+func relayUpstreamDown(id string, err error) *relayProblem {
 	if errors.Is(err, context.Canceled) {
-		return // the CLI went away
+		return &relayProblem{} // the CLI went away
 	}
 	// url.Error's text carries the full URL; log the cause only.
 	var ue *url.Error
@@ -461,25 +495,11 @@ func relayUpstreamDown(w http.ResponseWriter, id string, err error) {
 		err = ue.Err
 	}
 	log.Printf("mcp relay: %s: upstream: %v", id, err)
-	relayFail(w, http.StatusBadGateway, "the MCP server could not be reached")
+	return &relayProblem{http.StatusBadGateway, "the MCP server could not be reached"}
 }
 
 func relayCopyResponse(w http.ResponseWriter, r *http.Request, resp *http.Response) {
-	extra := map[string]bool{}
-	for _, v := range resp.Header.Values("Connection") {
-		for _, f := range strings.Split(v, ",") {
-			extra[http.CanonicalHeaderKey(strings.TrimSpace(f))] = true
-		}
-	}
-	for k, vs := range resp.Header {
-		c := http.CanonicalHeaderKey(k)
-		// WWW-Authenticate is the one that matters (see the file header); Set-Cookie and Location
-		// would hand the CLI state or a place to go that the relay did not vouch for.
-		if relayHopHeaders[c] || extra[c] || c == "Www-Authenticate" || c == "Set-Cookie" || c == "Location" {
-			continue
-		}
-		w.Header()[k] = append([]string(nil), vs...)
-	}
+	copyResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	// An SSE stream may send its headers and then wait for the first event: the CLI has to see

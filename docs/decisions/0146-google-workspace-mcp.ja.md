@@ -184,5 +184,12 @@ Addendum、利用枠の請求は、どれもそのプロジェクトに属する
   - `accounts.google.com` の `oauth-authorization-server` 文書は 404。OIDC 文書は 200 で、`S256`、
     `authorization_response_iss_parameter_supported: true` を持ち、`registration_endpoint` と CIMD はない。
   - `Mcp-Method` 付きの認証なし `tools/list` は 200。`Mcp-Method` がないと `-32020`「Header mismatch」。
+- **2026-11-26 に測ったこと（#5174）：** ループバックの Streamable HTTP サーバーに、各 CLI を非対話で向けた。
+  - claude 2.1.332 と opencode 2.4.1 は 2026-07-28 で話し、`elicitation: {form, url}` を宣言する。どちらも
+    `input_required` に自分で、すぐに `action: "cancel"` を返した。人には尋ねなかった。codex 0.172.0 は
+    2025-06-18 だけで話し、呼び出しは失敗した（「Unexpected response type」）。
+  - HTTP でのツール呼び出しの上限：claude は `notifications/progress` が届かないと 60 秒で打ち切る（進捗で
+    延びる。進捗付きなら 660 秒を通した）。codex は進捗の有無にかかわらず 300 秒。opencode は進捗なしでも 330 秒を
+    通した。そのため中継は保留中に進捗を流し、10 分で辞退する。
 - **確かめていないこと：** Google が RFC 8707 の `resource` を受け付けるか無視するか。設定ガイドにある
   「Developer Preview Program が必要」という一文（GA より前の記述かもしれない）。
