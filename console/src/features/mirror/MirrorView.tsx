@@ -57,6 +57,7 @@ import { CloudRunGroup, cloudRunCards, placeRuns, toolKey } from "../cloudruns/c
 import { MirrorConfirmCards } from "../awsconfirm/AwsConfirmCard.tsx";
 import { useAwsConfirmStore } from "../awsconfirm/store.ts";
 import { useDisplayed } from "../awsconfirm/useDisplayed.ts";
+import { MirrorElicitCards } from "../mcpelicit/McpElicitCard.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore } from "./sessionFiles.ts";
 // The transcript rendering layer, shared with the shared-session view (docs/log/59). What the
@@ -753,6 +754,7 @@ function MirrorViewBody({
         onEnd={readOnly ? undefined : (w) => void endWatch(w)}
       />
       {!readOnly && <MirrorConfirmCards session={session} />}
+      {!readOnly && <MirrorElicitCards session={session} />}
       {managed && !readOnly && running && !composerBlock && (
         <DiscardNotice notices={discardView} draftBusy={draftBusy} onRestore={restoreDiscard} onClose={closeDiscard} />
       )}

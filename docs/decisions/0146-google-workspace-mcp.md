@@ -213,5 +213,18 @@ install and a wrapper in `af-gcloud-exec`'s shape when MCP is in use and someone
   session named by `AF_SESSION_NAME` in the environment of the process holding the CLI's socket. That
   name only says where the card is shown: any session can set it, and it never decides an answer.
   Calls from the shared codex and opencode daemons stay unattributed.
+- **The card (#5174 part 3).** A held call files an outbox notification `mcp-elicitation` whose
+  payload is the call's id alone (the outbox is writable by every agent); it targets the attributed
+  session, or the workspace when there is none. The Console shows the call as a card above that
+  session's composer while its pane is on screen in the same browser window, and as a sticky toast
+  otherwise. A call nobody is attributed to is always a toast, and closing a toast declines the
+  call. The card names the server's origin beside its label, which any session can change. The list
+  sends the arguments as their exact text, and the card lays them out without parsing them, so a
+  member written twice or a long number shows as the server will read it. A call whose arguments
+  are not UTF-8 is not held: the list could not carry them, so it ends with an error instead. Hidden
+  characters, direction controls included, show as escapes in the arguments and as markers
+  elsewhere. Two options whose labels read the same also show their values, and are numbered if
+  they still read the same (#5282). The time left comes from the Agent in milliseconds, counted
+  from when the browser sent its read, so a browser clock that is off does not hide a card.
 - **Not verified:** whether Google accepts or ignores RFC 8707 `resource`; the setup guide's line
   that the Developer Preview Program is required, which may predate GA.

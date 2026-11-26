@@ -36,6 +36,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -205,6 +206,52 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/features/awsconfirm/store.ts",
 			tsName:  "AwsConfirmTarget",
 			tsKeys:  keySet("profile", "label", "accountId", "roleName", "region", "source"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+
+		// A tool call the MCP relay holds for a person's confirmation (ADR 0146 decision 6),
+		// GET /mcp-elicitations. The list's arguments go out as their text (mcpx), under the same key.
+		{
+			name:    "mcpreg.PendingElicitation",
+			goType:  reflect.TypeOf(mcpreg.PendingElicitation{}),
+			binding: pendingElicitationBinding,
+			tsPath:  "../../console/src/features/mcpelicit/store.ts",
+			tsName:  "McpElicitation",
+			tsKeys: keySet("id", "serverId", "server", "serverLabel", "origin", "tool", "session", "arguments", "inputs",
+				"createdAt", "deadline", "expiresInMs"),
+			tsOnly: map[string]string{
+				"expiresInMs": "Intended: mcpx's pendingElicitationWire adds it at GET time, and the store turns it into a time on the browser's monotonic clock.",
+			},
+			goOnly: map[string]string{},
+		},
+		{
+			name:    "mcpreg.ElicitInput",
+			goType:  reflect.TypeOf(mcpreg.ElicitInput{}),
+			binding: elicitInputBinding,
+			tsPath:  "../../console/src/features/mcpelicit/store.ts",
+			tsName:  "McpElicitInput",
+			tsKeys:  keySet("key", "message", "fields"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+		{
+			name:    "mcpreg.ElicitField",
+			goType:  reflect.TypeOf(mcpreg.ElicitField{}),
+			binding: elicitFieldBinding,
+			tsPath:  "../../console/src/features/mcpelicit/store.ts",
+			tsName:  "McpElicitField",
+			tsKeys:  keySet("name", "title", "required", "options"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+		{
+			name:    "mcpreg.ElicitOption",
+			goType:  reflect.TypeOf(mcpreg.ElicitOption{}),
+			binding: elicitOptionBinding,
+			tsPath:  "../../console/src/features/mcpelicit/store.ts",
+			tsName:  "McpElicitOption",
+			tsKeys:  keySet("value", "label"),
 			tsOnly:  map[string]string{},
 			goOnly:  map[string]string{},
 		},
@@ -426,6 +473,17 @@ var confirmRequestBinding = map[string]string{
 	"LastAt": "lastAt", "ExpiresInSec": "expiresInSec",
 }
 
+var pendingElicitationBinding = map[string]string{
+	"ID": "id", "ServerID": "serverId", "ServerName": "server", "ServerLabel": "serverLabel", "Origin": "origin", "Tool": "tool",
+	"Session": "session", "Arguments": "arguments", "Inputs": "inputs", "CreatedAt": "createdAt", "Deadline": "deadline",
+}
+
+var elicitInputBinding = map[string]string{"Key": "key", "Message": "message", "Fields": "fields"}
+
+var elicitFieldBinding = map[string]string{"Name": "name", "Title": "title", "Required": "required", "Options": "options"}
+
+var elicitOptionBinding = map[string]string{"Value": "value", "Label": "label"}
+
 var confirmTargetBinding = map[string]string{
 	"Profile": "profile", "Label": "label", "AccountID": "accountId", "RoleName": "roleName", "Region": "region",
 	"Source": "source",
@@ -474,7 +532,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// Guard the population being scanned (the #320 shape): a family that silently
 	// disappears is caught here.
-	if len(fams) != 21 {
+	if len(fams) != 25 {
 		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {

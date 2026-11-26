@@ -32,6 +32,7 @@ import { AwsLoginHost } from "../features/awslogin/AwsLoginHost.tsx";
 import { useAwsLoginStore } from "../features/awslogin/store.ts";
 import { useAwsConfirmStore } from "../features/awsconfirm/store.ts";
 import { AwsConfirmHost } from "../features/awsconfirm/AwsConfirmHost.tsx";
+import { McpElicitHost } from "../features/mcpelicit/McpElicitHost.tsx";
 import { useGcpLoginStore } from "../features/gcplogin/store.ts";
 import { clearCachedConns } from "../features/repos/connsCache.ts";
 import { loadKindCatalogAfter, resetKindCatalog, syncKindCatalogTenant } from "../agents/kindCatalogLoad.ts";
@@ -129,6 +130,7 @@ export function App() {
   const tr = useT();
   const tenant = useTenantStore((s) => s.tenant);
   const identityRev = useTenantStore((s) => s.identityRev);
+  const tenantResolved = useTenantStore((s) => s.resolved);
   const notProvisioned = useTenantStore((s) => s.notProvisioned);
   // Deployment gate: only show the schedules rail when the CP scheduler is enabled
   // (AF_SCHEDULER_INTERVAL set) — otherwise schedules can never fire, so hide the section.
@@ -559,6 +561,8 @@ export function App() {
             open the same instance (#1659). */}
         <WorkItemModalHost />
         <WsStartingDialog />
+        {/* Held MCP calls for this pane's mirror; their toasts stay in the main window. */}
+        {booted && tenantResolved && <McpElicitHost toasts={false} />}
         <AuthExpiredModal />
         <ProviderRequiredModal />
         <DirtyGuardHost />
@@ -720,6 +724,9 @@ export function App() {
       <SessionModals />
       <AwsLoginHost />
       <AwsConfirmHost />
+      {/* Once the tenant and member are settled (boot can finish before a retry settles them):
+          a list read for the wrong ones would show their calls. */}
+      {booted && tenantResolved && <McpElicitHost />}
       <GcpLoginHost />
       <WsStartingDialog />
       <PushPausedNote />

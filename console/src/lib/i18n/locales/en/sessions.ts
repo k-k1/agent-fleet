@@ -1071,6 +1071,17 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "awsconfirm.open_failed": "Could not open this session",
   "awsconfirm.deny": "Deny",
   "awsconfirm.answer_failed": "Could not answer the request ({code})",
+  "mcpelicit.title": "This session asks to run <0/> on <1/>, which needs your confirmation",
+  "mcpelicit.title_session": "Session <0>{session}</0> asks to run <1/> on <2/>, which needs your confirmation",
+  "mcpelicit.title_unattributed": "An agent asks to run <0/> on <1/>, which needs your confirmation",
+  "mcpelicit.arguments": "What the server will run:",
+  "mcpelicit.arguments_unreadable": "This workspace's Agent is too old to show exactly what the server will run, so this call can only be declined here.",
+  "mcpelicit.optional": "(optional)",
+  "mcpelicit.clear_choice": "Clear choice",
+  "mcpelicit.deadline": "Declined automatically at {time} if nobody answers",
+  "mcpelicit.send": "Send answer",
+  "mcpelicit.decline": "Decline",
+  "mcpelicit.answer_failed": "Could not answer the confirmation: {reason}",
 
   // === Launch dialog under the credential policy (ADR 0138 D10a, D11b) ===
   "launch.no_route_line": "No model route is available to you. Ask your administrator.",

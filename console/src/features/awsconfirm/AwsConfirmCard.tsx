@@ -57,7 +57,7 @@ export function AwsConfirmCard({ r: given, showSession }: { r: AwsConfirmRequest
 /** SessionLink opens the asking session the way its row in the left pane does. The text stays
  *  the session's name, which the Agent vouches for; the title, which the session can set
  *  itself, only goes in the tooltip so it cannot pass for another session. */
-function SessionLink({ name, children }: { name: string; children?: ReactNode }) {
+export function SessionLink({ name, children }: { name: string; children?: ReactNode }) {
   const tr = useT();
   const s = useSessionsStore((st) => st.sessions.find((x) => x.name === name));
   const running = useWorkspaceStore((st) => st.state === "running");

@@ -39,6 +39,10 @@ interface TenantStore {
    *  (otherwise the layout loaded under the shared no-user key would be persisted
    *  back into the user's key once setUser lands). */
   identityRev: number;
+  /** resolved turns true once init() has a terminal answer about the member and the tenant
+   *  (the first attempt, or a retry after it failed). Until then the tenant is the one this
+   *  browser saved, not necessarily the one asked for. */
+  resolved: boolean;
   /** Resolve identity + memberships once at boot. */
   init(): Promise<void>;
   /** Re-read whoami AND the memberships after a CP reconnect (see refreshWhoami). */
@@ -140,6 +144,7 @@ export const useTenantStore = create<TenantStore>((set) => ({
   superAdmin: false,
   notProvisioned: false,
   identityRev: 0,
+  resolved: false,
 
   async init() {
     // One resolution attempt. Returns true on a terminal result (success or a
@@ -183,7 +188,10 @@ export const useTenantStore = create<TenantStore>((set) => ({
     // mirroring useRetryLoad.
     let tries = 0;
     const loop = async (): Promise<void> => {
-      if (await attempt()) return;
+      if (await attempt()) {
+        set({ resolved: true });
+        return;
+      }
       const delay = Math.min(5000, 700 * 2 ** Math.min(tries, 3));
       tries++;
       setTimeout(() => void loop(), delay);

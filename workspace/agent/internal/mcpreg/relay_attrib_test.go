@@ -151,14 +151,14 @@ func TestElicitHeldCallsAreBoundedInBytes(t *testing.T) {
 	call := func(n int) elicitCall {
 		return elicitCall{tool: "t", params: map[string]json.RawMessage{"arguments": json.RawMessage(`"` + strings.Repeat("a", n) + `"`)}}
 	}
-	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(450), ir); err == nil || !strings.Contains(err.Error(), "too large") {
+	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", call(450), ir); err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("a call over the one-call bound was held: %v", err)
 	}
-	p1, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(250), ir)
+	p1, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", call(250), ir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(250), ir); err == nil || !strings.Contains(err.Error(), "too many") {
+	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", call(250), ir); err == nil || !strings.Contains(err.Error(), "too many") {
 		t.Fatalf("a call past the total bound was held: %v", err)
 	}
 	got, err := AnswerElicitation(p1.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {}}})
@@ -169,7 +169,7 @@ func TestElicitHeldCallsAreBoundedInBytes(t *testing.T) {
 	if got.ID != p1.ID || got.Tool != "t" || got.Arguments != nil || got.Inputs != nil {
 		t.Fatalf("answered %+v", got)
 	}
-	p2, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(250), ir)
+	p2, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", call(250), ir)
 	if err != nil {
 		t.Fatalf("the room of an answered call did not come back: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestElicitManyShortChoicesCountAgainstTheBound(t *testing.T) {
 		opts = append(opts, ElicitOption{Value: strconv.Itoa(i), Label: "x"})
 	}
 	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Options: opts}}}}}
-	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir); err == nil || !strings.Contains(err.Error(), "too large") {
+	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", elicitCall{params: map[string]json.RawMessage{}}, ir); err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("20000 short choices were held: %v", err)
 	}
 }

@@ -127,6 +127,32 @@ describe("tenant store boot hint", () => {
     expect(await boot("?tenant=sales", ["dev", "sales"], "dev")).toBe("sales");
   });
 
+  // Boot goes on when the first attempt fails; until a retry settles it, the tenant is the
+  // saved one, not the one asked for, and nothing tenant-scoped may be read for it
+  // (McpElicitHost waits for this).
+  it("says resolved only once an attempt has settled the tenant", async () => {
+    vi.stubGlobal("location", { search: "?tenant=sales", pathname: "/" });
+    setTenant("dev");
+    useTenantStore.setState({ resolved: false, tenant: "dev" });
+    let tenantsCalls = 0;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((...args: unknown[]) => {
+      const url = String(args[0]);
+      if (url.includes("whoami")) return Promise.resolve(jsonRes({ user: "u1" }));
+      tenantsCalls++;
+      if (tenantsCalls === 1) return Promise.reject(new Error("dropped"));
+      return Promise.resolve(jsonRes({ tenants: [{ slug: "dev" }, { slug: "sales" }], super_admin: false }));
+    });
+    advance(60_000);
+    await useTenantStore.getState().init();
+    expect(useTenantStore.getState().resolved).toBe(false);
+    expect(useTenantStore.getState().tenant).toBe("dev");
+    await new Promise((r) => setTimeout(r, 900)); // the 700ms-backoff retry
+    expect(useTenantStore.getState().resolved).toBe(true);
+    expect(useTenantStore.getState().tenant).toBe("sales");
+    vi.stubGlobal("location", { search: "", pathname: "/" });
+  });
+
   it("ignores a tenant the person is not a member of", async () => {
     // Anyone can type any slug — this is exactly why the hint may never be an
     // authorization input. Fall back to the persisted (still valid) selection.

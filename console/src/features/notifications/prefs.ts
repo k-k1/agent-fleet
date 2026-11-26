@@ -62,6 +62,7 @@ const KIND_ROW: Record<string, NotifyRow> = {
   question: "needs-input",
   "plan-approval": "needs-input",
   "permission-request": "needs-input",
+  "mcp-elicitation": "needs-input",
   "carried-interaction": "needs-input",
   "usage-reset": "usage-reset",
   "session-report": "session-report",
