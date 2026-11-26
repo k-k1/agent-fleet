@@ -291,7 +291,11 @@ type Session struct {
 	// Space is the space folder the session runs in (ADR 0142), "" outside ~/spaces. The Agent
 	// decides it from Dir's root, because a space and a repository can share a folder name and
 	// Repo alone cannot tell them apart. The Control Plane's sessionWire has to carry it too.
-	Space         string `json:"space,omitempty"`
+	Space string `json:"space,omitempty"`
+	// Place is Meta's Place: where the session runs, decided once at create. nil for a session
+	// created before the field existed; a client then falls back to Space and the folder name.
+	// The Control Plane's sessionWire has to carry it too.
+	Place         *Place `json:"place,omitempty"`
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
 	Title         string `json:"title"` // user-supplied display title (optional, any kind)
 	// SSM is the non-secret target of an SSM session (ADR 0142 decision 10, open question 4): the
@@ -664,6 +668,38 @@ type PlanAuto struct {
 	Prompt string `json:"prompt,omitempty"`
 }
 
+// Place kinds. PlaceOther is a directory that is none of the named places (outside ~/repos and
+// ~/spaces, or not directly under either); it carries no ID, because a folder name there names
+// nothing a client can group by.
+const (
+	PlaceRepo     = "repo"
+	PlaceWorktree = "worktree"
+	PlaceSpace    = "space"
+	PlaceHome     = "home"
+	PlaceOther    = "other"
+)
+
+// Place is where a session runs, as Meta.Place and Session.Place carry it.
+type Place struct {
+	// Kind is one of the Place* constants.
+	Kind string `json:"kind"`
+	// ID is the folder name: under ~/repos for repo and worktree, under ~/spaces for space; ""
+	// for home and other.
+	ID string `json:"id,omitempty"`
+	// Parent is, for a worktree, the folder under ~/repos of the main working copy it hangs
+	// off; "" otherwise, and when that copy lies outside ~/repos.
+	Parent string `json:"parent,omitempty"`
+}
+
+// Clone returns a copy of p, so a wire row never aliases the meta's value.
+func (p *Place) Clone() *Place {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	return &c
+}
+
 type Meta struct {
 	Name string `json:"name"`
 	Dir  string `json:"dir"`
@@ -739,6 +775,11 @@ type Meta struct {
 	Color         string         `json:"color"` // terminal background hue (hex); set at create (SSM host color)
 	Label         string         `json:"label"` // claude --name (display); derived from Title at create/recreate
 	Repo          string         `json:"repo"`  // working dir basename
+	// Place is where the session runs (a repository, a linked worktree, a space or home),
+	// decided once when the meta is created (sessionx.PlaceOf) and never re-derived from the
+	// folder name: a space and a repository can share one. nil on a meta written before the
+	// field existed, and readers must then fall back to the directory.
+	Place *Place `json:"place,omitempty"`
 	// Branch is the git branch the working copy (Dir) was on when this session was
 	// created/recreated. Compared against Dir's current branch on each list to flag
 	// drift — a `git checkout` that slipped past the checkout guard (agent/manual

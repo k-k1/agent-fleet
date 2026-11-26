@@ -878,38 +878,87 @@ sync_ok rtk
 title_is rtk "rtk CLI: bump the pin to 0.52.0"
 has rtk 'RTK_VERSION'
 
-echo "== case 30b: watch-only image tools (gh npm-style and GitHub rows) get a hand-bump issue naming their own ARG, never a contract command =="
-releases gh=2.105.0:2.106.0 confluence=2.31.2:2.31.3
-sync_ok gh confluence
-title_is gh "gh CLI: bump the pin to 2.106.0"
-has gh 'GH_VERSION'
-hasnt gh 'gh workflow run'
-title_is confluence "confluence CLI: bump the pin to 2.31.3"
-has confluence 'CONFLUENCE_CLI_VERSION'
-hasnt confluence 'RTK_VERSION'
-releases gh=2.106.0:2.106.0
-sync_ok gh
-no_issue gh
+echo "== case 30b: watch-only image tools (npm-style and GitHub rows) get a hand-bump issue naming their own ARG, never a contract command =="
+releases jira=1.7.0:1.8.0 gitleaks=8.30.0:8.31.0
+sync_ok jira gitleaks
+title_is jira "jira CLI: bump the pin to 1.8.0"
+has jira 'JIRA_CLI_VERSION'
+hasnt jira 'gh workflow run'
+title_is gitleaks "gitleaks CLI: bump the pin to 8.31.0"
+has gitleaks 'GITLEAKS_VERSION'
+hasnt gitleaks 'RTK_VERSION'
+releases jira=1.8.0:1.8.0
+sync_ok jira
+no_issue jira
 
 echo "== case 30c: underscore-named watch-only rows open, update, hold and close their hand-bump issue =="
-releases mcp_grafana=2.2.0:2.3.0 cloudwatch_mcp=0.2.1:0.3.2
-sync_ok mcp_grafana cloudwatch_mcp
-title_is mcp_grafana "mcp_grafana CLI: bump the pin to 2.3.0"
-has mcp_grafana 'MCP_GRAFANA_VERSION'
-hasnt mcp_grafana 'gh workflow run'
+releases aws_mcp_proxy=2.0.0:2.1.0 cloudwatch_mcp=0.2.1:0.3.2
+sync_ok aws_mcp_proxy cloudwatch_mcp
+title_is aws_mcp_proxy "aws_mcp_proxy CLI: bump the pin to 2.1.0"
+has aws_mcp_proxy 'AWS_MCP_PROXY_VERSION'
+hasnt aws_mcp_proxy 'gh workflow run'
 has cloudwatch_mcp 'CLOUDWATCH_MCP_VERSION'
-mg_num="$(issue_of mcp_grafana)"
-releases mcp_grafana=2.2.0:2.3.1
-sync_ok mcp_grafana
-title_is mcp_grafana "mcp_grafana CLI: bump the pin to 2.3.1"
-[ "$(issue_of mcp_grafana)" = "$mg_num" ] || fail "a second mcp_grafana issue was opened"
-releases mcp_grafana=2.2.0:2.3.1 failed=mcp_grafana
-sync_ok mcp_grafana
-[ "$(issue_of mcp_grafana)" = "$mg_num" ] || fail "an unreadable mcp_grafana source touched its issue"
-releases mcp_grafana=2.3.1:2.3.1
-sync_ok mcp_grafana
+mg_num="$(issue_of aws_mcp_proxy)"
+releases aws_mcp_proxy=2.0.0:2.1.1
+sync_ok aws_mcp_proxy
+title_is aws_mcp_proxy "aws_mcp_proxy CLI: bump the pin to 2.1.1"
+[ "$(issue_of aws_mcp_proxy)" = "$mg_num" ] || fail "a second aws_mcp_proxy issue was opened"
+releases aws_mcp_proxy=2.0.0:2.1.1 failed=aws_mcp_proxy
+sync_ok aws_mcp_proxy
+[ "$(issue_of aws_mcp_proxy)" = "$mg_num" ] || fail "an unreadable aws_mcp_proxy source touched its issue"
+releases aws_mcp_proxy=2.1.1:2.1.1
+sync_ok aws_mcp_proxy
+no_issue aws_mcp_proxy
+[ "$(cat "$STUB_ISSUES/$mg_num/state")" = closed ] || fail "aws_mcp_proxy issue not closed when the pin caught up"
+
+echo "== case 30d: a pr-gated row opens no hand-bump issue; the bump PR carries it =="
+releases gh=2.105.0:2.106.0 mcp_grafana=2.2.0:2.3.0
+sync_ok gh mcp_grafana
+no_issue gh
 no_issue mcp_grafana
-[ "$(cat "$STUB_ISSUES/$mg_num/state")" = closed ] || fail "mcp_grafana issue not closed when the pin caught up"
+
+echo "== case 30e: a hand-bump issue open from before the flag becomes 'merge the pin bump' =="
+releases awscli=2.42.3:2.42.4
+sync_ok awscli
+no_issue awscli
+echo old > "$WORK/old-awscli.md"
+"$STUB/gh" issue create --title "awscli CLI: bump the pin to 2.42.4" --body-file "$WORK/old-awscli.md" --label cli-drift >/dev/null
+aw_num="$(issue_of awscli)"
+[ -n "$aw_num" ] || fail "the stub did not open the old awscli issue"
+sync_ok awscli
+title_is awscli "awscli CLI: merge the pin bump to 2.42.4"
+has awscli 'it is `pr-gated`, so the bump PR'
+hasnt awscli 'by hand'
+has awscli 'opens the PR that bumps the pin'
+# The bump PR's evidence row for a pr-gated kind is found like a contract kind's; one for
+# another version is not.
+echo '[{"number":3001,"body":"| awscli | `2.42.3` → `2.42.2` | no contract | version only |"},{"number":3002,"body":"| awscli | `2.42.3` → `2.42.4` | no contract; `pr-gated`: this PR'"'"'s CI is the gate | version only |"}]' > "$STUB_PRS"
+sync_ok awscli
+has awscli 'merge #3002'
+hasnt awscli '#3001'
+echo '[]' > "$STUB_PRS"
+releases awscli=2.42.4:2.42.4
+sync_ok awscli
+[ "$(cat "$STUB_ISSUES/$aw_num/state")" = closed ] || fail "awscli issue not closed when the pin caught up"
+
+echo "== case 30f: a new major of a pr-gated, major-manual row is a hand bump again =="
+releases bkt=0.41.0:1.0.0
+sync_ok bkt
+title_is bkt "bkt CLI: bump the pin to 1.0.0"
+has bkt 'BKT_VERSION'
+echo "== case 30g: a 0.x minor of a pr-gated row is a new line too; a 0.x patch goes back to the PR =="
+releases bkt=0.41.0:0.42.0
+sync_ok bkt
+title_is bkt "bkt CLI: bump the pin to 0.42.0"
+releases bkt=0.41.0:0.41.1
+sync_ok bkt
+title_is bkt "bkt CLI: merge the pin bump to 0.41.1"   # the open issue follows; the PR closes it
+echo "== case 30h: a pr-gated release that is not a plain x.y.z is a hand bump, never a silent gap =="
+releases gh=2.105.0:2.106.0-rc1
+sync_ok gh
+title_is gh "gh CLI: bump the pin to 2.106.0-rc1"
+has gh 'is not a plain x.y.z'
+has gh 'the L1 version check'
 
 echo "== case 31: a red row for latest names the fix, keeps the section, and the dispatch fits the kind =="
 releases muse=1.4.4:1.4.7 codex=0.162.1:0.163.1

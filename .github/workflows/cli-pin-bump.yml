@@ -3,7 +3,9 @@
 # cli-drift.yml says the pins are behind and cli-release-watch.yml dispatches the
 # contracts that record `tested`. This closes the loop: every kind whose public latest
 # has passed its contract (`tested == latest`) gets its `ARG` pins and checksums rewritten
-# in workspace/Dockerfile, on one fixed branch, in one PR that waits for a human. The
+# in workspace/Dockerfile, on one fixed branch, in one PR that waits for a human. A
+# watch-only tool flagged `pr-gated` in the CLI manifest joins it with no contract: that
+# PR's own CI is its gate (docs/build/10-development.md §10.2.2). The
 # decision and the edit are deploy/local/cli-pin-bump.sh (tested by
 # cli-pin-bump-stub-test.sh); this file only calls it and pushes. When the claude pin moves,
 # deploy/local/claude-route-overrides.sh re-derives routeOverrides in the same commit, so the
@@ -66,6 +68,23 @@ jobs:
           BODY_FILE: ${{ runner.temp }}/body.md
         run: deploy/local/claude-route-overrides.sh
 
+      # TestAWSCommandsMatchPin requires the cloudruns command table to come from the pinned
+      # aws-cli, so a bump that left it behind would be red. awscli is pr-gated: no contract
+      # ran it, and this is the one generated file its pin owns. A failed download fails the
+      # job before any push, rather than opening a PR that cannot go green.
+      - name: regenerate the aws-cli command table
+        if: steps.bump.outputs.incomplete != 'true' && contains(format(',{0},', steps.bump.outputs.bumped), ',awscli,')
+        run: |
+          set -euo pipefail
+          v="$(sed -n 's/^ARG AWSCLI_VERSION=//p' workspace/Dockerfile)"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::unexpected AWSCLI_VERSION '$v'"; exit 1; }
+          d="$RUNNER_TEMP/awscli"
+          mkdir -p "$d"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "$d/aws.zip" \
+            "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${v}.zip"
+          unzip -q "$d/aws.zip" 'aws/dist/awscli/data/ac.index' -d "$d"
+          python3 -I workspace/agent/internal/cloudruns/gen_aws_commands.py "$d/aws/dist/awscli/data/ac.index" "$v"
+
       # A release source or download that could not be read says nothing about the release;
       # acting on it would drop a kind from the PR, or close it, over a network blip.
       - name: skip an incomplete run
@@ -109,6 +128,8 @@ jobs:
           # The guide's "What's in the workspace" prints these pins; docs-check fails the PR when it is stale.
           python3 scripts/workspace_image.py
           route_files+=(guide/ref/workspace-image.md guide/ref/workspace-image.ja.md)
+          # Regenerated above when awscli moved; unchanged (and so not committed) otherwise.
+          route_files+=(workspace/agent/internal/cloudruns/aws_commands.txt.gz)
           remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           # A human closed a PR carrying this exact edit without merging it: that is a
@@ -129,7 +150,8 @@ jobs:
           {
             printf '%s\n\n' "$TITLE"
             echo "Automated by cli-pin-bump.yml: each bumped kind passed its contract on the"
-            echo "new version. Evidence and the kinds left at their pin are in the PR body."
+            echo "new version, or is pr-gated (no contract; this PR's CI is its gate)."
+            echo "Evidence and the kinds left at their pin are in the PR body."
           } > "$RUNNER_TEMP/msg.txt"
           git commit -q -F "$RUNNER_TEMP/msg.txt" -- workspace/Dockerfile "${route_files[@]}"
 
@@ -162,9 +184,14 @@ jobs:
         env:
           TOKEN: ${{ secrets.CLI_PIN_BUMP_TOKEN }}
           BODY_FILE: ${{ runner.temp }}/body.md
+          UNREADABLE: ${{ steps.bump.outputs.unreadable }}
         run: |
           set -euo pipefail
-          echo "No drifting kind has passed its contract on latest; nothing to bump." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "No drifting kind can be bumped to its current latest; nothing to bump. Why, per kind:"
+            echo
+            cat "$BODY_FILE"
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$TOKEN" ]; then
             echo "::warning::CLI_PIN_BUMP_TOKEN is not set, so an open bump PR (if any) was not checked."
             exit 0
@@ -173,11 +200,21 @@ jobs:
           num="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open \
             --json number --jq 'first | .number // empty')"
           [ -n "$num" ] || exit 0
-          gh pr view "$num" --repo "$GITHUB_REPOSITORY" --json body --jq .body |
+          # A pr-gated kind whose source failed this run is not "no longer bumpable": keep a PR
+          # that carries it rather than close it (and its review) over a blip.
+          body="$(gh pr view "$num" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          for kind in ${UNREADABLE//,/ }; do
+            # Its evidence row (`| gh | `pin` → `latest` |`), not a "left at its pin" row.
+            if grep -qE -- "^\| $kind \| \`[^\`]*\` → " <<< "$body"; then
+              echo "::notice::PR #$num carries $kind, whose release source could not be read this run; not closed."
+              exit 0
+            fi
+          done
+          printf '%s\n' "$body" |
             sed 's/<!-- cli-pin-bump edit=[^ ]* -->/<!-- cli-pin-bump superseded -->/' > "$RUNNER_TEMP/old.md"
           gh pr edit "$num" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/old.md"
           {
-            echo "Closed by \`cli-pin-bump.yml\`: no kind in this PR still has \`tested == latest\`. A new PR opens once a contract passes on the current latest."
+            echo "Closed by \`cli-pin-bump.yml\`: no kind in this PR can still be bumped to its current latest. The table below gives the reason for each; a new PR opens once one can."
             echo
             cat "$BODY_FILE"
           } > "$RUNNER_TEMP/close.md"

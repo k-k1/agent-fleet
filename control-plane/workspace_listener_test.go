@@ -252,6 +252,7 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 		{"DELETE", "/internal/memos/m1"},
 		{"GET", "/internal/schedules"},
 		{"POST", "/internal/schedules"},
+		{"POST", "/internal/schedules/limit-resume"},
 		{"PATCH", "/internal/schedules/s1"},
 		{"DELETE", "/internal/schedules/s1"},
 		{"POST", "/internal/schedules/s1/pause"},

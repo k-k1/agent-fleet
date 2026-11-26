@@ -1214,6 +1214,24 @@ button.start-place-chip--gone {
 .start-place-opt-tick {
   color: var(--accent);
 }
+.start-place-busy {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  color: var(--warn);
+  font-size: var(--fs-11);
+}
+.start-space-busy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.start-space-busy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .start-place-more {
   align-self: flex-start;
   padding: 6px 8px;

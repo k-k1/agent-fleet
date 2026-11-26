@@ -135,6 +135,9 @@ work you could simply do.
   commit explicitly by path. It works only while you are live in a canonical path (a parent started
   through a symlink is refused; the child's `dir` may be an alias). Another session's working copy
   is still refused, and a repeated refusal with the flag means it cannot work: use a worktree.
+- From a **space** (`~/spaces/<folder>`, no git repository) the default is a **new space**, not a
+  worktree: leave `worktree` and `dir` unset. Name an existing one with `space=<folder>` (never with
+  `dir` or `worktree=true`). `worktree=true` from a space is refused with that hint.
 - **You are not told when it finishes.** Poll `get_session_status`, or leave `report_back` on and
   the child sends you one message when it is done.
 - **You may only steer what you started** — list them, read their output, stop one, book a stop,
@@ -143,6 +146,9 @@ work you could simply do.
 - **`work_item`** (`{provider: github|jira|bitbucket, key: owner/repo#45 | PROJ-12, title?, type?}`)
   names the ticket the child works on, so its row and the item show the link and `type` picks the
   branch prefix. Omitted, the child watches the items you were started for or work on.
+- **`[agent-fleet:notice kind=limit-resume reply=none]`** opens the automatic "carry on" a session gets when its usage
+  limit resets (the Agent's booking, built by the Control Plane so a session cannot change the text). It is not your user typing and it
+  carries **no new instruction**: continue the work the limit cut off, from where it stopped, or say you cannot tell where. Do not reply to the message itself; answer your user's earlier request as you normally would.
 - **`link_work_item`** links *your own* session to an issue, ticket or PR you were not launched for
   (`role`: working default / reviewing / watching; `remove: true` unlinks). `branch_name` with an
   item and your branch's PR are linked for you.
@@ -179,6 +185,12 @@ work you could simply do.
     `w/r:pipelines[/<custom name>][@branch]` for the next run (same 10-minute window); it goes to
     `source: bitbucket_pipelines`. The workflow name / branch and failed jobs / steps arrive as
     quoted data. A run deleted or lost mid-watch ends the watch with a notice.
+  - **Status pages** (`source: status`): `ref` `<service>[:<component>,…]` with service `github`,
+    `bitbucket`, `jira` or `confluence` (hosted services only). `status.recovered` / `status.degraded` /
+    `status.incident.resolved`; a condition that holds now fires at once, except that only incidents resolved
+    after the `watch` call fire. Incident titles and statuses and component names arrive as quoted data.
+    Reads are shared per URL. Hosts for egress allowlists: `www.githubstatus.com`, `bitbucket.status.atlassian.com`,
+    `jira-software.status.atlassian.com`, `confluence.status.atlassian.com`.
   - **GitHub releases and tags**: `github.release.published` / `github.tag.created`. `ref`
     `o/r:releases[+pre][@pattern]` or `o/r:tags[@pattern]` (a `https://github.com/o/r/releases`
     URL works); it goes to `source: github_releases` / `github_tags` by itself. Only a release

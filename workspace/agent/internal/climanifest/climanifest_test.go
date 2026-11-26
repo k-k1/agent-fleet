@@ -23,17 +23,21 @@ func TestEntriesParse(t *testing.T) {
 	if rtk, _ := Lookup("rtk"); rtk.Contract != "" || rtk.Dispatch != "" {
 		t.Fatalf("rtk has no contract: %+v", rtk)
 	}
+	if aws, _ := Lookup("awscli"); !aws.HasFlag("pr-gated") {
+		t.Fatalf("awscli lost its pr-gated flag: %+v", aws)
+	}
 }
 
 func TestParseRefusesMalformed(t *testing.T) {
 	for name, text := range map[string]string{
-		"empty":        "# only a comment\n",
-		"short row":    "a|A_VERSION|npm|p|-|npm|-|-|-|-\n",
-		"long row":     "a|A_VERSION|npm|p|-|npm|-|-|-|-|-|x\n",
-		"duplicate":    "a|A_VERSION|npm|p|-|npm|-|-|-|-|-\na|A_VERSION|npm|p|-|npm|-|-|-|-|-\n",
-		"no dispatch":  "a|A_VERSION|npm|p|a.yml|npm|-|-|-|-|-\n",
-		"no contract":  "a|A_VERSION|npm|p|-|npm|auto|-|-|-|-\n",
-		"empty source": "a|A_VERSION||p|-|npm|-|-|-|-|-\n",
+		"empty":          "# only a comment\n",
+		"short row":      "a|A_VERSION|npm|p|-|npm|-|-|-|-\n",
+		"long row":       "a|A_VERSION|npm|p|-|npm|-|-|-|-|-|x\n",
+		"duplicate":      "a|A_VERSION|npm|p|-|npm|-|-|-|-|-\na|A_VERSION|npm|p|-|npm|-|-|-|-|-\n",
+		"no dispatch":    "a|A_VERSION|npm|p|a.yml|npm|-|-|-|-|-\n",
+		"no contract":    "a|A_VERSION|npm|p|-|npm|auto|-|-|-|-\n",
+		"empty source":   "a|A_VERSION||p|-|npm|-|-|-|-|-\n",
+		"gated contract": "a|A_VERSION|npm|p|a.yml|npm|auto|-|-|-|pr-gated\n",
 	} {
 		if _, err := Parse(text); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -74,5 +78,30 @@ func TestArgsAreInTheDockerfile(t *testing.T) {
 		if n := strings.Count(string(b), "\nARG "+e.Arg+"="); n != 1 {
 			t.Errorf("%s: ARG %s defined %d times, want 1", e.Name, e.Arg, n)
 		}
+	}
+}
+
+// cli-pin-bump.sh rewrites only the version ARG of a pr-gated row; a tool that also pins a
+// checksum would ship a new version against the old sha256 and fail the image build.
+func TestPRGatedRowsPinOnlyTheirVersion(t *testing.T) {
+	b, err := os.ReadFile("../../../Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range Entries() {
+		if !e.HasFlag("pr-gated") {
+			continue
+		}
+		n++
+		prefix := strings.TrimSuffix(e.Arg, "VERSION")
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(line, "ARG "+prefix) && !strings.HasPrefix(line, "ARG "+e.Arg+"=") {
+				t.Errorf("%s is pr-gated, but the Dockerfile also pins %q, which the bump does not rewrite", e.Name, line)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no pr-gated row: the check above ran over nothing")
 	}
 }

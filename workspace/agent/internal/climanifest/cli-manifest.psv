@@ -14,6 +14,8 @@
 # Rows with contract `-` are watch-only: the drift check reads their latest release and
 # cli-update-issues.sh keeps one "bump the pin by hand" issue per tool, and nothing else
 # touches them (no contract dispatch, no bump PR). rtk and the image tools below are such rows.
+# A watch-only row flagged `pr-gated` is the exception: cli-pin-bump.sh puts it in the bump
+# PR, whose own CI is the gate, and no hand-bump issue opens for it.
 #
 # Image pins that are NOT watched, and why (the rest of the image's pins are rows below):
 #   session-manager-plugin  a four-part vendor build number, not a release tag of a source the reader has
@@ -43,6 +45,9 @@
 #                 `-` = needs none. Their bindings stay in the workflows (GitHub's model).
 # 10 secret_hint  extra words after the secret names in the update issue
 # 11 flags        `,` separated: major-manual (a new major is never bumped automatically)
+#                | pr-gated (contract `-` only: bumped by the pin-bump PR with its CI as the
+#                gate; only for a tool whose version ARG is its one pin, no checksum ARGs;
+#                pair it with major-manual so a new major stays a hand bump)
 #
 # name|arg|source|locator|contract|install|dispatch|input|secrets|secret_hint|flags
 claude|CLAUDE_CODE_VERSION|npm|@anthropic-ai/claude-code|claude-tui-contract.yml|npm|auto|cli_version|E2E_CLAUDE_OAUTH_TOKEN,E2E_ANTHROPIC_API_KEY|-|-
@@ -54,14 +59,14 @@ cursor|CURSOR_VERSION|cursor|https://cursor.com/install|cursor-contract.yml|curs
 kiro|KIRO_VERSION|kiro|https://prod.download.cli.kiro.dev/stable/latest/manifest.json|kiro-contract.yml|kiro|manual|cli_version|E2E_KIRO_AUTH_DB_B64_1..8|(`deploy/local/set-kiro-ci-auth.sh`)|-
 muse|MUSE_VERSION|muse|https://api.meta.ai/muse-code/channels/muse-stable|muse-contract.yml|-|auto|version|-|-|-
 rtk|RTK_VERSION|github|rtk-ai/rtk|-|-|-|-|-|-|-
-confluence|CONFLUENCE_CLI_VERSION|npm|confluence-cli|-|-|-|-|-|-|-
-gh|GH_VERSION|github|cli/cli|-|-|-|-|-|-|-
-bkt|BKT_VERSION|github|avivsinai/bitbucket-cli|-|-|-|-|-|-|-
+confluence|CONFLUENCE_CLI_VERSION|npm|confluence-cli|-|-|-|-|-|-|pr-gated,major-manual
+gh|GH_VERSION|github|cli/cli|-|-|-|-|-|-|pr-gated,major-manual
+bkt|BKT_VERSION|github|avivsinai/bitbucket-cli|-|-|-|-|-|-|pr-gated,major-manual
 jira|JIRA_CLI_VERSION|github|ankitpokhrel/jira-cli|-|-|-|-|-|-|-
 gitleaks|GITLEAKS_VERSION|github|gitleaks/gitleaks|-|-|-|-|-|-|-
 go|GO_VERSION|godev|https://go.dev/dl/?mode=json|-|-|-|-|-|-|-
-awscli|AWSCLI_VERSION|gittags|https://github.com/aws/aws-cli.git 2.*|-|-|-|-|-|-|-
+awscli|AWSCLI_VERSION|gittags|https://github.com/aws/aws-cli.git 2.*|-|-|-|-|-|-|pr-gated,major-manual
 gcloud|GCLOUD_VERSION|gcloud|https://dl.google.com/dl/cloudsdk/channels/rapid/components-2.json|-|-|-|-|-|-|-
-mcp_grafana|MCP_GRAFANA_VERSION|github|grafana/mcp-grafana|-|-|-|-|-|-|-
+mcp_grafana|MCP_GRAFANA_VERSION|github|grafana/mcp-grafana|-|-|-|-|-|-|pr-gated,major-manual
 cloudwatch_mcp|CLOUDWATCH_MCP_VERSION|pypi|awslabs.cloudwatch-mcp-server|-|-|-|-|-|-|-
 aws_mcp_proxy|AWS_MCP_PROXY_VERSION|pypi|mcp-proxy-for-aws|-|-|-|-|-|-|-

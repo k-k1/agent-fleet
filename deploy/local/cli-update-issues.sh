@@ -18,7 +18,10 @@
 #   streak      the contract failed its last 2 runs on main, whatever the version
 #   dispatch    cursor / kiro: the credential rotates, so the watcher never runs them
 #   credential  claude / copilot / agy while their CI secret is not configured
-#   manual      a watch-only row (rtk, gh, gitleaks…): no contract exists, it is bumped by hand
+#   manual      a watch-only row (rtk, gh, gitleaks…): no contract exists, it is bumped by hand.
+#               A `pr-gated` row is not one: the bump PR carries it, so it is in `merge`,
+#               except a release the PR never carries: a new major (or 0.x minor) of a
+#               `major-manual` one, or a version that is not a plain x.y.z
 #   fragments   the latest release no longer contains upstream text Agent Fleet matches on
 #               (a row in `Red contracts`, written by cli-pin-bump.sh via cli-fragment-check.sh)
 #
@@ -112,6 +115,8 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
   if [ -n "$red_ver" ] && [ "$red_ver" = "$latest" ]; then state=red
   elif [ "$streak" = true ]; then state=streak
   elif [ "$pin" = "$latest" ]; then state=current
+  elif [ "${M_contract[$kind]}" = - ] && manifest_has_flag "$kind" pr-gated && manifest_plain_version "$latest" &&
+       ! { manifest_has_flag "$kind" major-manual && [ "$(manifest_line_of "$pin")" != "$(manifest_line_of "$latest")" ]; }; then state=merge
   elif [ "${M_contract[$kind]}" = - ]; then state=manual
   elif [ "$tested" = "$latest" ]; then state=merge
   elif [ "${M_dispatch[$kind]}" = manual ]; then state=dispatch
@@ -165,13 +170,19 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
       cmd="$(dispatch_cmd "$kind")" ;;
     manual)
       title="$kind CLI: bump the pin to $latest"
-      next="No contract covers \`$kind\`. Bump \`${M_arg[$kind]}\` in \`workspace/Dockerfile\` to \`$latest\` by hand (\`docs/build/10-development.md\` §10.2.1) in a PR that closes this issue." ;;
+      next="No contract covers \`$kind\`. Bump \`${M_arg[$kind]}\` in \`workspace/Dockerfile\` to \`$latest\` by hand (\`docs/build/10-development.md\` §10.2.1) in a PR that closes this issue."
+      if manifest_has_flag "$kind" pr-gated && ! manifest_plain_version "$latest"; then
+        next="\`$latest\` is not a plain x.y.z, so the pin-bump PR does not carry it. Check the tag, the asset names and what the binary prints for its version, then bump \`${M_arg[$kind]}\` by hand together with whatever the Dockerfile install and the L1 version check (\`deploy/local/e2e-smoke.sh\`) need, in a PR that closes this issue."
+      fi ;;
     merge)
       local pr; pr="$(bump_pr_for "$kind" "$latest")"
       title="$kind CLI: merge the pin bump to $latest"
-      local run; run="$("$RELEASE_STATE" evidence tested "$kind" "$latest" || true)"
+      local run=""
+      [ "$wf" = - ] || run="$("$RELEASE_STATE" evidence tested "$kind" "$latest" || true)"
       local passed="\`$wf\` passed on \`$latest\`"
       [ -z "$run" ] || passed="[$passed]($run)"
+      # pr-gated: no contract ran; the bump PR's own CI is the gate.
+      [ "$wf" != - ] || passed="No contract covers \`$kind\`; it is \`pr-gated\`, so the bump PR's CI is the gate for \`$latest\`"
       if [ -n "$pr" ]; then
         next="$passed. Review and merge #$pr; it bumps the pin and closes this issue."
       else

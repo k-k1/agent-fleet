@@ -266,7 +266,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # Versions are pinned by ARG through versioned URLs (docs/log/35 §35.9-7(c)); bump the ARGs
 # below and rebuild.
-ARG AWSCLI_VERSION=2.42.3
+ARG AWSCLI_VERSION=2.42.4
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -291,7 +291,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # wrapper (gh-auth-wrapper.sh): on every call it takes the token from the same credential
 # helper git uses and injects it as GH_TOKEN, so gh works without `gh auth login`
 # (docs/build/08 §8.3). The wrapper itself is COPY'd with the frequently changing COPYs at the end.
-ARG GH_VERSION=2.105.0
+ARG GH_VERSION=2.106.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -433,7 +433,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 ARG CLAUDE_CODE_VERSION=2.1.332
 ARG OPENCODE_VERSION=2.4.1
 ARG CODEX_VERSION=0.172.0
-ARG COPILOT_VERSION=1.0.115
+ARG COPILOT_VERSION=1.0.116
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
 # is supported (ADR 0127): a rollback is an earlier 2.x pin, never a 1.x one (the opencode 1
 # package, opencode-ai, is another package that entrypoint.sh removes from ~/.local).

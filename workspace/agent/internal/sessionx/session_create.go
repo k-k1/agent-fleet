@@ -490,6 +490,15 @@ func (c *createRun) resolveWorkingCopy() bool {
 				httpx.WriteErr(c.w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), "this space is being deleted")
 				return false
 			}
+			// Two agents in one space edit the same files (#5230). A new shell is a person's terminal,
+			// not a second agent. A spawned child is checked by the spawn guard further down instead,
+			// which has its own opt-in for the parent's own copy.
+			if c.spawnParent == "" && !sp.AllowBusy && NormalizeKind(c.req.Kind) != session.KindShell {
+				if m, busy := spaceBusySession(existing.Dir); busy {
+					writeSpaceBusy(c.w, sp.Folder, m)
+					return false
+				}
+			}
 			c.req.Dir = existing.Dir
 		} else {
 			made, err := spacex.Create(sp.Name)
@@ -760,7 +769,7 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		// selection writes the meta it always did.
 		Route:           req.Route.Normalize(),
 		SkipPermissions: req.SkipPermissions,
-		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
+		Repo:            filepath.Base(req.Dir), Place: PlaceOf(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: c.ssm,
 		Origin: c.origin, OriginConv: c.originConv, OriginSession: c.originSession,
 		Studio: c.studio, WorkItem: cleanWorkItemRef(req.WorkItem),

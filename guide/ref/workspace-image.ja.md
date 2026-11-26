@@ -37,12 +37,12 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub をコマンドラインから使う。Git ホスティングの接続でサインイン済み | `2.105.0` | [MIT](https://github.com/cli/cli/blob/v2.105.0/LICENSE) |
+| [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub をコマンドラインから使う。Git ホスティングの接続でサインイン済み | `2.106.0` | [MIT](https://github.com/cli/cli/blob/v2.106.0/LICENSE) |
 | [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket のプルリクエストとパイプラインを扱う。Git ホスティングの接続でサインイン済み | `0.41.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.41.0/LICENSE) |
 | [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira の課題を扱う。課題管理の接続でサインイン済み | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
 | [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence のページを扱う。Jira と同じ Atlassian 接続でサインイン済み | `2.31.3` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.3/LICENSE) |
 | [Apache Subversion (`svn`)](https://subversion.apache.org/) | Subversion のリポジトリを、接続の認証情報で扱う | Debian 13 (trixie) のパッケージ | [Apache-2.0](https://github.com/apache/subversion/blob/trunk/LICENSE) |
-| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS をコマンドラインから使う。`af-aws-exec` を通して実行する | `2.42.3` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.42.3/LICENSE.txt) |
+| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS をコマンドラインから使う。`af-aws-exec` を通して実行する | `2.42.4` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.42.4/LICENSE.txt) |
 | [Session Manager plugin](https://github.com/aws/session-manager-plugin) | AWS CLI から SSM のセッションを開く | `1.2.835.0` | [Apache-2.0](https://github.com/aws/session-manager-plugin/blob/1.2.835.0/LICENSE) |
 | [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud をコマンドラインから使う。`af-gcloud-exec` を通して実行する | `594.0.1` | [Apache-2.0](https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-594.0.1-linux-x86_64.tar.gz) |
 
@@ -53,7 +53,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic のコーディングエージェント | `2.1.332` | [提供元の規約](https://www.anthropic.com/legal/commercial-terms) |
 | [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI のコーディングエージェント | `0.172.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.172.0/LICENSE) |
 | [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.4.1` | [MIT](https://github.com/anomalyco/opencode/blob/v2.4.1/LICENSE) |
-| [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.115` | [提供元の規約](https://github.com/github/copilot-cli/blob/v1.0.115/LICENSE.md) |
+| [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.116` | [提供元の規約](https://github.com/github/copilot-cli/blob/v1.0.116/LICENSE.md) |
 | [Antigravity CLI (`agy`)](https://antigravity.google/) | Google のコーディングエージェント | `1.5.17` | [提供元の規約](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor のコーディングエージェント | `2026.10.22-27dcf5f` | [提供元の規約](https://cursor.com/terms-of-service) |
 | [Kiro CLI (`kiro-cli`)](https://kiro.dev/cli/) | AWS の Kiro のコーディングエージェント | `3.3.0` | [提供元の規約](https://kiro.dev/license/) |

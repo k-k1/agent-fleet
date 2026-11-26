@@ -172,6 +172,12 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
       // The space was removed since the list was read: read it again, so the form shows that it is
       // gone instead of offering the same pick for a retry.
       if (code === "space_not_found") void useSpacesStore.getState().refresh();
+      // An agent is running in the space (#5230): the form asks "new space or here anyway", so no
+      // toast. The session list is read again so the place chip marks that space too.
+      if (code === "space_busy") {
+        void refreshSessions();
+        return { ok: false, spaceBusy: { session: String(res.error.session || ""), display: res.error.display ? String(res.error.display) : undefined } };
+      }
       if (code === "branch_exists") return { ok: false, conflict: "local" as const };
       if (code === "branch_exists_remote") return { ok: false, conflict: "remote" as const };
       // The branch is checked out in another working copy (git allows only one). The

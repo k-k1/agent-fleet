@@ -305,26 +305,12 @@ func WriteWorktreeCreator(dir, session string) error {
 	return os.Rename(tmp.Name(), p)
 }
 
-// creatorMarkerMax bounds a marker read; a real one is a session name.
-const creatorMarkerMax = 4096
-
 // readCreatorFile returns the trimmed marker body; ok is false when it cannot be read, is empty,
-// or is not a small regular file. A named pipe or device in its place must never block the
-// reader (the delete path reads it while holding the deletion gate), so the file is opened
-// without blocking and its type is checked on the descriptor.
+// or is not a small regular file (readSmallRegular: the delete path reads it while holding the
+// deletion gate, so a named pipe in its place must never block it).
 func readCreatorFile(p string) (string, bool) {
-	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return "", false
-	}
-	defer f.Close()
-	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
-		return "", false
-	}
-	// One byte over the limit: a longer marker is damaged, and its first 4 KiB must never be
-	// taken for a session name.
-	b, err := io.ReadAll(io.LimitReader(f, creatorMarkerMax+1))
-	if err != nil || len(b) > creatorMarkerMax {
+	b, ok := readSmallRegular(p, smallFileMax)
+	if !ok {
 		return "", false
 	}
 	v := strings.TrimSpace(string(b))
@@ -911,6 +897,129 @@ func WorktreeParent(dir string) string {
 		return ""
 	}
 	return filepath.Dir(out) // …/repos/app/.git -> …/repos/app
+}
+
+// LinkedWorktreeMain reports whether dir is a linked worktree (`git worktree add`) and, when it
+// is, the main working copy it hangs off. Whether dir is a linked worktree is read from the
+// .git gitfile and commondir the way git reads them, without running git; a submodule's
+// gitfile has no commondir and is not a linked worktree. Only naming the parent may run git,
+// once (ownsCommonDir).
+//
+// main is "" whenever the folder above the common git directory is not, as git reads it, a
+// working copy that owns it: a --separate-git-dir, a bare repository (whatever its directory
+// is called), a core.worktree that points elsewhere, or a git that does not answer. A parent
+// named there would be invented, so when in doubt there is none.
+func LinkedWorktreeMain(dir string) (main string, linked bool) {
+	body, ok := readSmallRegular(filepath.Join(dir, ".git"), smallFileMax)
+	if !ok {
+		return "", false // a .git directory (a main copy), none, or not a regular file
+	}
+	// git accepts a gitfile only as "gitdir: <path>", dropping trailing line ends alone.
+	rest, ok := strings.CutPrefix(strings.TrimRight(string(body), "\r\n"), "gitdir: ")
+	if !ok || rest == "" {
+		return "", false
+	}
+	gitDir, ok := physicalFrom(dir, rest)
+	if !ok {
+		return "", false
+	}
+	c, ok := readSmallRegular(filepath.Join(gitDir, "commondir"), smallFileMax)
+	if !ok {
+		return "", false
+	}
+	rest = strings.TrimRight(string(c), "\r\n")
+	if rest == "" {
+		return "", false
+	}
+	common, ok := physicalFrom(gitDir, rest)
+	if !ok || common == gitDir {
+		return "", false
+	}
+	// A common dir not called .git is never a working copy's own; skip the git run for it.
+	main = filepath.Dir(common) // …/repos/app/.git -> …/repos/app
+	if filepath.Base(common) != ".git" || !ownsCommonDir(main, common) {
+		return "", true
+	}
+	return main, true
+}
+
+// physicalFrom resolves p, taken relative to base when it is not absolute, to its physical
+// path, the way git reads the relative paths in a gitfile and in commondir: with ~/repos a
+// symlink, "../../x" leaves from the link's target, not from its spelling. The two are joined
+// as text, never through filepath.Join, whose Clean would fold the ".." lexically first;
+// EvalSymlinks resolves each component before it applies a ".." that follows.
+func physicalFrom(base, p string) (string, bool) {
+	if !filepath.IsAbs(p) {
+		p = base + string(filepath.Separator) + p
+	}
+	real, err := filepath.EvalSymlinks(p)
+	return real, err == nil
+}
+
+// mainCopyTimeout bounds the one git run that confirms a parent. It reads only local files and
+// answers in milliseconds; the bound is for a named pipe planted where git reads, which would
+// otherwise hold the create (and a recreate, after it stopped the old slot) forever.
+const mainCopyTimeout = 3 * time.Second
+
+// ownsCommonDir reports whether candidate is, as git itself reads it, a non-bare working copy
+// whose top level is candidate and whose common git directory is common. git is asked rather
+// than the config parsed here: core.bare and core.worktree follow git's full config syntax
+// (comments, subsections, includes), and a parser of our own that misread one would name a
+// folder that holds no working copy.
+func ownsCommonDir(candidate, common string) bool {
+	// The main copy's own config.worktree is read by this run and by nothing the worktree's
+	// session needs (its git reads the worktree's own), so a fault there must not cost the
+	// create even the timeout: anything but a regular file means no parent and no git run.
+	if fi, err := os.Stat(filepath.Join(common, "config.worktree")); err == nil && !fi.Mode().IsRegular() {
+		return false
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), mainCopyTimeout)
+	defer cancel()
+	out, err := CmdContext(ctx, candidate, "rev-parse", "--path-format=absolute",
+		"--is-bare-repository", "--show-toplevel", "--git-common-dir").Output()
+	if err != nil {
+		return false // a bare repository fails --show-toplevel
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 || lines[0] != "false" {
+		return false
+	}
+	top, err := filepath.EvalSymlinks(lines[1])
+	if err != nil {
+		return false
+	}
+	cd, err := filepath.EvalSymlinks(lines[2])
+	if err != nil {
+		return false
+	}
+	cand, err := filepath.EvalSymlinks(candidate)
+	return err == nil && top == cand && cd == common
+}
+
+// smallFileMax bounds a gitfile, a commondir or a creator marker: each holds one path or one
+// session name.
+const smallFileMax = 4096
+
+// readSmallRegular reads p only when it is a regular file of at most max bytes. The open is
+// non-blocking and the type is checked on the opened descriptor, so a named pipe or device in
+// its place (or swapped in after a stat) never blocks the reader. One byte over the limit is
+// read so a longer file is refused rather than taken truncated.
+func readSmallRegular(p string, max int64) ([]byte, bool) {
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return nil, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil || int64(len(b)) > max {
+		return nil, false
+	}
+	return b, true
 }
 
 // LinkedWorktreeCount returns how many linked worktrees hang off dir (0 for a plain

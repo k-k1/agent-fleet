@@ -536,12 +536,20 @@ func rateLimitMoveEarly(m session.Meta, st rateLimitState, now time.Time) rateLi
 		return st
 	}
 	next := st
-	next.MovedFrom, next.ScheduleID = st.ScheduleID, id
+	// The CP moves a booking that is only minutes away in place and answers with the same id: there
+	// is no old row to cancel, and cancelling it would remove the only booking.
+	inPlace := id == st.ScheduleID
+	if !inPlace {
+		next.MovedFrom = st.ScheduleID
+	}
+	next.ScheduleID = id
 	next.ResumeAt, next.Source = at.Format(time.RFC3339), rateLimitSourceResetEarly
 	if err := RateLimitStates.Write(m.Name, next); err != nil {
 		// The new id is not recorded anywhere, so it would be an orphan: drop it and keep the old one.
 		log.Printf("rate-limit: could not record the moved auto-resume of %s: %v", m.Name, err)
-		cancelRateLimitSchedule(m.Name, id)
+		if !inPlace {
+			cancelRateLimitSchedule(m.Name, id)
+		}
 		return st
 	}
 	st = settleMovedFrom(m, next)
@@ -745,26 +753,30 @@ func episodeSpent(st rateLimitState, now time.Time) bool {
 	return err == nil && now.After(t.Add(rateLimitRebookSettle))
 }
 
-// createRateLimitSchedule books the resume with the CP scheduler (docs/log/38).
-//
-//	spec_kind=once           - fires once, then disables itself.
-//	session_mode=reuse       - injects into the session that stopped, not into a new one.
-//	reuse_target=<name>      - pinned reuse; rotation does not apply to a user's session.
-//	missing_target_policy=fail - do not recreate a session that is gone. Spawning some other
-//	                           session that cannot carry on the interrupted work does more harm.
-//	overlap_policy=skip      - if a person is already driving it at that instant, skip silently.
-//	wake_policy=wake         - deliver even if the workspace stopped during the wait, which is
-//	                           the whole reason this is a CP schedule and not an in-process timer.
-//	report=false             - do not report this injection to an operator conversation: there
-//	                           is none to report to (owner_conv is empty). The resumed turn
-//	                           still raises the usual "answer ready" notice when it ends, so it
-//	                           does not become invisible to the user.
+// createRateLimitSchedule books the resume with the CP scheduler (docs/log/38) through the one
+// route whose rows the CP builds itself and does not hold for approval (#5212): the CP makes it a
+// once-schedule, injected into this session by name (pinned reuse; never recreated if the session
+// is gone; skipped if a person is driving it at that instant; waking a stopped workspace, which is
+// the whole reason this is a CP schedule and not an in-process timer), with the fixed resume
+// prompt and no operator report. The body names only the pieces the CP cannot know.
 func createRateLimitSchedule(m session.Meta, at time.Time) (string, error) {
 	body, err := rateLimitScheduleBody(m, at)
 	if err != nil {
 		return "", err
 	}
-	out, err := mcpx.CPScheduleDo(http.MethodPost, "/internal/schedules", body)
+	out, err := scheduleDo(http.MethodPost, "/internal/schedules/limit-resume", body)
+	var cpErr *mcpx.CPScheduleError
+	if errors.As(err, &cpErr) && (cpErr.Status == http.StatusNotFound || cpErr.Status == http.StatusMethodNotAllowed) {
+		// A CP from before the route existed (or one rolled back to it): the answer says the route is
+		// absent, so nothing was created. Book the old way, which that CP holds for approval as it
+		// always did, rather than losing the booking. Any other failure may have been accepted and is
+		// left to the caller's retry, so it cannot create a second row here.
+		legacy, lerr := legacyRateLimitScheduleBody(m, at)
+		if lerr != nil {
+			return "", lerr
+		}
+		out, err = scheduleDo(http.MethodPost, "/internal/schedules", legacy)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -781,12 +793,13 @@ func createRateLimitSchedule(m session.Meta, at time.Time) (string, error) {
 	return wire.ID, nil
 }
 
-// rateLimitScheduleBody is the request itself, kept apart from the call so a test can read
-// what would be sent without a CP. agent_kind follows the session rather than being a constant:
-// it is the kind the CP would create a session with, and although missing_target_policy=fail
-// means it can never do so here, a schedule row that names the wrong agent is a lie in the
-// Console's scheduled-execution list.
-func rateLimitScheduleBody(m session.Meta, at time.Time) ([]byte, error) {
+// scheduleDo is the CP call, replaceable in tests.
+var scheduleDo = mcpx.CPScheduleDo
+
+// legacyRateLimitScheduleBody is the generic booking an Agent sent before the dedicated route: every
+// policy field spelled out, with the wording as that Agent sent it (no notice line, so an older
+// Agent still recognises the delivery). A CP that has the route never sees it; one that lacks it holds it.
+func legacyRateLimitScheduleBody(m session.Meta, at time.Time) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"spec_kind":             "once",
 		"spec":                  at.UTC().Format(time.RFC3339),
@@ -798,8 +811,23 @@ func rateLimitScheduleBody(m session.Meta, at time.Time) ([]byte, error) {
 		"overlap_policy":        "skip",
 		"wake_policy":           "wake",
 		"agent_kind":            NormalizeKind(m.Kind),
-		"prompt":                rateLimitResumePrompt(),
+		"prompt":                rateLimitResumeBodyFor(uiprefs.Locale()),
 		"report":                false,
+	})
+}
+
+// rateLimitScheduleBody is the request itself, kept apart from the call so a test can read
+// what would be sent without a CP. agent_kind follows the session rather than being a constant:
+// it is the kind the CP would create a session with, and although the CP never recreates a missing
+// target here, a schedule row that names the wrong agent is a lie in the Console's scheduled list.
+// locale picks which of the CP's two fixed prompts is booked; the prompt text itself is not sent.
+func rateLimitScheduleBody(m session.Meta, at time.Time) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"session":    m.Name,
+		"resume_at":  at.UTC().Format(time.RFC3339),
+		"agent_kind": NormalizeKind(m.Kind),
+		"locale":     uiprefs.Locale(),
+		"tz":         scheduleTZName(),
 	})
 }
 
@@ -841,7 +869,16 @@ func rateLimitResumePrompt() string {
 	return rateLimitResumePromptFor(uiprefs.Locale())
 }
 
+// rateLimitResumeNotice opens every resume prompt: the notice line every automatic input carries, so
+// the session can tell the nudge from its user typing. It says the text brings no instruction.
+const rateLimitResumeNotice = "[agent-fleet:notice kind=limit-resume reply=none] "
+
 func rateLimitResumePromptFor(locale string) string {
+	return rateLimitResumeNotice + rateLimitResumeBodyFor(locale)
+}
+
+// rateLimitResumeBodyFor is the wording alone, as builds before the notice line booked it.
+func rateLimitResumeBodyFor(locale string) string {
 	if locale == "en" {
 		return "The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
 			"If the limit refused the latest request before you started it and you have done none of it yet, " +
@@ -860,6 +897,8 @@ func rateLimitResumePromptFor(locale string) string {
 // from booking time, so a resume that spans an upgrade still arrives in the old words and must
 // still count as one - otherwise its "resumed" notice is silently dropped.
 var legacyRateLimitResumePrompts = []string{
+	rateLimitResumeBodyFor("en"),
+	rateLimitResumeBodyFor("ja"),
 	"The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
 		"This is an automatic resume — there is no new instruction. " +
 		"If you cannot tell where it stopped, say so instead of starting something new.",

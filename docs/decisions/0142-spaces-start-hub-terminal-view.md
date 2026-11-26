@@ -3,7 +3,7 @@
 English | [日本語](0142-spaces-start-hub-terminal-view.ja.md)
 
 - Status: **accepted** (2026-11-24). Decided with the owner on a static mock. Nothing is built.
-  Open questions 3 and 4 were decided the same day; 1 and 2 are not decided.
+  Open questions 3 and 4 were decided the same day, and 2 on 2026-11-26; 1 is not decided.
 - Tracking: #4961. Follow-ups: #4963, #4964, #4965, #4966, #4967, #4968.
 - Related: [0140](0140-console-activity-bar.md) (the activity bar this adds a view to; decisions 2,
   4 and 5) / [0081](0081-image-generation-pane.md) decision 1 (no engine, no button) /
@@ -41,6 +41,8 @@ Five facts in the code shape the answer:
    repository `foo`.
 4. Agent memory maps only directories under `~/repos` to a project
    (`memoryx.agentMemProjectFor`). A session outside it has no memory project.
+   *Note (2026-11-26, #5221):* a space now maps to one shared project (open question 2); every other
+   directory outside `~/repos` still has none.
 5. Deleting a working copy also deletes the shell and SSM sessions opened in it (they go to the
    trash). Shells are tied to the place they were opened in.
 
@@ -136,6 +138,9 @@ Five facts in the code shape the answer:
 2. **Memory scope for spaces.** (a) no memory, as today; (b) one shared project for all of a
    member's spaces; (c) one project per space. Recommended: (b), because spaces are often
    short-lived and (c) would scatter memories over many small projects.
+   **Decided: (b)** (2026-11-26, #4968; built in #5221). A directory `spacex.FolderOf` calls a space
+   maps to the project with the fixed id `spaces`, shown as "Spaces". A folder under `~/spaces`
+   without the marker has none. Reopen if the per-space split (c) turns out to be needed.
 3. **The badge of a view whose icon is off.** ADR 0140 decision 4 assumes every view has an icon.
    (a) drop the badge; (b) show a dot on the bar and name the view in the context menu.
    **Decided: (b) for waiting badges** (a session stopped on the member's answer), **(a) for news.**
@@ -169,8 +174,8 @@ Five facts in the code shape the answer:
 
 - `~/spaces` is new data in the home directory. The guide's recreate table, Settings → Machine's
   home usage and the cleanup categories need a row for it.
-- Sessions in spaces have no memory, skills from a working copy or repository templates until the
-  open questions are decided.
+- Sessions in spaces share one memory project ("Spaces", open question 2, #5221). They have no skills
+  from a working copy or repository templates until the open questions are decided.
 - "Other sessions" shrinks to home agents and sessions whose repository was removed.
 - Moving an existing session into a space, and promoting a space into a repository (copy the files
   into a new repository and start a new session there; a move would break `--resume`), are not part

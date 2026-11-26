@@ -35,6 +35,10 @@ type Event struct {
 	// Failed marks a pr.checks.completed whose result is a failure, so a session's watch on
 	// completed checks is known to have told what a built-in's pr.checks.failed would.
 	Failed bool `json:"failed,omitempty"`
+	// Occurred is when the thing the event reports happened, for a source whose subject is
+	// shared by watches made at different times. A subscription created at or after it treats the
+	// event as history and is not told. Zero means the event is about the present.
+	Occurred time.Time `json:"occurred,omitempty"`
 	// Count is the number of unresolved review threads on a pr.review.threads_unresolved, so a
 	// watch that told two threads stands in for a built-in's two and not for its three.
 	Count int `json:"count,omitempty"`
