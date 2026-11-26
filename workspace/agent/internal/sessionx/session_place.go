@@ -20,23 +20,17 @@ import (
 //
 // The parent is compared physically: a spelling with ".." is resolved before it is judged, so
 // ~/repos/link/../app is never filed as ~/repos/app; and a ".." that cancels a symlink is no
-// place at all (crossesLink), space or copy, since the link may later point elsewhere.
+// place at all (crossesLink), since the link may later point elsewhere.
 func PlaceOf(dir string) *session.Place {
 	other := &session.Place{Kind: session.PlaceOther}
 	if dir == "" || !filepath.IsAbs(dir) {
 		return other
 	}
-	if sameDir(dir, homeDir()) {
-		return &session.Place{Kind: session.PlaceHome}
-	}
-	if crossesLink(dir) {
-		// Judged before the space as well as the copy: the stored place would go on naming the
-		// old space after the link is re-pointed (#5278). Home is told first: it is the one
-		// directory that is the same wherever a link leads back to it.
-		return other
-	}
 	if f := spacex.FolderOf(dir); f != "" {
 		return &session.Place{Kind: session.PlaceSpace, ID: f}
+	}
+	if sameDir(dir, homeDir()) {
+		return &session.Place{Kind: session.PlaceHome}
 	}
 	parent, folder, ok := splitPhysical(dir)
 	if !ok {

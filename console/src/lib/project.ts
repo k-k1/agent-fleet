@@ -27,13 +27,14 @@ export function sessionSpace(s: Pick<Session, "place" | "space">): string {
   return s.space || "";
 }
 
-/** The space an action on a session (handoff launch) targets: the Agent's current `space`
- *  first, since a stored place is judged once and a link re-pointed since leaves it naming the old
- *  space (#5278); the stored place stands in only where no `space` arrives (the stopped mirror). */
-export function sessionActionSpace(s: Pick<Session, "place" | "space">): string {
-  // A stored repo, worktree or home place still wins; "other" does not, since the Agent stores it
-  // for a dir that reaches a space through a link, which its live `space` then names.
+/** The space an action on a session (handoff launch) targets: the Agent's current `space` first,
+ *  since a stored place is judged once and a link re-pointed since leaves it naming the old space
+ *  (#5278); the stored place stands in where no `space` arrives (the stopped mirror) and where the
+ *  session was launched in a subdir, whose launch root the stored place was judged on while `space`
+ *  is read from the raw dir. A stored repo, worktree or home place still wins. */
+export function sessionActionSpace(s: Pick<Session, "place" | "space" | "subdir">): string {
   if (s.place && s.place.kind !== "space" && s.place.kind !== "other") return "";
+  if (s.subdir) return sessionSpace(s);
   return s.space || sessionSpace(s);
 }
 

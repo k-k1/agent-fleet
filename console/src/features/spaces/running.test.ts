@@ -51,5 +51,7 @@ describe("sessionInSpace", () => {
     expect(sessionInSpace(row, "a", "/home/dev/spaces/a")).toBe(false);
     // the Agent's delete takes only what runs at or under the directory, so b does not claim it
     expect(sessionInSpace(row, "b", "/home/dev/spaces/b")).toBe(false);
+    // a session started in a subdir keeps its stored place: its launch root is what it was judged on
+    expect(sessionInSpace({ ...row, subdir: "src" } as Session, "a", "/home/dev/spaces/a")).toBe(true);
   });
 });

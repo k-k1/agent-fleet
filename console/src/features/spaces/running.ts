@@ -22,13 +22,15 @@ export function busySpaces(sessions: Session[]): Set<string> {
   return out;
 }
 
-/** Whether s belongs to the space `folder` whose directory is `dir` ("" when unknown): the Agent's current
- *  `space` (else its stored place) names it, or it runs at or under the
- *  directory, which the Agent settles too when the space is deleted. */
+/** Whether s belongs to the space `folder` whose directory is `dir` ("" when unknown): its stored
+ *  place (or, on an older row, the Agent's `space`) names it, or it runs at or under the directory,
+ *  which the Agent settles too when the space is deleted. A stored place is judged once, so a link
+ *  re-pointed since leaves it stale: when the Agent's current `space` names another space the row
+ *  is not counted here (#5278), except for a session started in a subdir, whose launch root the
+ *  stored place was judged on while `space` is read from the raw dir. A live `space` never adds a
+ *  row, since the Agent's delete takes dir matches only. */
 export function sessionInSpace(s: Session, folder: string, dir: string): boolean {
-  // The stored place (else `space`) names it, unless the Agent's current `space` names another
-  // space: a link re-pointed since leaves the stored one stale (#5278). The Agent's delete takes
-  // only what runs at or under the directory, so a live `space` alone never adds a session here.
-  const named = sessionSpace(s);
-  return (named === folder && (!s.space || s.space === folder)) || (!!dir && !!s.dir && (s.dir === dir || s.dir.startsWith(dir + "/")));
+  const stale = !!s.space && s.space !== folder && !s.subdir;
+  const stored = sessionSpace(s) === folder && !stale;
+  return stored || (!!dir && !!s.dir && (s.dir === dir || s.dir.startsWith(dir + "/")));
 }
