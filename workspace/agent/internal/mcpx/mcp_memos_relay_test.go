@@ -2,11 +2,15 @@ package mcpx
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // callTool runs one tools/call through the stdio dispatcher.
@@ -161,6 +165,103 @@ func TestMemoToolsSendTheReference(t *testing.T) {
 	}
 	if got := agent.memoCalls(); !reflect.DeepEqual(got, want) {
 		t.Errorf("the Agent got\n%q\nwant\n%q", got, want)
+	}
+}
+
+// update_memo names this server's own session in the query, as add_memo does in its body, so the
+// relay can tell whether a bare name means the session's space. Only a move to a name that could
+// be a space folder carries it: any other edit, a worktree folder or an explicit spaces/<folder>
+// goes through without the session being read. The model cannot name a session, and the operator
+// names none.
+func TestUpdateMemoNamesTheServersOwnSession(t *testing.T) {
+	agent := setUpMemoSession(t)
+	for _, args := range []map[string]any{
+		{"id": "m1", "repo": "app"},
+		{"id": "m1", "repo": "app@one"},
+		{"id": "m1", "repo": "spaces/app"},
+		{"id": "m1", "body": "b"},
+		{"id": "m1", "repo": ""},
+	} {
+		callMemoTool(t, "update_memo", args)
+	}
+	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"from=slot01", "", "", "", ""}) {
+		t.Errorf("a session's update_memo sent the queries %q, want from=slot01 on the bare name only", got)
+	}
+	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app", "from": "other"}); !strings.Contains(resp, "unknown argument") {
+		t.Errorf("update_memo with a from argument was not refused: %s", resp)
+	}
+
+	// No session to name, outside any space: no caller here can mean a space, so every move and
+	// edit still goes, without from.
+	mcpSourceSession = ""
+	agent = memoFakeAgent(t)
+	for _, args := range []map[string]any{
+		{"id": "m1", "repo": "app"},
+		{"id": "m1", "repo": "app@one"},
+		{"id": "m1", "body": "b"},
+	} {
+		if resp := callMemoTool(t, "update_memo", args); strings.Contains(resp, "isError") {
+			t.Errorf("update_memo %v with no session outside a space was refused: %s", args, resp)
+		}
+	}
+	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"", "", ""}) {
+		t.Errorf("with no session outside a space the queries were %q, want none", got)
+	}
+
+	// No session to name, inside a space, at its root or in a subdir: its own folder name could be
+	// that space or a repository, so it is refused; another repository's name, or a move whose
+	// bucket is plain either way, still goes.
+	sp, err := spacex.Create("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(sp.Dir, "docs")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{sp.Dir, sub} {
+		t.Chdir(dir)
+		agent = memoFakeAgent(t)
+		if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": sp.Folder}); !strings.Contains(resp, "isError") {
+			t.Errorf("in %s with no session to name, a move to the space's own name was not refused: %s", dir, resp)
+		}
+		for _, args := range []map[string]any{
+			{"id": "m1", "repo": "other"},
+			{"id": "m1", "repo": "spaces/" + sp.Folder},
+			{"id": "m1", "body": "b"},
+		} {
+			if resp := callMemoTool(t, "update_memo", args); strings.Contains(resp, "isError") {
+				t.Errorf("in %s with no session to name, update_memo %v was refused: %s", dir, args, resp)
+			}
+		}
+		if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"", "", ""}) {
+			t.Errorf("in %s the Agent got the queries %q, want three calls without from", dir, got)
+		}
+	}
+
+	// No session to name and a directory that cannot be read: nothing says the bare name is not
+	// the caller's space, so it is refused, pointing at spaces/<folder>; other moves still go.
+	prevGetwd := memoGetwd
+	t.Cleanup(func() { memoGetwd = prevGetwd })
+	memoGetwd = func() (string, error) { return "", errors.New("getwd: no such file") }
+	agent = memoFakeAgent(t)
+	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"}); !strings.Contains(resp, "isError") || !strings.Contains(resp, "spaces/") {
+		t.Errorf("with an unreadable directory a bare-name move was not refused with the explicit form: %s", resp)
+	}
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app@one"})
+	if got := agent.memoCalls(); len(got) != 1 || !strings.Contains(got[0], `"repo":"app@one"`) {
+		t.Errorf("with an unreadable directory the Agent got %q, want the worktree move alone", got)
+	}
+	memoGetwd = prevGetwd
+
+	oldWrite := writeEnabled()
+	t.Cleanup(func() { setWriteEnabled(oldWrite) })
+	setSelfReportOnly(false)
+	setWriteEnabled(true)
+	agent = memoFakeAgent(t)
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"})
+	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{""}) {
+		t.Errorf("the operator's update_memo sent the queries %q, want none", got)
 	}
 }
 

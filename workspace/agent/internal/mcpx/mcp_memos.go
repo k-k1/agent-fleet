@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // memoTools are the memo queue, which lives in the CP store, not the Agent. list_memos, add_memo
@@ -61,7 +64,7 @@ func memoTools() []toolSpec {
 							"kind":       map[string]any{"type": "string", "description": "text | file"},
 							"body":       map[string]any{"type": "string", "description": "メモ本文（kind=text）またはコメント（kind=file）"},
 							"refPath":    map[string]any{"type": "string", "description": "~/repos/... のパス（kind=file）"},
-							"repo":       map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る"},
+							"repo":       map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る。スペースは spaces/<フォルダ>"},
 							"category":   map[string]any{"type": "string", "description": "サブプロジェクトのラベル（任意）"},
 							"reference":  memoRefSchemaJA(false),
 							"after":      memoAfterSchemaJA(false),
@@ -104,7 +107,7 @@ func memoTools() []toolSpec {
 							"kind":       map[string]any{"type": "string", "enum": []string{"text", "file"}, "description": "text | file"},
 							"body":       map[string]any{"type": "string", "description": "The note (kind=text), or a comment on the file (kind=file)"},
 							"refPath":    map[string]any{"type": "string", "description": "A ~/repos/... path (kind=file)"},
-							"repo":       map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
+							"repo":       map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo. A space is spaces/<folder>; in a space, its own folder name files it under that space"},
 							"category":   map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
 							"reference":  memoRefSchema(false),
 							"after":      memoAfterSchema(false),
@@ -162,7 +165,7 @@ func memoTools() []toolSpec {
 						"properties": map[string]any{
 							"id":         map[string]any{"type": "string", "description": "メモ id（list_memos で取得）"},
 							"body":       map[string]any{"type": "string", "description": "新しい本文（任意）"},
-							"repo":       map[string]any{"type": "string", "description": "新しいレポバケツ（任意）。worktree のフォルダ（repo@slug）は元のレポに入る"},
+							"repo":       map[string]any{"type": "string", "description": "新しいレポバケツ（任意）。worktree のフォルダ（repo@slug）は元のレポに入る。スペースは spaces/<フォルダ>"},
 							"category":   map[string]any{"type": "string", "description": "新しいカテゴリ（任意）"},
 							"refPath":    map[string]any{"type": "string", "description": "新しい参照パス（任意）"},
 							"position":   map[string]any{"type": "integer", "description": "グループ内の新しい並び順（任意）"},
@@ -199,7 +202,7 @@ func memoTools() []toolSpec {
 							"id":         map[string]any{"type": "string", "minLength": 1, "description": "Memo id from list_memos"},
 							"body":       map[string]any{"type": "string", "description": "Replacement note text (optional)"},
 							"refPath":    map[string]any{"type": "string", "description": "Replacement ~/repos/... path (optional)"},
-							"repo":       map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
+							"repo":       map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo. A space is spaces/<folder>; in a space, its own folder name files it under that space"},
 							"category":   map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
 							"reference":  memoRefSchema(true),
 							"after":      memoAfterSchema(true),
@@ -224,7 +227,22 @@ func memoTools() []toolSpec {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（メモ id）が必要です")
 				}
-				out, err := agentDoTimeout(http.MethodPatch, "/memos/"+url.PathEscape(a.ID), memoArgsObject(p.Args), memoAgentTimeout)
+				// As on a create, the caller is this server's own session, never an argument. It
+				// only decides whether a bare name means the caller's space (memorelay.NeedsCaller),
+				// so it is sent with such a move alone: any other edit goes through without it.
+				path := "/memos/" + url.PathEscape(a.ID)
+				if selfReportOnly() && memorelay.NeedsCaller(memoPatchRepo(p.Args)) {
+					if self, err := mcpOwningSession(); err == nil {
+						path += "?from=" + url.QueryEscape(self)
+					} else if space, known := memoCwdSpace(); !known || space == strings.TrimSpace(memoPatchRepo(p.Args)) {
+						// No session to name, and this process runs in the space of that name (or
+						// where it runs cannot be read): the name could mean that space or a
+						// repository, and a guess could run the work in the wrong one.
+						return mcpToolErr(req.ID, err.Error()+"。スペースへ移すなら repo に spaces/<フォルダ> を指定してください")
+					}
+					// Otherwise no caller here can mean a space of that name, so it is a repository's.
+				}
+				out, err := agentDoTimeout(http.MethodPatch, path, memoArgsObject(p.Args), memoAgentTimeout)
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
@@ -646,6 +664,36 @@ func memoCreateBody(from string, args json.RawMessage) ([]byte, error) {
 	}
 	in.From, in.Memo = from, memoArgsObject(args)
 	return json.Marshal(in)
+}
+
+// memoPatchRepo is the bucket update_memo's arguments move the memo to, "" when they move nothing.
+func memoPatchRepo(args json.RawMessage) string {
+	var in struct {
+		Repo string `json:"repo"`
+	}
+	_ = json.Unmarshal(memoArgsObject(args), &in)
+	return in.Repo
+}
+
+// memoGetwd is os.Getwd, a variable so a test can make the directory unreadable.
+var memoGetwd = os.Getwd
+
+// memoCwdSpace is the space this MCP process runs in: the space whose folder holds its directory,
+// at any depth (a session may run in a subdir), "" when none does. known is false when the
+// directory cannot be read, so nothing can be said either way.
+func memoCwdSpace() (space string, known bool) {
+	cwd, err := memoGetwd()
+	if err != nil {
+		return "", false
+	}
+	for d := filepath.Clean(cwd); ; d = filepath.Dir(d) {
+		if f := spacex.FolderOf(d); f != "" {
+			return f, true
+		}
+		if d == filepath.Dir(d) {
+			return "", true
+		}
+	}
 }
 
 // memoRelayErr is the tool error for a failed relay call. The relay's own "no bridge here"

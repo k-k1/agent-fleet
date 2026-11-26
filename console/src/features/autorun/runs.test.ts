@@ -165,6 +165,11 @@ describe("scopeRuns", () => {
     expect(scoped.map((r) => r.root.name).sort()).toEqual(["a", "c"]);
     expect(waitingRunCount(scoped)).toBe(2);
   });
+
+  it("keeps a space's runs in every set, as a category without a repository", () => {
+    const spaced = [{ categoryId: "ca", repo: "A" }, { categoryId: "cb", repo: "spaces/b" }] as never;
+    expect(scopeRuns(rows, spaced, set).map((r) => r.root.name).sort()).toEqual(["a", "b", "c"]);
+  });
 });
 
 describe("a run's category", () => {

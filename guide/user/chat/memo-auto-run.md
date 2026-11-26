@@ -45,7 +45,7 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 | Model | Empty means the agent's default. A memo may name its own |
 | Effort | Empty means the default. A memo may name its own. low, medium, high, xhigh and max are offered |
 | Spend limit (USD) | A limit for each run, from 0 to 10,000. 0 means no limit. It starts at 0 |
-| Run each time in a new worktree | When on, each run works in a new worktree of the category's repository. On to begin with. It has no effect on a category without a repository |
+| Run each time in a new worktree | When on, each run works in a new worktree of the category's repository. On to begin with. It has no effect on a category without a repository, and a space's category does not show it |
 | Accept notes from sessions I started without approval | When on, a memo added by a session you started yourself is "Waiting to run" at once, with no approval. Off to begin with. See [Skip the approval for your own sessions](#skip-the-approval-for-your-own-sessions) before turning it on |
 | Follow-ups a run may add without approval | How many follow-up memos of one approved memo the run that gets it may add without another approval, from 0 to 10. Every category starts at **4**, existing ones included. 0 turns it off. See [Follow-ups of an approved memo](#follow-ups-of-an-approved-memo) |
 | Tidy the waiting memos before a run | When on, a model in the workspace tidies the memos waiting to run before an automatic run. Off to begin with. See [Tidy the memos before a run](#tidy-the-memos-before-a-run) before turning it on |
@@ -87,6 +87,8 @@ Press "**Remove settings**" and the category is an ordinary memo category again.
 - Changing a memo that waits for approval yourself does not approve it
 - The approval card groups the memos one session (or `/mcp` connection) added. When it holds more than one, each memo has a checkbox, all ticked at first, and the button approves only the ticked ones ("Approve 2 of 3"). The unticked memos stay on the card and keep waiting for approval, so you can approve the rest of a session's memos now and leave one for later
 - A memo added from a worktree session lands in the category of the **parent repository**, so auto-run set on that repository's category sees it. This holds for every memo, whether or not the category has auto-run. Memos already under a worktree's own group stay there; drag them to move them
+- A memo a session in a [space](../sessions/spaces.md) adds under its space's folder name lands under that space, shown as `spaces/<folder>`, never under a repository whose folder has the same name. A memo it adds with no repository stays unfiled, and one it adds under another repository's name goes to that repository. Auto-run set on a space's category runs its sessions in that space, with the same checks as starting one there from the Console: when the space is gone or being deleted, the run ends as "Not sent" and its memos go back to waiting to run
+- "Add category" in the Memo queue view lists repositories, not spaces. To start a space's first category, ask a session (in that space or anywhere) to add a memo with `repo` set to `spaces/<folder>` and the category name you want; the category then appears and you can give it auto-run. Memos filed before this under a repository of the same name stay where they are; drag them to the space's category to run them there
 - A memo a session adds is up to 16 KB. Its text cannot start with `[agent-fleet:`. Sessions can add 30 memos a minute in total, across all categories
 
 ### Add a work item
@@ -344,7 +346,7 @@ The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lis
 
 A filter box at the top of the view narrows the runs. It matches, case-insensitively, a run's category, its work item (title, key, or `#N` / `PROJ-12`), and its own session and the sessions it started, such as reviewers (name, slug, branch, worktree folder). A run stays listed when one of its children matches; categories with no match are hidden, and the "**Ended N**" fold is open while you filter. **Esc** or the × button clears the filter, and **Enter** moves to the first row. With no match the view says "No runs match the filter."
 
-The view follows the [working set](../fleet/working-sets.md) you picked: a category is listed when its repository is in the set. A category without a repository, and runs that no category names, are listed under every set.
+The view follows the [working set](../fleet/working-sets.md) you picked: a category is listed when its repository is in the set. A category without a repository (including a space's), and runs that no category names, are listed under every set.
 
 A run is listed under the category whose delivery started it, also after that delivery has left the newest 50 of the category's history: the session records its category when it starts. "**Other runs**" holds the runs whose category cannot be told: the category no longer exists (its auto-run settings were deleted), or neither the delivery nor the session names one (the session was started before sessions recorded it, or you used Recreate on the run's session).
 

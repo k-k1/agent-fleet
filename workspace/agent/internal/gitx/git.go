@@ -25,6 +25,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/rmtree"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -2316,7 +2317,7 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir) }) {
 			return
 		}
-		if err := tm.stepErr("remove", func() error { return os.RemoveAll(dir) }); err != nil {
+		if err := tm.stepErr("remove", func() error { return rmtree.RemoveAll(dir) }); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
 		}
@@ -2387,7 +2388,7 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 	if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir) }) {
 		return
 	}
-	if err := tm.stepErr("remove", func() error { return os.RemoveAll(dir) }); err != nil {
+	if err := tm.stepErr("remove", func() error { return rmtree.RemoveAll(dir) }); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}

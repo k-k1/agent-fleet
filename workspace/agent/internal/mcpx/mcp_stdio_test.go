@@ -936,6 +936,8 @@ func memoTripwireCP(t *testing.T) string {
 type memoFake struct {
 	mu    sync.Mutex
 	calls []string
+	// queries is each call's raw query, in the order of calls.
+	queries []string
 	// answer is what /memos* answers; "" is {}.
 	answer string
 }
@@ -944,6 +946,12 @@ func (f *memoFake) memoCalls() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.calls...)
+}
+
+func (f *memoFake) memoQueries() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.queries...)
 }
 
 // memoFakeAgent starts a memoFake and points AGENT_ADDR at it.
@@ -959,6 +967,7 @@ func memoFakeAgent(t *testing.T) *memoFake {
 			}
 			f.mu.Lock()
 			f.calls = append(f.calls, line)
+			f.queries = append(f.queries, r.URL.RawQuery)
 			f.mu.Unlock()
 		}
 		f.mu.Lock()
