@@ -324,6 +324,15 @@ func githubErrorText(body []byte) string {
 			}
 		}
 	}
+	text = workItemProviderText(text)
+	if text == "" {
+		return "no reason given"
+	}
+	return text
+}
+
+// workItemProviderText bounds remote text and removes controls that can disguise it in the UI.
+func workItemProviderText(text string) string {
 	text = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return ' '
@@ -331,10 +340,7 @@ func githubErrorText(body []byte) string {
 		return r
 	}, text)), " ")
 	if r := []rune(text); len(r) > 300 {
-		text = string(r[:300]) + "…"
-	}
-	if text == "" {
-		return "no reason given"
+		return string(r[:300]) + "…"
 	}
 	return text
 }

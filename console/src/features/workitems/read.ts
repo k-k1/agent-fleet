@@ -191,6 +191,33 @@ export interface WorkItemChecks {
   pending: number;
 }
 
+export const BITBUCKET_MERGE_BLOCKER_LABELS = {
+  maximum_commits_behind: "wi.bb_merge_commits_behind",
+  minimum_approvals: "wi.bb_merge_approvals",
+  minimum_successful_builds: "wi.bb_merge_builds",
+  resolved_tasks: "wi.bb_merge_tasks",
+  custom: "wi.bb_merge_custom",
+} as const;
+
+interface BitbucketMergeBlocker {
+  kind: keyof typeof BITBUCKET_MERGE_BLOCKER_LABELS;
+  name: string;
+  message: string;
+}
+
+function readBitbucketMergeBlockers(raw: unknown): BitbucketMergeBlocker[] {
+  if (!Array.isArray(raw)) return [];
+  const result: BitbucketMergeBlocker[] = [];
+  for (const entry of raw) {
+    const kind = str(entry?.kind) as BitbucketMergeBlocker["kind"];
+    if (!Object.hasOwn(BITBUCKET_MERGE_BLOCKER_LABELS, kind)) continue;
+    const name = kind === "custom" ? str(entry.name).trim() : "";
+    const message = kind === "custom" ? str(entry.message).trim() : "";
+    if (kind !== "custom" || name || message) result.push({ kind, name, message });
+  }
+  return result;
+}
+
 /** A pull request read live, when its panel was opened (docs/log/80 §80.24). Nothing here is
  * cached — neither af nor the CP stores it; it is fetched, rendered and dropped. */
 export interface WorkItemDetail {
@@ -227,9 +254,9 @@ export interface WorkItemDetail {
   /** The head commit this read was drawn from — what a merge sends back so that a pull request
    * that moved since is refused. "" outside a GitHub pull request or from an older Agent. */
   headSha: string;
-  /** GitHub's `mergeable_state`: "clean" | "blocked" | "behind" | "dirty" | "unstable" |
-   * "has_hooks" | "draft" | "unknown", "" when not a GitHub pull request or an older Agent. */
+  /** GitHub's mergeable_state or Bitbucket's verdict in the same vocabulary. */
   mergeableState: string;
+  mergeBlockers: BitbucketMergeBlocker[];
   /** The merge methods the repository (GitHub) or the destination branch (Bitbucket) allows. */
   mergeMethods: string[];
   /** The method the dialog starts on ("" when none is allowed). */
@@ -284,6 +311,7 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
       checks: readChecks(d.checks),
       headSha: str(d.headSha),
       mergeableState: str(d.mergeableState),
+      mergeBlockers: d.provider === "bitbucket" ? readBitbucketMergeBlockers(d.mergeBlockers) : [],
       mergeMethods: Array.isArray(d.mergeMethods)
         ? d.mergeMethods.filter((m): m is string => typeof m === "string" && MERGE_METHODS.includes(m))
         : [],

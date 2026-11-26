@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -488,6 +490,13 @@ func TestParseBitbucketMergeability(t *testing.T) {
 
 // The extra mergeability call must stay best-effort and must not be made for a finished PR.
 func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := secrets.Update(func(d *secrets.Data) error {
+		d.Bitbucket = &secrets.BitbucketCreds{AccessToken: "x"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	prJSON := func(state string) string {
 		return `{"id":7,"title":"t","state":"` + state + `","draft":false,"updated_on":"2026-09-10T07:10:55+00:00",
 		  "author":{"display_name":"Taro"},"source":{"branch":{"name":"feat"},"commit":{"hash":"ab37a6993eb1","links":{"self":{"href":"BASE/2.0/repositories/acme/web/commit/ab37a6993eb1"}}}},
@@ -497,27 +506,49 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 	for _, tc := range []struct {
 		name, state, checks string
 		checksStatus        int
-		want                string
+		want, mergeState    string
 		wantCalled          bool
+		wantBlockers        string
 	}{
-		{"clean", "OPEN", `{"values":[{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, 200, "clean", true},
-		{"conflict", "OPEN", `{"values":[{"type":"git_mergeability_check","status":"FAILED","reason":"conflicts"}]}`, 200, "conflict", true},
-		{"call fails, detail survives", "OPEN", `boom`, 500, "unknown", true},
-		{"merged PR is not asked", "MERGED", `{"values":[{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, 200, "unknown", false},
+		{"blocking freshness", "OPEN", `{"values":[
+			{"type":"git_mergeability_check","status":"PASSED","reason":"clean","blocking":false},
+			{"type":"current_user_permission_check","status":"PASSED","blocking":false},
+			{"type":"standard_merge_check","status":"FAILED","required":true,"blocking":true,
+			 "check":{"type":"standard_merge_check_definition","kind":"maximum_commits_behind"},
+			 "requirement":{},"observed":{}}
+		]}`, 200, "clean", "blocked", true, `[{"kind":"maximum_commits_behind"}]`},
+		{"advisory", "OPEN", `{"values":[
+			{"type":"git_mergeability_check","status":"PASSED","reason":"clean","blocking":false},
+			{"type":"current_user_permission_check","status":"PASSED","blocking":false},
+			{"type":"standard_merge_check","status":"FAILED","required":false,"blocking":false,
+			 "check":{"type":"standard_merge_check_definition","kind":"maximum_commits_behind"}}
+		]}`, 200, "clean", "clean", true, ""},
+		{"conflict", "OPEN", `{"values":[{"type":"git_mergeability_check","status":"FAILED","reason":"conflicts","blocking":true}]}`, 200, "conflict", "dirty", true, ""},
+		{"call fails, detail survives", "OPEN", `boom`, 500, "unknown", "", true, ""},
+		{"merged PR is not asked", "MERGED", `{"values":[{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, 200, "unknown", "", false, ""},
 	} {
-		called := false
+		var called atomic.Bool
 		var srv *httptest.Server
 		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.HasSuffix(r.URL.Path, "/mergeability/checks"):
-				called = true
+				called.Store(true)
+				fields := strings.Split(r.URL.Query().Get("fields"), ",")
+				for _, field := range []string{"values.check.kind", "values.check.name", "values.message"} {
+					if !slices.Contains(fields, field) {
+						t.Errorf("mergeability request missing field %s", field)
+					}
+				}
 				w.WriteHeader(tc.checksStatus)
 				_, _ = w.Write([]byte(tc.checks))
-			case strings.HasSuffix(r.URL.Path, "/statuses"), strings.HasSuffix(r.URL.Path, "/diffstat"):
+			case strings.HasSuffix(r.URL.Path, "/statuses"):
+				_, _ = w.Write([]byte(`{"values":[{"state":"SUCCESSFUL"}]}`))
+			case strings.HasSuffix(r.URL.Path, "/diffstat"):
 				_, _ = w.Write([]byte(`{"values":[]}`))
 			case strings.Contains(r.URL.Path, "/commit/"):
 				_, _ = w.Write([]byte(`{"hash":"ab37a6993eb10000000000000000000000000000"}`))
 			default:
+				w.Header().Set("X-OAuth-Scopes", "pullrequest:write")
 				_, _ = w.Write([]byte(strings.ReplaceAll(prJSON(tc.state), "BASE", srv.URL)))
 			}
 		}))
@@ -529,8 +560,28 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
-		if out.Mergeable != tc.want || called != tc.wantCalled {
-			t.Errorf("%s: mergeable=%q called=%v, want %q / %v", tc.name, out.Mergeable, called, tc.want, tc.wantCalled)
+		if out.Mergeable != tc.want || called.Load() != tc.wantCalled {
+			t.Errorf("%s: mergeable=%q called=%v, want %q / %v", tc.name, out.Mergeable, called.Load(), tc.want, tc.wantCalled)
+		}
+		if out.MergeableState != tc.mergeState || out.Checks.State != "success" {
+			t.Errorf("%s: merge state %q, CI %q; want %q and success", tc.name, out.MergeableState, out.Checks.State, tc.mergeState)
+		}
+		wantCanMerge := tc.name == "blocking freshness" || tc.name == "advisory"
+		if out.CanMerge != wantCanMerge {
+			t.Errorf("%s: canMerge=%v, want %v", tc.name, out.CanMerge, wantCanMerge)
+		}
+		body, err := json.Marshal(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire struct {
+			Blockers json.RawMessage `json:"mergeBlockers"`
+		}
+		if err := json.Unmarshal(body, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if string(wire.Blockers) != tc.wantBlockers {
+			t.Errorf("%s: mergeBlockers=%s, want %s", tc.name, wire.Blockers, tc.wantBlockers)
 		}
 		if out.Title != "t" {
 			t.Errorf("%s: detail lost, title=%q", tc.name, out.Title)
@@ -587,5 +638,36 @@ func TestParseBitbucketMergeChecksState(t *testing.T) {
 		if v.mergeable != tc.mergeable || v.state != tc.state || v.permitted != tc.permitted {
 			t.Errorf("%s: got %+v, want %s/%s/%v", tc.name, v, tc.mergeable, tc.state, tc.permitted)
 		}
+	}
+}
+
+func TestParseBitbucketMergeBlockerDetails(t *testing.T) {
+	body := []byte(`{"values":[
+		{"type":"current_user_permission_check","status":"PASSED","blocking":false},
+		{"type":"git_mergeability_check","status":"PASSED","reason":"clean","blocking":false},
+		{"type":"standard_merge_check","status":"UNKNOWN","blocking":true,"check":{"kind":"maximum_commits_behind"}},
+		{"type":"standard_merge_check","status":"FAILED","blocking":true,"check":42},
+		{"type":"standard_merge_check","status":"FAILED","blocking":true,"check":{"kind":"future_rule"}},
+		{"type":"standard_merge_check","status":"FAILED","blocking":true,"check":{"kind":"minimum_approvals"}},
+		{"type":"standard_merge_check","status":"PENDING","blocking":true,"check":{"kind":"minimum_successful_builds"}},
+		{"type":"custom_pre_merge_check","status":"FAILED","blocking":true,
+		 "check":{"name":" Release\u202epolicy ","id":"internal-id"},"message":" Fix the manifest.\nRetry.",
+		 "links":{"details":{"href":"https://example.test/details"}}},
+		{"type":"custom_on_merge_check","status":"FAILED","blocking":true,"check":{"name":"Release gate"},"message":{"html":"ignore"}},
+		{"type":"custom_pre_merge_check","status":"FAILED","blocking":false,"check":{"name":"Advisory"},"message":"Advisory"},
+		{"type":"custom_pre_merge_check","status":"FAILED","blocking":true,"check":{"name":" "},"message":"\t"}
+	]}`)
+	v := parseBitbucketMergeChecks(body)
+	want := []bitbucketMergeBlocker{
+		{Kind: "minimum_approvals"},
+		{Kind: "minimum_successful_builds"},
+		{Kind: "custom", Name: "Release policy", Message: "Fix the manifest. Retry."},
+		{Kind: "custom", Name: "Release gate"},
+	}
+	if !slices.Equal(v.blockers, want) {
+		t.Errorf("blockers=%+v, want %+v", v.blockers, want)
+	}
+	if v.mergeable != "clean" || v.state != "blocked" || !v.permitted {
+		t.Errorf("optional detail changed merge verdict: %+v", v)
 	}
 }
