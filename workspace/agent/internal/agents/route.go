@@ -68,13 +68,24 @@ type CredentialResolver interface {
 // DefaultLaunchResolver is an optional capability of a CredentialResolver whose ResolveLaunch
 // cannot tell the route of a session that names no model from what it holds (opencode: the model
 // opencode picks depends on the directory's providers). ResolveDefaultLaunch may ask the
-// running tool, so it is for the launch RECORD only, never for judging a launch against a policy
-// (which has no working directory yet at a create, and must not wait on a probe at a resume). A
-// zero Launch is "cannot tell". start is when the caller began waiting for the record: the probe's
-// budget runs from it, so work done before this call spends the caller's budget instead of
-// granting the probe a fresh one after the caller has stopped waiting.
+// running tool, so it is called only where the session's working directory is known and the
+// caller can afford to wait: the launch record, and a restricted launch's judgement once its
+// directory exists (sessionx deferredDefaultRefusal). It is never called from a resume or a
+// Managed input revalidation, which must not wait on a probe. A zero Launch is "cannot tell".
+// start is when the caller began waiting for the record: the probe's budget runs from it, so work
+// done before this call spends the caller's budget instead of granting the probe a fresh one
+// after the caller has stopped waiting.
 type DefaultLaunchResolver interface {
 	ResolveDefaultLaunch(m session.Meta, start time.Time) routes.Launch
+}
+
+// DefaultLaunchHolder is DefaultLaunchResolver's check for a session that already carries its
+// record: HoldsDefaultLaunch reports that rec, the record ResolveDefaultLaunch gave a session that
+// names no model, is still what that session would start on, from what af holds alone (no probe, no
+// network: it runs at every start under a restriction). false when it cannot tell, which is a
+// refusal there.
+type DefaultLaunchHolder interface {
+	HoldsDefaultLaunch(m session.Meta, rec routes.Launch) bool
 }
 
 // OneRouteResolver marks a CredentialResolver whose launch with no selection runs on exactly the

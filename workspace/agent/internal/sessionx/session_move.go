@@ -330,6 +330,9 @@ func checkMoveRequest(ctx context.Context, src session.Meta, req moveRequest) er
 	}
 	// The target is a new launch; its create judges it again, but a refused one must not cost
 	// the source either.
+	// A default model the target's folder would prove is not judged here: the target's create runs
+	// under the move's operation lock, where a probe would hold the source's input closed. Such a
+	// target stays route_required, as before.
 	if ref, _ := newLaunchPolicyRefusal(req.Kind, req.Route, session.Meta{Kind: req.Kind, Model: req.Model, Driver: req.Driver}); ref != nil {
 		return &moveError{Status: ref.Status, Code: ref.Code, Message: ref.Message}
 	}
@@ -637,7 +640,7 @@ func moveCreateReq(src session.Meta, rec moveRecord) CreateReq {
 	return CreateReq{
 		// Route is the one the request chose for the target, never the source's (decision 13).
 		name: rec.Target, Kind: rec.Kind, Model: rec.Model, Driver: rec.Driver, Route: rec.Route,
-		Dir: src.Dir, Subdir: src.Subdir, Title: src.Title, Color: src.Color,
+		Dir: src.Dir, Subdir: src.Subdir, Title: src.Title, Color: src.Color, noProbe: true,
 		InitialPrompt: moveInitialPrompt(src, rec.File),
 		// The target continues the same work, so it keeps the tickets and PRs the source was
 		// linked to (#3134), the launch item included.

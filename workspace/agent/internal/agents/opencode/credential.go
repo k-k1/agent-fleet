@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"slices"
@@ -163,6 +164,32 @@ func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 // session's working directory counts (default_model.go), and only for the one case it proves.
 func (agentImpl) ResolveDefaultLaunch(m session.Meta, start time.Time) routes.Launch {
 	return resolveDefaultModelLaunch(m, start)
+}
+
+// HoldsDefaultLaunch implements agents.DefaultLaunchHolder: the free-model record of a Managed
+// session that names no model still holds when af holds no stored key and the cached account and
+// billing views still resolve opencode.ai's keyless provider to the free route. The serve is not
+// asked again: what it proved was the directory's providers, which the record already carries.
+// The store is read under defaultModelBudget, and a read that failed or waited past it is "cannot
+// tell", never "no key": it runs under the Managed input lock and must not wait on a writer.
+func (agentImpl) HoldsDefaultLaunch(m session.Meta, rec routes.Launch) bool {
+	free := routes.Launch{Route: routes.RouteOpencodeZen, Binding: FreeBinding}
+	if rec != free || strings.TrimSpace(m.Model) != "" || m.DriverKind() != session.DriverManaged {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultModelBudget)
+	defer cancel()
+	keys, ok := defaultModelStoredKeys(ctx)
+	if !ok {
+		return false
+	}
+	for _, v := range keys {
+		if v != "" {
+			return false
+		}
+	}
+	pref, acct := defaultModelAccount()
+	return resolveModel("opencode/free", keys, pref, acct, nil, nil) == free
 }
 
 // ModelLaunch is ResolveLaunch for an opencode run outside any session (the assistant chat and the
