@@ -19,6 +19,15 @@ import type { SessionKind } from "../agents/kindTable.ts";
 // shell/ssm emit nothing (their liveness is shown from `alive`).
 export type SessionState = "" | "working" | "idle" | "question" | "plan" | "permission";
 
+/** Where a session runs, decided once by the Agent when it was created (session.Place). `id` is the
+ *  folder under ~/repos (repo, worktree) or ~/spaces (space), absent for home and other; `parent`
+ *  is a worktree's main working copy under ~/repos. */
+export interface SessionPlace {
+  kind: "repo" | "worktree" | "space" | "home" | "other";
+  id?: string;
+  parent?: string;
+}
+
 /** Which machine an SSM session logs in to, and how. A title is no key (it can be renamed). */
 export interface SessionSSMTarget {
   /** EC2 instance id (i-...). */
@@ -62,6 +71,10 @@ export interface Session {
    *  space. Decided by the Agent from the directory's root, so a space never passes for the
    *  repository that shares its folder name. */
   space?: string;
+  /** Where the session runs, as the Agent stored it at create; absent for a session created
+   *  before the Agent stored it, which only the folder-name fallbacks can place. A space and a
+   *  repository that share a folder name differ here. */
+  place?: SessionPlace;
   /** The non-secret target of an SSM session (the Agent's session.SSMTarget); absent for every
    *  other kind, and for a list the Control Plane served from its stopped-workspace mirror. The
    *  Terminal view groups SSM sessions by machine from it (ADR 0142 decision 10). */

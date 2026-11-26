@@ -12,7 +12,10 @@ export interface SessionSearchHit {
   session: string;
   display: string;
   kind: string;
+  /** The folder under ~/repos of a repository or worktree session, or under ~/spaces of a space
+   *  session; at most one is present. */
   repo?: string;
+  space?: string;
   /** The working copy, and the branch the session recorded at create. */
   dir?: string;
   branch?: string;

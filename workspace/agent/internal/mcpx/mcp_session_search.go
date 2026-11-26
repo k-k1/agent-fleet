@@ -36,7 +36,8 @@ func searchSessionsSchema() map[string]any {
 				"session": map[string]any{"type": "string", "description": "Restrict to one session; with idx and no query, read around that turn"},
 				"idx":     map[string]any{"type": "integer", "description": "A hit's idx, to read the turns around it (needs session)"},
 				"kind":    map[string]any{"type": "string", "description": "Only sessions of this agent kind (claude, codex, ...)"},
-				"repo":    map[string]any{"type": "string", "description": "Only sessions in this working copy (folder under ~/repos)"},
+				"repo":    map[string]any{"type": "string", "description": "Only sessions in this repository or worktree (folder under ~/repos), not a space of the same name"},
+				"space":   map[string]any{"type": "string", "description": "Only sessions in this space (folder under ~/spaces)"},
 				"limit":   map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "description": "Hits to return (default 10)"},
 			},
 		},
@@ -49,6 +50,7 @@ type searchSessionsArgs struct {
 	Idx     *int   `json:"idx"`
 	Kind    string `json:"kind"`
 	Repo    string `json:"repo"`
+	Space   string `json:"space"`
 	Limit   int    `json:"limit"`
 }
 
@@ -74,7 +76,7 @@ func mcpSearchSessions(id json.RawMessage, raw json.RawMessage) []byte {
 	switch {
 	case query != "":
 		q.Set("q", query)
-		for k, v := range map[string]string{"session": a.Session, "kind": a.Kind, "repo": a.Repo} {
+		for k, v := range map[string]string{"session": a.Session, "kind": a.Kind, "repo": a.Repo, "space": a.Space} {
 			if v = strings.TrimSpace(v); v != "" {
 				q.Set(k, v)
 			}

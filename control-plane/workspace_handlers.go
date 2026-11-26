@@ -812,6 +812,39 @@ type planAutoWire struct {
 	Prompt    string `json:"prompt,omitempty"`
 }
 
+// sessionPlaceWire mirrors the Agent's session.Place field for field (kind repo, worktree, space,
+// home or other; id the folder under ~/repos or ~/spaces; parent a worktree's main working copy),
+// so a key the Control Plane does not copy is not silently dropped on the way to the Console.
+type sessionPlaceWire struct {
+	Kind   string `json:"kind"`
+	ID     string `json:"id,omitempty"`
+	Parent string `json:"parent,omitempty"`
+}
+
+// storePlace and wirePlace convert between the relay's place and the mirror row's.
+func storePlace(p *sessionPlaceWire) *store.SessionPlace {
+	if p == nil {
+		return nil
+	}
+	return &store.SessionPlace{Kind: p.Kind, ID: p.ID, Parent: p.Parent}
+}
+
+func wirePlace(p *store.SessionPlace) *sessionPlaceWire {
+	if p == nil {
+		return nil
+	}
+	return &sessionPlaceWire{Kind: p.Kind, ID: p.ID, Parent: p.Parent}
+}
+
+// mirroredSpace is Space for a row served from the mirror, which has no column of its own for it:
+// the space folder when the stored place is a space, "" otherwise.
+func mirroredSpace(p *store.SessionPlace) string {
+	if p != nil && p.Kind == "space" {
+		return p.ID
+	}
+	return ""
+}
+
 // sessionWire is the session shape exchanged with the Agent and the Console. The
 // CP mirrors it into the DB so it can be re-served while the container is down.
 type sessionWire struct {
@@ -842,10 +875,15 @@ type sessionWire struct {
 	Repo   string `json:"repo"`
 	// Space: the space folder the session runs in (ADR 0142), "" outside ~/spaces. Same relay
 	// caveat as its neighbours: absent here, the Console files a space session under the
-	// repository that happens to share its folder name. No DB-mirror column; a stopped
-	// Workspace's rail lists sessions without the Spaces section.
-	Space         string `json:"space,omitempty"`
-	WorkingCopyID string `json:"workingCopyId,omitempty"`
+	// repository that happens to share its folder name. No DB-mirror column of its own: the
+	// mirror fallback restores it from Place (mirroredSpace).
+	Space string `json:"space,omitempty"`
+	// Place: where the session runs (repository, worktree, space or home), as the Agent stored it
+	// once at create (#5219); absent for a session created before that. Same relay caveat as its
+	// neighbours. Mirrored in the nullable session.place column, so a stopped Workspace's list
+	// still tells a space from the repository that shares its folder name.
+	Place         *sessionPlaceWire `json:"place,omitempty"`
+	WorkingCopyID string            `json:"workingCopyId,omitempty"`
 	// SSM: the non-secret target of an SSM session (ADR 0142 decision 10). Same relay caveat as
 	// its neighbours: absent here, the Terminal view cannot group SSM sessions by machine. No
 	// DB-mirror column; a stopped Workspace's list carries none.
@@ -1157,6 +1195,7 @@ func sessionRows(list []sessionWire) []store.SessionRow {
 			Label: s.Label, CreatedAt: s.CreatedAt, State: state,
 			Carried: s.Carried, Studio: s.Studio,
 			Origin: s.Origin, OriginSession: s.OriginSession, ScheduleID: s.ScheduleID, QueueCategoryID: s.QueueCategoryID,
+			Place: storePlace(s.Place),
 			Links: store.SessionLinksFromJSON(s.Links),
 		})
 	}
@@ -1205,6 +1244,9 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 		out = append(out, sessionWire{
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
+			// Where it runs: without it the Console files a space session under a same-named
+			// repository while the Workspace is stopped.
+			Place: wirePlace(r0.Place), Space: mirroredSpace(r0.Place),
 			// Surface "something is still waiting for an answer" even while the
 			// workspace is stopped (docs/log/75 §75.6.5).
 			Carried: r0.Carried,

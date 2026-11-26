@@ -13,6 +13,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
@@ -41,7 +42,10 @@ type Hit struct {
 	Session string `json:"session"`
 	Display string `json:"display"`
 	Kind    string `json:"kind"`
-	Repo    string `json:"repo,omitempty"`
+	// Repo is the folder under ~/repos of a repository or worktree session, and Space the
+	// folder under ~/spaces of a space session; at most one is set (placeOf).
+	Repo  string `json:"repo,omitempty"`
+	Space string `json:"space,omitempty"`
 	// Dir and Branch tell apart sessions that share a title: the working copy and the branch it
 	// recorded (Meta.Branch, the branch at create).
 	Dir      string  `json:"dir,omitempty"`
@@ -73,6 +77,7 @@ type Query struct {
 	Session    string
 	Kind       string
 	Repo       string
+	Space      string
 }
 
 var nowFunc = time.Now
@@ -91,6 +96,7 @@ func Search(q Query) (Result, error) {
 	// answer time as well as in the pass means a session trashed since the last pass is never
 	// found, whatever the index still holds.
 	metas := map[string]session.Meta{}
+	places := map[string]place{}
 	var names, scheduled []string
 	total := 0
 	for _, m := range listMetas() {
@@ -99,7 +105,10 @@ func Search(q Query) (Result, error) {
 		}
 		total++
 		metas[m.Name] = m
-		if (q.Session == "" || m.Name == q.Session) && (q.Kind == "" || m.Kind == q.Kind) && (q.Repo == "" || m.Repo == q.Repo) {
+		pl := placeOf(m)
+		places[m.Name] = pl
+		if (q.Session == "" || m.Name == q.Session) && (q.Kind == "" || m.Kind == q.Kind) &&
+			(q.Repo == "" || pl.repo == q.Repo) && (q.Space == "" || pl.space == q.Space) {
 			names = append(names, m.Name)
 			if session.OriginOf(m) == session.OriginSchedule {
 				scheduled = append(scheduled, m.Name)
@@ -141,8 +150,9 @@ func Search(q Query) (Result, error) {
 			continue
 		}
 		m := metas[h.Session]
+		pl := places[h.Session]
 		hits = append(hits, Hit{
-			Session: m.Name, Display: session.Display(m), Kind: m.Kind, Repo: m.Repo, Dir: m.Dir, Branch: m.Branch,
+			Session: m.Name, Display: session.Display(m), Kind: m.Kind, Repo: pl.repo, Space: pl.space, Dir: m.Dir, Branch: m.Branch,
 			Archived: m.Archived,
 			Idx:      h.Idx, Role: h.Role, TS: h.TS,
 			Snippet: Snippet(h.Text, terms, snippetRunes),
@@ -152,6 +162,30 @@ func Search(q Query) (Result, error) {
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	res.Hits = capHits(hits, q.Limit, q.PerSession)
 	return res, nil
+}
+
+// place is where a session runs as the filters and the hits name it: a folder under ~/repos for
+// a repository or worktree, or one under ~/spaces for a space; neither for home and other places.
+type place struct{ repo, space string }
+
+// placeOf reads the place stored in the meta (sessionx.PlaceOf, decided at create), so a space
+// never answers a repo filter for the repository that shares its folder name. A meta written
+// before Place existed falls back to the space marker and then to the folder name it always
+// used.
+func placeOf(m session.Meta) place {
+	if p := m.Place; p != nil {
+		switch p.Kind {
+		case session.PlaceRepo, session.PlaceWorktree:
+			return place{repo: p.ID}
+		case session.PlaceSpace:
+			return place{space: p.ID}
+		}
+		return place{}
+	}
+	if f := spacex.FolderOf(m.Dir); f != "" {
+		return place{space: f}
+	}
+	return place{repo: m.Repo}
 }
 
 // score turns bm25 (negative, lower is better) into a positive score with the two adjustments.
@@ -322,7 +356,7 @@ func allowFrom(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return from, true
 }
 
-// HandleSearch is GET /session-search?q=…[&limit][&per_session][&session][&kind][&repo][&refresh=1].
+// HandleSearch is GET /session-search?q=…[&limit][&per_session][&session][&kind][&repo][&space][&refresh=1].
 func HandleSearch(w http.ResponseWriter, r *http.Request) {
 	from, ok := allowFrom(w, r)
 	if !ok {
@@ -336,6 +370,7 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 		Session:    qv.Get("session"),
 		Kind:       qv.Get("kind"),
 		Repo:       qv.Get("repo"),
+		Space:      qv.Get("space"),
 	}
 	if q.Session != "" && !session.ValidName(q.Session) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")

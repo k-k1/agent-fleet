@@ -2550,11 +2550,15 @@
             "type": "string"
           },
           "repo": {
-            "description": "Only sessions in this working copy (folder under ~/repos)",
+            "description": "Only sessions in this repository or worktree (folder under ~/repos), not a space of the same name",
             "type": "string"
           },
           "session": {
             "description": "Restrict to one session; with idx and no query, read around that turn",
+            "type": "string"
+          },
+          "space": {
+            "description": "Only sessions in this space (folder under ~/spaces)",
             "type": "string"
           }
         },

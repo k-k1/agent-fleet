@@ -374,3 +374,72 @@ func TestMatchScoreIsScore(t *testing.T) {
 		t.Fatalf("per-session cap chose by bm25 alone: %+v", res.Hits)
 	}
 }
+
+// A space and a repository can share a folder name: the repo filter must not return the space's
+// session, the space filter must find it, and each hit names the place the meta stored (#5219).
+// A meta written before Place existed still answers by its space marker and then its folder name.
+func TestSearchFiltersByTheStoredPlace(t *testing.T) {
+	f := installFake(t)
+	legacySpace := filepath.Join(os.Getenv("HOME"), "spaces", "notes")
+	if err := os.MkdirAll(legacySpace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacySpace, ".af-space.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.metas = []session.Meta{
+		{Name: "repo", Kind: "claude", Repo: "app", Place: &session.Place{Kind: session.PlaceRepo, ID: "app"}},
+		{Name: "space", Kind: "claude", Repo: "app", Place: &session.Place{Kind: session.PlaceSpace, ID: "app"}},
+		{Name: "wt", Kind: "claude", Repo: "app@wip", Place: &session.Place{Kind: session.PlaceWorktree, ID: "app@wip", Parent: "app"}},
+		{Name: "home", Kind: "claude", Repo: "dev", Place: &session.Place{Kind: session.PlaceHome}},
+		{Name: "oldrepo", Kind: "claude", Repo: "lib", Dir: "/w/lib"},
+		{Name: "oldspace", Kind: "claude", Repo: "notes", Dir: legacySpace},
+	}
+	for _, m := range f.metas {
+		f.turns[m.Name] = []transcript.Turn{say(1, "user", "collision check")}
+	}
+	_ = runPass()
+	names := func(q Query) map[string]Hit {
+		t.Helper()
+		q.Q, q.Limit, q.PerSession = "collision", 50, 3
+		res, err := Search(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]Hit{}
+		for _, h := range res.Hits {
+			out[h.Session] = h
+		}
+		return out
+	}
+	if got := names(Query{Repo: "app"}); len(got) != 1 || got["repo"].Session == "" {
+		t.Fatalf("repo=app must find the repository's session alone: %v", got)
+	}
+	if got := names(Query{Space: "app"}); len(got) != 1 || got["space"].Session == "" {
+		t.Fatalf("space=app must find the space's session alone: %v", got)
+	}
+	if got := names(Query{Repo: "app@wip"}); len(got) != 1 || got["wt"].Session == "" {
+		t.Fatalf("repo=<worktree folder> must find the worktree's session: %v", got)
+	}
+	if got := names(Query{Repo: "dev"}); len(got) != 0 {
+		t.Fatalf("a home session answers no repo filter: %v", got)
+	}
+	if got := names(Query{Repo: "lib"}); len(got) != 1 || got["oldrepo"].Session == "" {
+		t.Fatalf("a legacy meta still answers by its folder name: %v", got)
+	}
+	if got := names(Query{Space: "notes"}); len(got) != 1 || got["oldspace"].Session == "" {
+		t.Fatalf("a legacy space meta answers the space filter by its marker: %v", got)
+	}
+	if got := names(Query{Repo: "notes"}); len(got) != 0 {
+		t.Fatalf("a legacy space meta must not answer a repo filter: %v", got)
+	}
+	all := names(Query{})
+	for name, want := range map[string][2]string{
+		"repo": {"app", ""}, "space": {"", "app"}, "wt": {"app@wip", ""}, "home": {"", ""},
+		"oldrepo": {"lib", ""}, "oldspace": {"", "notes"},
+	} {
+		if h := all[name]; h.Repo != want[0] || h.Space != want[1] {
+			t.Errorf("hit %s: repo=%q space=%q, want repo=%q space=%q", name, h.Repo, h.Space, want[0], want[1])
+		}
+	}
+}
