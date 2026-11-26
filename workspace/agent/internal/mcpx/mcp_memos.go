@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -231,16 +232,15 @@ func memoTools() []toolSpec {
 				// so it is sent with such a move alone: any other edit goes through without it.
 				path := "/memos/" + url.PathEscape(a.ID)
 				if selfReportOnly() && memorelay.NeedsCaller(memoPatchRepo(p.Args)) {
-					self, err := mcpOwningSession()
-					switch {
-					case err == nil:
+					if self, err := mcpOwningSession(); err == nil {
 						path += "?from=" + url.QueryEscape(self)
-					case memoCwdSpace() != "":
-						// Some session in a space, but not which: the name could be that space or a
+					} else if space, known := memoCwdSpace(); !known || space == strings.TrimSpace(memoPatchRepo(p.Args)) {
+						// No session to name, and this process runs in the space of that name (or
+						// where it runs cannot be read): the name could mean that space or a
 						// repository, and a guess could run the work in the wrong one.
-						return mcpToolErr(req.ID, err.Error())
+						return mcpToolErr(req.ID, err.Error()+"。スペースへ移すなら repo に spaces/<フォルダ> を指定してください")
 					}
-					// Not in a space: no caller here can mean a space, so the name is a repository's.
+					// Otherwise no caller here can mean a space of that name, so it is a repository's.
 				}
 				out, err := agentDoTimeout(http.MethodPatch, path, memoArgsObject(p.Args), memoAgentTimeout)
 				if err != nil {
@@ -675,13 +675,22 @@ func memoPatchRepo(args json.RawMessage) string {
 	return in.Repo
 }
 
-// memoCwdSpace is the space this MCP process runs in, "" when its directory is none.
-func memoCwdSpace() string {
+// memoCwdSpace is the space this MCP process runs in: the space whose folder holds its directory,
+// at any depth (a session may run in a subdir), "" when none does. known is false when the
+// directory cannot be read, so nothing can be said either way.
+func memoCwdSpace() (space string, known bool) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return spacex.FolderOf(cwd)
+	for d := filepath.Clean(cwd); ; d = filepath.Dir(d) {
+		if f := spacex.FolderOf(d); f != "" {
+			return f, true
+		}
+		if d == filepath.Dir(d) {
+			return "", true
+		}
+	}
 }
 
 // memoRelayErr is the tool error for a failed relay call. The relay's own "no bridge here"

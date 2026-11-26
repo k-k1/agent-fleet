@@ -2,6 +2,8 @@ package mcpx
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -205,21 +207,35 @@ func TestUpdateMemoNamesTheServersOwnSession(t *testing.T) {
 		t.Errorf("with no session outside a space the queries were %q, want none", got)
 	}
 
-	// No session to name, inside a space: a bare name could be that space or a repository, so it
-	// is refused; a move whose bucket is plain either way still goes.
+	// No session to name, inside a space, at its root or in a subdir: its own folder name could be
+	// that space or a repository, so it is refused; another repository's name, or a move whose
+	// bucket is plain either way, still goes.
 	sp, err := spacex.Create("app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(sp.Dir)
-	agent = memoFakeAgent(t)
-	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": sp.Folder}); !strings.Contains(resp, "isError") {
-		t.Errorf("a bare-name move in a space with no session to name was not refused: %s", resp)
+	sub := filepath.Join(sp.Dir, "docs")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "spaces/" + sp.Folder})
-	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "body": "b"})
-	if got := agent.memoCalls(); len(got) != 2 {
-		t.Errorf("in a space with no session to name the Agent got %q, want the explicit move and the edit", got)
+	for _, dir := range []string{sp.Dir, sub} {
+		t.Chdir(dir)
+		agent = memoFakeAgent(t)
+		if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": sp.Folder}); !strings.Contains(resp, "isError") {
+			t.Errorf("in %s with no session to name, a move to the space's own name was not refused: %s", dir, resp)
+		}
+		for _, args := range []map[string]any{
+			{"id": "m1", "repo": "other"},
+			{"id": "m1", "repo": "spaces/" + sp.Folder},
+			{"id": "m1", "body": "b"},
+		} {
+			if resp := callMemoTool(t, "update_memo", args); strings.Contains(resp, "isError") {
+				t.Errorf("in %s with no session to name, update_memo %v was refused: %s", dir, args, resp)
+			}
+		}
+		if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"", "", ""}) {
+			t.Errorf("in %s the Agent got the queries %q, want three calls without from", dir, got)
+		}
 	}
 
 	oldWrite := writeEnabled()
