@@ -118,6 +118,38 @@ describe("HandoffOfferModal", () => {
     expect(sendButton()?.disabled).toBe(false);
   });
 
+  // A tick belongs to the warning it was given for: when the verdict turns into another warning
+  // (the Agent started reporting the space), the box starts unticked and the send names what is
+  // acknowledged, so the space note is never accepted unread.
+  it("does not carry a tick given for uncommitted changes over to the space warning", async () => {
+    await render({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 0, dirty: true, warning: "uncommitted_changes" } });
+    await act(async () => {
+      (find('input[type="checkbox"]') as HTMLInputElement).click();
+    });
+    apiJSON.mockImplementationOnce(async () => ({ error: { code: "handoff_warning", message: "the session runs in a space" } }));
+    // The Agent is updated before the send: the verdict is now the space's.
+    api.mockImplementation(async () => ({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 0, space: true, warning: "space_files_stay" } }));
+    await act(async () => {
+      sendButton()!.closest("form")!.requestSubmit();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(apiJSON.mock.calls.at(-1)?.[2]).toMatchObject({ ackWarning: true, ackedWarning: "uncommitted_changes" });
+    const { t } = await import("../../lib/i18n/index.ts");
+    expect(document.body.textContent).toContain(t("handoff.ack_space"));
+    expect((find('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false);
+    expect(sendButton()?.disabled).toBe(true);
+    await act(async () => {
+      (find('input[type="checkbox"]') as HTMLInputElement).click();
+    });
+    apiJSON.mockClear();
+    await act(async () => {
+      sendButton()!.closest("form")!.requestSubmit();
+    });
+    expect(apiJSON.mock.calls.at(-1)?.[2]).toMatchObject({ ackWarning: true, ackedWarning: "space_files_stay" });
+  });
+
   it("shows no space note for a repository", async () => {
     await render({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 0 } });
     const { t } = await import("../../lib/i18n/index.ts");

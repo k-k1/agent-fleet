@@ -13,7 +13,11 @@ vi.mock("./useRepoRail.ts", () => ({ useRepoRailContext: () => ({ access: { kind
 vi.mock("./StartModal.tsx", () => ({ StartModal: () => null }));
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 vi.mock("./LaunchModal.tsx", () => ({
-  LaunchModal: (p: { repo: string; newSpace?: boolean; home?: boolean; initialPrompt?: string; initialTitle?: string; onLaunch: (o: LaunchOpts) => Promise<{ ok: boolean }> }) => (
+  LaunchModal: (p: { repo: string; newSpace?: boolean; home?: boolean; initialPrompt?: string; initialTitle?: string; onClose: () => void; onLaunch: (o: LaunchOpts) => Promise<{ ok: boolean }> }) => (
+    <>
+    <button type="button" data-testid="close" onClick={p.onClose}>
+      close
+    </button>
     <button
       type="button"
       data-testid="launch"
@@ -33,6 +37,7 @@ vi.mock("./LaunchModal.tsx", () => ({
     >
       launch
     </button>
+    </>
   ),
 }));
 
@@ -44,12 +49,15 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 const fetchMock = vi.fn();
 
-function routes(answers: Record<string, { status: number; body: unknown }>) {
+type Answer = { status: number; body: unknown } | "network-error";
+function routes(answers: Record<string, Answer>) {
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
     const path = new URL(url, "http://console.test/").pathname;
     if ((init?.method ?? "GET") === "GET") return new Response(JSON.stringify({ offers: [] }), { status: 200 });
     for (const [suffix, a] of Object.entries(answers)) {
-      if (path.endsWith(suffix)) return new Response(JSON.stringify(a.body), { status: a.status, headers: { "Content-Type": "application/json" } });
+      if (!path.endsWith(suffix)) continue;
+      if (a === "network-error") throw new TypeError("Failed to fetch");
+      return new Response(JSON.stringify(a.body), { status: a.status, headers: { "Content-Type": "application/json" } });
     }
     throw new Error("unexpected call " + path);
   });
@@ -114,6 +122,60 @@ describe("launching from a handoff that came from a space", () => {
     // Launched: the dialog and the seed are gone.
     expect(dialog()).toBeNull();
     expect(useLaunchSeed.getState().handoffOfferId).toBe("");
+  });
+
+  async function press(id: string) {
+    await act(async () => host.querySelector<HTMLButtonElement>(`[data-testid=${id}]`)!.click());
+    for (let i = 0; i < 10; i++) await act(async () => await new Promise((r) => setTimeout(r, 0)));
+  }
+
+  it("gives the offer back when the create is refused, and keeps the dialog and the seed", async () => {
+    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
+    useLaunchSeed.getState().setNewSpace(true);
+    routes({
+      "/offer-1/take": { status: 200, body: { status: "pending", token: "tok-2" } },
+      "/api/sessions": { status: 502, body: { error: { code: "space_failed", message: "no space" } } },
+      "/offer-1/release": { status: 200, body: { status: "pending" } },
+    });
+    await mount();
+    await press("launch");
+    expect(posts("/offer-1/release")[0]).toEqual({ token: "tok-2" });
+    expect(posts("/accept")).toHaveLength(0);
+    expect(dialog()).not.toBeNull();
+    expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-1", newSpace: true });
+  });
+
+  it("keeps the take when the create's outcome is unknown", async () => {
+    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
+    useLaunchSeed.getState().setNewSpace(true);
+    routes({ "/offer-1/take": { status: 200, body: { status: "pending", token: "tok-3" } }, "/api/sessions": "network-error" });
+    await mount();
+    await press("launch");
+    expect(posts("/release")).toHaveLength(0);
+    expect(posts("/accept")).toHaveLength(0);
+    expect(dialog()).not.toBeNull();
+  });
+
+  it("takes nothing when the dialog is cancelled, and leaves no seed behind", async () => {
+    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
+    useLaunchSeed.getState().setNewSpace(true);
+    routes({});
+    await mount();
+    await press("close");
+    expect(fetchMock.mock.calls.filter(([, init]) => (init?.method ?? "GET") === "POST")).toHaveLength(0);
+    expect(dialog()).toBeNull();
+    expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "", newSpace: false, prompt: "" });
+  });
+
+  it("still shows the dialog when the Start hub is open", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    await mount();
+    await act(async () => useSessionsStore.getState().openStart());
+    await act(async () => {
+      useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
+      useLaunchSeed.getState().setNewSpace(true);
+    });
+    expect(dialog()?.dataset.newSpace).toBe("true");
   });
 
   it("never opens the space dialog for a repository offer", async () => {

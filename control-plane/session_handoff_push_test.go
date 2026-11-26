@@ -43,6 +43,18 @@ func (f *handoffLife) pushClears(seen *[]*http.Request, bodies *[][]byte) {
 	}
 }
 
+// pushThenSpace is pushClears for a push after which the Agent starts reporting the space (a verdict
+// that changed under the owner's feet).
+func (f *handoffLife) pushThenSpace(seen *[]*http.Request, bodies *[][]byte) {
+	f.push = func(r *http.Request, body []byte) (int, map[string]any) {
+		*seen, *bodies = append(*seen, r), append(*bodies, body)
+		delete(f.agentCtx, "blocked")
+		delete(f.agentCtx, "pushRemote")
+		f.agentCtx["space"], f.agentCtx["warning"] = true, "space_files_stay"
+		return http.StatusOK, map[string]any{"pushed": true, "remote": confirmedRemote, "branch": "feature/x"}
+	}
+}
+
 func (f *handoffLife) offerRows() int {
 	f.t.Helper()
 	rows, err := f.st.ListSessionHandoffOffersByOwner(context.Background(), f.owner.mv.MembershipID)

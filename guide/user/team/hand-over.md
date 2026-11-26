@@ -69,9 +69,10 @@ A [space](../sessions/spaces.md) is a folder of its own, not a repository, so it
 in your home and never reach the recipient. They get the handoff text and nothing else.
 
 - The dialog says so and asks you to tick "**Send anyway; I understand the space's files are not handed over**" before
-  "**Send handoff**" is enabled. Put what the recipient needs into the handoff text
-- The recipient's offer carries no repository, branch or commit. It says the files stay in your home, shows no working
-  copy to choose, and "**Take it over**" opens the launch dialog for **a new space of their own**, never a repository and
+  "**Send handoff**" is enabled. The tick is for that warning alone: if the dialog's state changes to another warning
+  while it is open, it starts unticked again. Put what the recipient needs into the handoff text
+- The recipient's offer shows no repository, branch or commit and no working copy to choose. It says the files stay in
+  your home, and "**Take it over**" opens the launch dialog for **a new space of their own**, never a repository and
   never home
 - A space that is also a git working copy is still checked like a repository: unpushed commits block the send, and
   "**Push, then send**" is offered. Even then the recipient starts in a new space, not in a clone

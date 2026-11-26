@@ -14,7 +14,10 @@ import { answerConfirm, confirmDialog } from "../../test/confirmDialog.ts";
 import type { HandoffOffer } from "./handoffStore.ts";
 
 const apiJSON = vi.fn();
-const apiGet = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ offers: [] }));
+// api("api/spaces") answers a list of spaces (an Agent that supports them); anything else is the
+// handoff store's own read.
+const spacesOk = async (...a: unknown[]): Promise<unknown> => (String(a[0]).includes("api/spaces") ? { spaces: [] } : { offers: [] });
+const apiGet = vi.fn(spacesOk);
 vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
   return { ...real, apiJSON: (...a: unknown[]) => apiJSON(...a), api: (...a: unknown[]) => apiGet(...a) };
@@ -35,6 +38,7 @@ const { StartHost } = await import("../repos/StartHost.tsx");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { useSessionsStore } = await import("../sessions/store.ts");
 
 const offer: HandoffOffer = {
   id: "offer-1", sessionId: "cat-1", sessionName: "session-1", recipientUserKey: "bob", ownerUserKey: "alice",
@@ -70,7 +74,7 @@ const acceptButton = () =>
 beforeEach(() => {
   apiJSON.mockReset();
   apiGet.mockReset();
-  apiGet.mockImplementation(async () => ({ offers: [] }));
+  apiGet.mockImplementation(spacesOk);
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -145,6 +149,12 @@ describe("the received handoff row", () => {
       expect(apiJSON).not.toHaveBeenCalled();
     });
 
+    it("asks the Agent for its spaces before it starts anything", async () => {
+      await render([], true, fromSpace);
+      await act(async () => acceptButton().click());
+      expect(apiGet.mock.calls.some((c) => String(c[0]).includes("api/spaces"))).toBe(true);
+    });
+
     it("starts nothing and says so when the Agent is too old to start in a space", async () => {
       apiGet.mockImplementation(async () => ({ error: { status: 404, code: "http_404", message: "not found" } }));
       await render([], true, fromSpace);
@@ -152,6 +162,74 @@ describe("the received handoff row", () => {
       expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
       expect(useLaunchSeed.getState().newSpace).toBe(false);
       expect(document.body.textContent).toContain(t("handoff.space_unsupported"));
+    });
+
+    // Support not proven is not support: an Agent without spaces would take the field as home.
+    it.each([
+      ["a gateway error", async () => ({ error: { status: 502, code: "http_502", message: "bad gateway" } })],
+      ["a dropped connection", async () => Promise.reject(new TypeError("Failed to fetch"))],
+      ["an answer that is no list of spaces", async () => ({ offers: [] })],
+      ["an empty answer", async () => ({})],
+    ])("starts nothing on %s, and says the check failed rather than that the Agent is old", async (_n, answer) => {
+      apiGet.mockImplementation(answer as never);
+      await render([], true, fromSpace);
+      await act(async () => acceptButton().click());
+      expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
+      expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
+      expect(document.body.textContent).toContain(t("start.space_check_failed"));
+      expect(document.body.textContent).not.toContain(t("handoff.space_unsupported"));
+      expect(acceptButton().disabled).toBe(false); // retry is possible
+    });
+
+    describe("an answer that arrives late", () => {
+      function slowSpaces() {
+        let release: () => void = () => undefined;
+        apiGet.mockImplementation((async (...a: unknown[]) => {
+          if (!String(a[0]).includes("api/spaces")) return { offers: [] };
+          await new Promise<void>((r) => (release = r));
+          return { spaces: [] };
+        }) as never);
+        return () => release();
+      }
+      const settle = async (release: () => void) => {
+        await act(async () => {
+          release();
+          await new Promise((r) => setTimeout(r, 0));
+        });
+      };
+
+      it("writes nothing once the inbox that held the row is closed", async () => {
+        await render([], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        await act(async () => root!.render(<ToastProvider><StartHost /></ToastProvider>)); // the row is gone
+        await settle(release);
+        expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
+        expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
+      });
+
+      it("never overwrites the launch of another offer opened meanwhile", async () => {
+        await render([{ name: "private", path: "/r/private" }], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        // Another offer from the same list is accepted first: its repository dialog is open.
+        await act(async () => {
+          useLaunchSeed.getState().set("B's text", "B", "", "", "offer-b");
+          useLaunchTarget.getState().open({ name: "private", path: "/r/private", branch: "main" } as never);
+        });
+        await settle(release);
+        expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-b", prompt: "B's text", newSpace: false });
+        expect((document.querySelector("[data-testid=launch-dialog]") as HTMLElement).dataset.newSpace).toBe("false");
+      });
+
+      it("writes nothing when the Start hub was opened meanwhile", async () => {
+        await render([], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        await act(async () => useSessionsStore.getState().openStart());
+        await settle(release);
+        expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
+      });
     });
   });
 

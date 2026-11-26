@@ -1,6 +1,9 @@
 package sessionx
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -186,5 +189,41 @@ func TestHandoffContextForSpaceKeepsGitGate(t *testing.T) {
 	}
 	if !c.Dirty || c.Warning != handoffWarnSpace {
 		t.Fatalf("dirty=%v warning=%q, want dirty with the space warning", c.Dirty, c.Warning)
+	}
+}
+
+// The GET handler decides by the place stored in the session's own record, not by looking at the
+// folder again: a record that says space wins over a folder with no marker, and a record that
+// says repository wins over a folder that carries one (a space and a repository can share a
+// name, and the place was fixed at create).
+func TestHandoffContextHandlerTrustsTheStoredPlace(t *testing.T) {
+	isolateAgentState(t)
+	marked := placeSpace(t, "marked")
+	unmarked := filepath.Join(homeDir(), "spaces", "unmarked")
+	if err := os.MkdirAll(unmarked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		dir   string
+		place *session.Place
+		want  bool
+	}{
+		{"hs-stored-space", unmarked, &session.Place{Kind: session.PlaceSpace, ID: "unmarked"}, true},
+		{"hs-stored-repo", marked, &session.Place{Kind: session.PlaceRepo, ID: "marked"}, false},
+		{"hs-no-place", marked, nil, true},
+	} {
+		session.WriteMeta(session.Meta{Name: tc.name, Dir: tc.dir, Place: tc.place})
+		r := httptest.NewRequest(http.MethodGet, "/sessions/"+tc.name+"/handoff-context", nil)
+		r.SetPathValue("name", tc.name)
+		w := httptest.NewRecorder()
+		HandleSessionHandoffContext(w, r)
+		var c handoffContext
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &c) != nil {
+			t.Fatalf("%s: %d %s", tc.name, w.Code, w.Body.String())
+		}
+		if c.Space != tc.want || (c.Warning == handoffWarnSpace) != tc.want {
+			t.Fatalf("%s: space=%v warning=%q, want space=%v", tc.name, c.Space, c.Warning, tc.want)
+		}
 	}
 }

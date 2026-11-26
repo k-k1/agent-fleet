@@ -102,7 +102,10 @@ export function HandoffOfferModal({
   // land on the recipient.
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle || ""));
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [ackWarning, setAckWarning] = useState(false);
+  // The warning the owner ticked. A tick belongs to that warning alone: when the verdict changes
+  // to another one (uncommitted changes, then the space note), it no longer counts and the box
+  // shows unticked, so a warning is never acknowledged unread.
+  const [ackedFor, setAckedFor] = useState("");
   const [pushFirst, setPushFirst] = useState(false);
   // git's own report of a refused push. Multi-line and the thing to act on, so it stays in
   // the modal rather than in a toast that fades.
@@ -171,6 +174,7 @@ export function HandoffOfferModal({
 
   const blocked = ctx?.blocked || "";
   const warning = ctx?.warning || "";
+  const ackWarning = !!warning && ackedFor === warning;
   const pushable = PUSHABLE.has(blocked) && !!ctx?.pushRemote;
   const pushing = pushable && pushFirst;
   const canSubmit =
@@ -192,6 +196,7 @@ export function HandoffOfferModal({
         title: title.trim(),
         prompt,
         ackWarning,
+        ackedWarning: ackWarning ? warning : "",
         pushFirst: pushing,
         // What the owner saw next to the box. The CP pushes only while the working copy still
         // matches it, exactly that commit, and sends only if the state after the push does too.
@@ -308,7 +313,7 @@ export function HandoffOfferModal({
               )}
               {(!blocked || pushing) && warning && (
                 <label className="ui-field-inline">
-                  <input type="checkbox" checked={ackWarning} onChange={(e) => setAckWarning(e.target.checked)} />
+                  <input type="checkbox" checked={ackWarning} onChange={(e) => setAckedFor(e.target.checked ? warning : "")} />
                   {tr(warning === "space_files_stay" ? "handoff.ack_space" : "handoff.ack_dirty")}
                 </label>
               )}

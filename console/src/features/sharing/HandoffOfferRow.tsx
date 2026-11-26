@@ -14,14 +14,15 @@
 // useStartWork). The CP never operates someone else's Workspace (ADR 0057 decision 3);
 // StartHost takes the offer on the launch press and accepts or gives it back around the
 // launch (acceptHandoff.ts).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { api, apiJSON, errText, isTransientErr } from "../../core/api/client.ts";
+import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
+import { useSessionsStore } from "../sessions/store.ts";
 import { senderLabel, useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
 import "./sharing.css";
 
@@ -43,21 +44,46 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
   const guess = useMemo(() => repoNameFromRemote(offer.repoRemote), [offer.repoRemote]);
   const [repoName, setRepoName] = useState(() => (repos.some((r) => r.name === guess) ? guess : repos[0]?.name || ""));
   const [busy, setBusy] = useState(false);
+  // False once this row is gone: an answer that arrives after the inbox was closed must not
+  // start a launch nobody is looking at.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   // The same probe the Start hub makes before it offers a space (StartModal): an older Agent
   // ignores the space field and would start the session in home, which is not what this offer is.
-  const spacesSupported = async (): Promise<boolean> => {
+  // Only a real list of spaces proves support: an error, a dropped connection or a page that is
+  // no list leaves it unknown, and "unknown" starts nothing (a retry may well succeed).
+  const spacesSupport = async (): Promise<"yes" | "no" | "unknown"> => {
     const d = await api("api/spaces").catch(() => null);
+    if (d && !d.error && Array.isArray(d.spaces)) return "yes";
     const e = d?.error;
-    return !(e && !isTransientErr(d) && (e.status === 404 || e.status === 405 || e.code === "http_404" || e.code === "http_405"));
+    return e && (e.status === 404 || e.status === 405 || e.code === "http_404" || e.code === "http_405") ? "no" : "unknown";
   };
   const acceptInSpace = async () => {
     if (busy) return;
     setBusy(true);
-    const ok = await spacesSupported();
-    setBusy(false);
-    if (!ok) {
-      toast(tr("handoff.space_unsupported"));
+    // What the launch state looked like when the button was pressed. The probe takes a moment, and
+    // in it the member may close the inbox, open another offer from the same list or open the
+    // Start hub: an answer that finds any of that changed writes nothing, so it can never
+    // overwrite the seed of the launch that came after it.
+    const before = { tick: useSessionsStore.getState().startTick, target: useLaunchTarget.getState().target, offerId: useLaunchSeed.getState().handoffOfferId };
+    const support = await spacesSupport();
+    if (alive.current) setBusy(false);
+    if (
+      !alive.current ||
+      useSessionsStore.getState().startTick !== before.tick ||
+      useLaunchTarget.getState().target !== before.target ||
+      useLaunchSeed.getState().handoffOfferId !== before.offerId
+    ) {
+      return;
+    }
+    if (support !== "yes") {
+      toast(tr(support === "no" ? "handoff.space_unsupported" : "start.space_check_failed"));
       return;
     }
     // A space offer has no repository to open it in: the launch is a dialog that starts in a

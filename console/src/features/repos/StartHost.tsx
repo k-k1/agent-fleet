@@ -200,7 +200,7 @@ export function StartHost() {
       {/* A handoff from another member's space: no repository to open it in, so the launch is a
           dialog of its own that starts in a new space of the recipient's (never home). The offer
           is taken around the launch exactly as for a repository. */}
-      {seedNewSpace && !show && !launch && (
+      {seedNewSpace && !launch && (
         <LaunchModal
           newSpace
           repo=""
@@ -215,7 +215,10 @@ export function StartHost() {
           onLaunch={async (o) => {
             const run = (take?: HandoffTake) => startWork({ dir: "", repo: "" }, o, take);
             const r = seedOfferId ? await launchFromHandoffOffer(seedOfferId, run, toast) : await run();
-            if (r.ok) clearSeed();
+            if (r.ok) {
+              setShow(false); // launched — drop the hub underneath too, if one is open
+              clearSeed();
+            }
             return r;
           }}
         />
