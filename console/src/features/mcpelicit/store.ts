@@ -71,9 +71,11 @@ export const ownerKey = () => getTenant() + "\n" + getUser();
 
 // Reads can overlap (start, a notification, the poll, an answer): only a read issued after the
 // last one applied may replace the list, or a late empty answer would take a held call's card
-// away. A read is applied only while the member and tenant it was issued for are still current;
-// that, not reset(), is what keeps a read from before a switch out, so a reset that runs after
-// the new owner's first read was sent (a parent's effect runs after its child's) cannot drop it.
+// away. A read is applied only while the member and tenant it was issued for are still current,
+// and reset() voids every read sent before it: after a switch away and back, a read from the
+// first visit would pass the owner check and refill the list with calls since gone. A reset
+// therefore has to come before the new owner's first read, which McpElicitHost does in one
+// effect; nothing else resets the list.
 let issued = 0;
 let applied = 0;
 
@@ -134,6 +136,7 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
     }));
   },
   reset() {
+    applied = issued;
     set({ items: [], owner: ownerKey(), until: new Map(), answering: {} });
   },
   async answer(e, choices) {

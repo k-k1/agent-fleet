@@ -33,14 +33,21 @@ describe("the held-call list", () => {
     await first;
     expect(useMcpElicitStore.getState().items.map((e) => e.id)).toEqual(["e1"]);
   });
-  // On a switch, the host reads for the new owner in its effect, and a parent's effect that
-  // resets runs after it: that read must still land.
-  it("keeps a read for the current owner that a reset follows", async () => {
-    const read = useMcpElicitStore.getState().refresh();
+  // A switch away and back: the read from the first visit passes the owner check again, but it
+  // was sent before the reset, and the calls it lists may be gone since.
+  it("drops a read sent before a switch away and back, and keeps the one after", async () => {
+    const old = useMcpElicitStore.getState().refresh();
+    who.tenant = "b";
     useMcpElicitStore.getState().reset();
+    who.tenant = "a";
+    useMcpElicitStore.getState().reset();
+    const fresh = useMcpElicitStore.getState().refresh();
     pending[0]({ elicitations: [call] });
-    await read;
-    expect(useMcpElicitStore.getState().items.map((e) => e.id)).toEqual(["e1"]);
+    await old;
+    expect(useMcpElicitStore.getState().items).toEqual([]);
+    pending[1]({ elicitations: [{ ...call, id: "e2" }] });
+    await fresh;
+    expect(useMcpElicitStore.getState().items.map((e) => e.id)).toEqual(["e2"]);
   });
   // A read issued before the tenant or the member settled (at start, or a sign-in as someone
   // else in the same tenant) belongs to whoever it was issued for.
