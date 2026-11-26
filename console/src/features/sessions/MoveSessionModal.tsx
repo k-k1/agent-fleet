@@ -48,6 +48,7 @@ import {
 import { MOVE_POLL_MS, moveCancel, moveDeliver, movePreview, moveReopen, moveRetry, moveSession } from "./moveApi.ts";
 import { useMoveGate, useMoveUsage } from "./moveHooks.ts";
 import type { Session, SessionKind } from "../../types/session.ts";
+import { sessionRepo } from "../../lib/project.ts";
 
 interface MoveSessionModalProps {
   session: Session;
@@ -260,11 +261,13 @@ function MoveForm({
   const driver = driverPick ?? (kind && agentOf(kind).managedDriver ? "managed" : "");
   // Model and driver default the way the new-session dialog defaults them for this working
   // copy: the per-repo memory, then the user's per-kind default; managed wherever it exists.
+  // A session in a space or home has no working copy, so only the per-kind default applies.
+  const folder = sessionRepo(session);
   useEffect(() => {
     if (!kind) return;
-    setModel(routelessModel(kind, resolveModel(kind, session.repo || "", agentLaunchDefault(getSettings(), kind).model)));
+    setModel(routelessModel(kind, resolveModel(kind, folder, agentLaunchDefault(getSettings(), kind).model)));
     setDriverPick(null);
-  }, [kind, session.repo]);
+  }, [kind, folder]);
 
   // A connected kind the policy forbids or the member switched off is not named here, as the launch
   // dialog names nothing it hides (ADR 0138 D10a); it would read as "not connected" and no

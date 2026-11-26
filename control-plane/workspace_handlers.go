@@ -598,6 +598,11 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	}
 	switch rt.State(ctx) {
 	case "running":
+		// Start is skipped here, and with it the address record a CP exit between the
+		// container launch and that record left undone.
+		if h, ok := rt.(runtime.AgentAddrHealer); ok {
+			h.HealAgentAddr(ctx)
+		}
 		return nil
 	case "starting":
 		// A launch is already converging (ECS cold pull can take minutes). Calling
@@ -1130,6 +1135,11 @@ type sessionWire struct {
 	// keeps what it last read with the delivery instead (store MemoDelivery.HeldBy).
 	Wakers        *sessionWakers `json:"wakers,omitempty"`
 	WakersUnknown bool           `json:"wakersUnknown,omitempty"`
+	// PendingPeers is the peer messages still on their way to the session, as the Agent reports
+	// it, omitted when none are. A queue run is not closed while one is in transit to a member of
+	// its tree (treePeerInTransit, #5270). An older Agent never sends it, which reads as none: the rule
+	// such a workspace had before. No DB-mirror column, like Wakers.
+	PendingPeers *sessionPendingPeers `json:"pendingPeers,omitempty"`
 	// QueueTurn is how the first turn of the session's queue delivery ended, on the row of a
 	// session that has QueueDelivery. The delivery keeps a copy when it first appears. No
 	// DB-mirror column: the copy on the delivery is what survives a stop.
@@ -1152,6 +1162,13 @@ type sessionWakers struct {
 	Listed *int `json:"listed,omitempty"`
 	// Holders names the subscriptions counted above; nil from an older Agent.
 	Holders []sessionWakerHolder `json:"holders,omitempty"`
+}
+
+// sessionPendingPeers mirrors the Agent's session.PendingPeers: how many peer messages to the
+// session have not reached it, and the queue time of the newest (RFC 3339, the Agent's clock).
+type sessionPendingPeers struct {
+	Count    int    `json:"count"`
+	NewestAt string `json:"newestAt"`
 }
 
 // sessionWakerHolder is one subscription counted in sessionWakers (id and source).

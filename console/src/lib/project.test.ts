@@ -6,6 +6,9 @@ import { planStopTree, liveSessionCount } from "../features/repos/stopTree.ts";
 import { planTree } from "../features/repos/deleteTree.ts";
 import {
   sessionFolder,
+  sessionsActedOnInFolder,
+  sessionRepo,
+  sessionSpace,
   orderedRepos,
   groupedRepos,
   sessionsInFolder,
@@ -446,6 +449,89 @@ describe("spaces", () => {
       "older-in-space",
       "home-shell",
     ]);
+  });
+});
+
+// #5219: the place the Agent stored at create decides, and the folder name only places a row
+// that has none. A space and a repository named alike never share a group, on a live row (place
+// and space), a stopped row from the Control Plane's mirror (place, no space) or a row whose
+// `repo` still carries the space's folder (an Agent from before `Repo` was left empty).
+describe("stored place", () => {
+  const repos = [repo("foo"), repo("dev"), wt("foo@wip-1", "foo")];
+  const at = (d: number) => `2026-11-0${d}T00:00:00Z`;
+  const sessions = [
+    sess("repo-live", { repo: "foo", place: { kind: "repo", id: "foo" }, dir: "/home/dev/repos/foo", createdAt: at(1) }),
+    sess("space-live", { repo: "", space: "foo", place: { kind: "space", id: "foo" }, dir: "/home/dev/spaces/foo", createdAt: at(2) }),
+    sess("space-stopped", { repo: "foo", place: { kind: "space", id: "foo" }, dir: "/home/dev/spaces/foo", createdAt: at(3) }),
+    sess("wt", { repo: "foo@wip-1", place: { kind: "worktree", id: "foo@wip-1", parent: "foo" }, createdAt: at(4) }),
+    sess("home", { repo: "", place: { kind: "home" }, dir: "/home/dev", createdAt: at(5) }),
+    sess("elsewhere", { repo: "foo", place: { kind: "other" }, dir: "/home/dev/projects/foo", createdAt: at(6) }),
+    sess("legacy", { repo: "foo", dir: "/home/dev/repos/foo", createdAt: at(7) }),
+  ];
+  const byName = (n: string) => sessions.find((s) => s.name === n)!;
+
+  it("reads the space and the working copy from the place", () => {
+    expect(sessions.map((s) => [s.name, sessionSpace(s), sessionRepo(s), sessionFolder(s)])).toEqual([
+      ["repo-live", "", "foo", "foo"],
+      ["space-live", "foo", "", ""],
+      ["space-stopped", "foo", "", ""],
+      ["wt", "", "foo@wip-1", "foo@wip-1"],
+      ["home", "", "", ""],
+      ["elsewhere", "", "", ""],
+      ["legacy", "", "foo", "foo"],
+    ]);
+  });
+
+  it("falls back to the folder name only for a row without a place", () => {
+    expect(sessionSpace({ space: "notes" })).toBe("notes");
+    expect(sessionRepo({ repo: "notes", space: "notes" })).toBe("");
+    expect(sessionFolder(sess("x", { dir: "/home/dev/repos/bar" }))).toBe("bar");
+    // A stored place wins over a `space` that disagrees with it.
+    expect(sessionSpace({ space: "notes", place: { kind: "repo", id: "notes" } })).toBe("");
+  });
+
+  it("never files a space under the repository of the same name", () => {
+    expect(sessionsInFolder(sessions, "foo").map((s) => s.name)).toEqual(["legacy", "repo-live"]);
+    expect(spaceGroups(sessions).map((g) => [g.folder, g.sessions.map((s) => s.name)])).toEqual([["foo", ["space-stopped", "space-live"]]]);
+  });
+
+  it("sends home and other directories to Other, never to a repository named like them", () => {
+    expect(orphanSessions(sessions, repos).map((s) => s.name)).toEqual(["elsewhere", "home"]);
+  });
+
+  // #5268: a place judged at create can outlive its directory. A `current/..` dir whose link was
+  // pointed into another copy while the session was stopped still names A, and on main its
+  // `repo` ("..") matched no copy: stopping, shelving or deleting A must not reach it.
+  it("never lets a stored place alone widen what an action on a copy touches", () => {
+    const a = { name: "A", path: "/home/dev/repos/A" } as Repo;
+    const stale = sess("stale", { repo: "..", dir: "/home/dev/repos/A/current/..", place: { kind: "repo", id: "A" } });
+    const staleLive = { ...stale, name: "stale-live", alive: true };
+    const own = sess("own", { repo: "A", dir: "/home/dev/repos/A", place: { kind: "repo", id: "A" } });
+    const ownLive = { ...own, name: "own-live", alive: true };
+    const legacy = sess("legacy", { repo: "A", dir: "/home/dev/repos/A" });
+    const all = [stale, staleLive, own, ownLive, legacy];
+    // the views still list it where its place says
+    expect(sessionsInFolder(all, "A").map((s) => s.name).sort()).toEqual(["legacy", "own", "own-live", "stale", "stale-live"]);
+    expect(sessionsActedOnInFolder(all, "A").map((s) => s.name).sort()).toEqual(["legacy", "own", "own-live"]);
+    const node = { repo: a, children: [], spine: "" } as RepoTreeNode;
+    const [plan] = planTree(node, all);
+    expect(plan.sessions.map((s) => s.name).sort()).toEqual(["legacy", "own", "own-live"]);
+    expect(planStopTree(node, all).flatMap((g) => g.rows.map((r) => r.session.name))).toEqual(["own-live"]);
+  });
+
+  it("files shells by the stored place", () => {
+    const shell = (n: string) => ({ ...byName(n), kind: "shell" as const });
+    const known = placeRepos(repos);
+    expect(shellPlaceOf(shell("space-stopped"), known)).toEqual({ kind: "space", folder: "foo" });
+    expect(shellPlaceOf({ ...shell("home"), repo: "dev" }, known)).toEqual({ kind: "home" });
+    expect(shellPlaceOf(shell("elsewhere"), known)).toEqual({ kind: "home" });
+    expect(shellPlaceOf(shell("repo-live"), known)).toEqual({ kind: "repo", folder: "foo" });
+    // started through a link: another spelling of the path, no working-copy id (a plain folder)
+    expect(shellPlaceOf({ ...shell("repo-live"), dir: "/home/dev/links/foo" }, known)).toEqual({ kind: "repo", folder: "foo" });
+    // a working-copy id the named copy does not carry says it is another copy
+    const withIds = placeRepos([repo("foo", { workingCopyId: "wc_foo" }), repo("bar", { workingCopyId: "wc_bar" })]);
+    expect(shellPlaceOf({ ...shell("repo-live"), workingCopyId: "wc_bar" }, withIds)).toEqual({ kind: "repo", folder: "bar" });
+    expect(shellPlaceOf({ ...shell("repo-live"), workingCopyId: "wc_gone" }, withIds)).toEqual({ kind: "home" });
   });
 });
 

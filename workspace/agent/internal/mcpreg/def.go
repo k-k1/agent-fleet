@@ -115,6 +115,8 @@ const (
 	CodeOAuthClientUser = "mcp_oauth_client_tenant_only"
 	CodeOAuthScopes     = "mcp_oauth_scopes_invalid"
 	CodeOAuthScopesUser = "mcp_oauth_scopes_tenant_only"
+	CodeElicitUnknown   = "mcp_elicitation_unknown"
+	CodeElicitOAuth     = "mcp_elicitation_oauth_only"
 )
 
 // AuthOAuth marks a definition whose server is signed in to with OAuth.
@@ -218,6 +220,16 @@ func Validate(d ServerDef) error {
 		if d.Origin != OriginTenant {
 			return invalid(CodeOAuthScopesUser, "only a tenant-distributed definition carries its own scopes")
 		}
+	}
+	switch d.Elicitation {
+	case "":
+	case ElicitationRelay:
+		// The relay fronts OAuth definitions only; any other one reaches its server directly.
+		if d.Auth != AuthOAuth {
+			return invalid(CodeElicitOAuth, "the relay answers elicitation only for an OAuth server")
+		}
+	default:
+		return invalid(CodeElicitUnknown, "unknown elicitation handling: %q", d.Elicitation)
 	}
 	switch d.Transport {
 	case TransportStdio:

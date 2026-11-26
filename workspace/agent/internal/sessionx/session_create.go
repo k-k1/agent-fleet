@@ -799,13 +799,14 @@ func (c *createRun) identify() bool {
 // studio is bound here, as the last step before the launch.
 func (c *createRun) armMeta() (session.Meta, bool) {
 	req := c.req
+	place := sessionPlaceOf(req.Dir, c.subdir)
 	meta := session.Meta{
 		Name: c.name, Dir: req.Dir, Subdir: c.subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: c.kind, Driver: c.driver, Title: c.title, Color: req.Color, Label: c.label,
 		// Validated in validateRoute and checkRoute; nil stays nil, so a create without a
 		// selection writes the meta it always did.
 		Route:           req.Route.Normalize(),
 		SkipPermissions: req.SkipPermissions,
-		Repo:            filepath.Base(req.Dir), Place: PlaceOf(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
+		Place:           place, Repo: repoName(place, req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: c.ssm,
 		Origin: c.origin, OriginConv: c.originConv, OriginSession: c.originSession,
 		Studio: c.studio, WorkItem: cleanWorkItemRef(req.WorkItem),
@@ -814,12 +815,15 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
 		MuseContributorMode: contributorModeOn(c.kind),
 	}
-	if c.queueRepo && meta.Place.Kind != session.PlaceRepo && meta.Place.Kind != session.PlaceWorktree {
-		// The place stored here is read again after queueDirIsRepository: a working copy replaced
-		// by a link since is caught where it is seen, not launched into.
-		httpx.WriteErr(c.w, http.StatusBadRequest, "queue_dir_not_repository",
-			"a queue runs in a repository directly under ~/repos, and this is not one: "+req.Dir)
-		return session.Meta{}, false
+	if c.queueRepo {
+		// Read again after queueDirIsRepository, on the dir itself (the stored place follows a
+		// subdir's launch rule): a working copy replaced by a link since is caught where it is
+		// seen, not launched into.
+		if k := PlaceOf(req.Dir).Kind; k != session.PlaceRepo && k != session.PlaceWorktree {
+			httpx.WriteErr(c.w, http.StatusBadRequest, "queue_dir_not_repository",
+				"a queue runs in a repository directly under ~/repos, and this is not one: "+req.Dir)
+			return session.Meta{}, false
+		}
 	}
 	if c.origin == session.OriginSchedule {
 		meta.ScheduleID = cleanScheduleID(req.ScheduleID)

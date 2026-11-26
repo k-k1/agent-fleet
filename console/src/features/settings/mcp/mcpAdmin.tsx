@@ -28,6 +28,7 @@ import {
   tenantFormValid,
   tenantOAuthClientValid,
   tenantOAuthSecretReentry,
+  tenantScopesValid,
 } from "./mcpWire.ts";
 import { deleteTenantMcpServer, listTenantMcpServers, saveTenantMcpServer } from "./mcpApi.ts";
 import { isOk } from "../api.ts";
@@ -291,6 +292,41 @@ function TenantClientFields({ form, patch }: { form: TenantForm; patch: (p: Part
   );
 }
 
+// TenantScopesField — the scopes the members' sign-in requests (ADR 0146 decision 2), optional.
+// Empty asks for what the server names, which for a server whose tool list is public can be every
+// scope it supports.
+function TenantScopesField({ form, patch }: { form: TenantForm; patch: (p: Partial<TenantForm>) => void }) {
+  const tr = useT();
+  const valid = tenantScopesValid(form);
+  return (
+    <Field
+      label={tr("admin.mcp_oauth_scopes")}
+      wide
+      hint={
+        valid ? (
+          <span id="adm-mcp-scopes-hint">{tr("admin.mcp_oauth_scopes_hint")}</span>
+        ) : (
+          <span id="adm-mcp-scopes-hint" className="ps-note-warn">
+            {tr("admin.mcp_oauth_scopes_bad")}
+          </span>
+        )
+      }
+    >
+      <textarea
+        className="cinput mono"
+        rows={3}
+        spellCheck={false}
+        autoComplete="off"
+        aria-label={tr("admin.mcp_oauth_scopes")}
+        aria-describedby="adm-mcp-scopes-hint"
+        aria-invalid={!valid}
+        value={form.oauthScopes}
+        onChange={(e) => patch({ oauthScopes: e.target.value })}
+      />
+    </Field>
+  );
+}
+
 // McpAdminForm — the tenant distribution form. Remote only by construction (see
 // bodyOfTenant): there is no transport switch to get wrong.
 export function McpAdminForm({
@@ -386,6 +422,7 @@ export function McpAdminForm({
             headersHint={form.userSecret ? tr("admin.mcp_headers_names_hint") : tr("admin.mcp_headers_hint")}
           />
           {form.auth === "oauth" && <TenantClientFields form={form} patch={patch} />}
+          {form.auth === "oauth" && <TenantScopesField form={form} patch={patch} />}
 
           <AdvancedSection
             defaultOpen={advOpen}

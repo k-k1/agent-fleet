@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import { raw, displayURL, downloadURL } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
+import { sessionRepo } from "../../../lib/project.ts";
 import { expandThinking, type Settings } from "../../../lib/settings.ts";
 // Used by the failure block's re-auth link to open Settings > Agents (ErrorBlock).
 import { useSettingsUI } from "../../settings/store.ts";
@@ -17,6 +18,10 @@ import type { usePlanActions } from "./usePlanActions.ts";
 const q = encodeURIComponent;
 
 /** useTranscriptCaps builds what the mirror's transcript may do (TranscriptCaps), memoized. */
+/** The working copy a session's ticket links resolve against: none for a session in a space or
+ *  home, whatever its row's `repo` says. The pending cards read the same. */
+export const ticketRepoOf = (meta: Session | null | undefined): string | null => (meta && sessionRepo(meta)) || null;
+
 export function useTranscriptCaps({
   session,
   sessionMeta,
@@ -90,10 +95,11 @@ export function useTranscriptCaps({
   // Memoized because every turn holds this object: a fresh one per render would re-render the
   // whole conversation on every keystroke in the composer, whatever TranscriptTurn does. So what
   // a block READS while rendering is a dependency here, and what it CALLS goes through actsRef.
+  const metaRepo = ticketRepoOf(sessionMeta);
   const caps: TranscriptCaps = useMemo(
     (): TranscriptCaps => ({
       agentName,
-      repo: sessionMeta?.repo ?? null,
+      repo: metaRepo,
       workItemRefs: true,
       previewLinks: true,
       loadPastedImage: (name) => actsRef.current.loadPastedImage!(name),
@@ -141,7 +147,7 @@ export function useTranscriptCaps({
     [
       rejectedGen,
       agentName,
-      sessionMeta?.repo,
+      metaRepo,
       sessionMeta?.authOkAt,
       session,
       planSendBlocked,

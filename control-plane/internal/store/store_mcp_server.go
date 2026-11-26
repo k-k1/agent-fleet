@@ -34,8 +34,11 @@ type MCPServerRow struct {
 	// OAuthKeyRef like HeadersEnc, and empty for a public client.
 	OAuthIssuer, OAuthClientID  string
 	OAuthSecretEnc, OAuthKeyRef string
-	CreatedBy                   string
-	CreatedAt, UpdatedAt        string
+	// OAuthScopes is the scope list of an oauth row's sign-in, space-separated; "" = none of its
+	// own (ADR 0146 decision 2).
+	OAuthScopes          string
+	CreatedBy            string
+	CreatedAt, UpdatedAt string
 }
 
 // MCPServerStore is the tenant-distributed MCP server registry (docs/log/48 P4 +
@@ -59,14 +62,14 @@ type MCPServerStore interface {
 // one tenant from reaching another's row by guessing or replaying an id.
 
 const mcpServerCols = `SELECT id, tenant_id, name, label, transport, url, headers_enc, key_ref,
-	targets, kinds, timeout_ms, enabled, user_secret, auth, oauth_issuer, oauth_client_id, oauth_secret_enc, oauth_key_ref,
+	targets, kinds, timeout_ms, enabled, user_secret, auth, oauth_issuer, oauth_client_id, oauth_secret_enc, oauth_key_ref, oauth_scopes,
 	created_by, created_at, updated_at FROM mcp_server`
 
 func scanMCPServer(row scanner) (MCPServerRow, error) {
 	var m MCPServerRow
 	var enabled, userSecret int
 	err := row.Scan(&m.ID, &m.TenantID, &m.Name, &m.Label, &m.Transport, &m.URL, &m.HeadersEnc, &m.KeyRef,
-		&m.Targets, &m.Kinds, &m.TimeoutMS, &enabled, &userSecret, &m.Auth, &m.OAuthIssuer, &m.OAuthClientID, &m.OAuthSecretEnc, &m.OAuthKeyRef,
+		&m.Targets, &m.Kinds, &m.TimeoutMS, &enabled, &userSecret, &m.Auth, &m.OAuthIssuer, &m.OAuthClientID, &m.OAuthSecretEnc, &m.OAuthKeyRef, &m.OAuthScopes,
 		&m.CreatedBy, &m.CreatedAt, &m.UpdatedAt)
 	m.Enabled = enabled != 0
 	m.UserSecret = userSecret != 0
@@ -101,11 +104,11 @@ func (s *SQL) GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerR
 func (s *SQL) CreateMCPServer(ctx context.Context, m MCPServerRow) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO mcp_server(id, tenant_id, name, label, transport, url, headers_enc, key_ref,
-		   targets, kinds, timeout_ms, enabled, user_secret, auth, oauth_issuer, oauth_client_id, oauth_secret_enc, oauth_key_ref,
+		   targets, kinds, timeout_ms, enabled, user_secret, auth, oauth_issuer, oauth_client_id, oauth_secret_enc, oauth_key_ref, oauth_scopes,
 		   created_by, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.TenantID, m.Name, m.Label, m.Transport, m.URL, m.HeadersEnc, m.KeyRef,
-		m.Targets, m.Kinds, m.TimeoutMS, b2i(m.Enabled), b2i(m.UserSecret), m.Auth, m.OAuthIssuer, m.OAuthClientID, m.OAuthSecretEnc, m.OAuthKeyRef,
+		m.Targets, m.Kinds, m.TimeoutMS, b2i(m.Enabled), b2i(m.UserSecret), m.Auth, m.OAuthIssuer, m.OAuthClientID, m.OAuthSecretEnc, m.OAuthKeyRef, m.OAuthScopes,
 		m.CreatedBy, m.CreatedAt, m.UpdatedAt)
 	return err
 }
@@ -114,11 +117,11 @@ func (s *SQL) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE mcp_server SET name=?, label=?, transport=?, url=?, headers_enc=?, key_ref=?,
 		   targets=?, kinds=?, timeout_ms=?, enabled=?, user_secret=?, auth=?,
-		   oauth_issuer=?, oauth_client_id=?, oauth_secret_enc=?, oauth_key_ref=?, updated_at=?
+		   oauth_issuer=?, oauth_client_id=?, oauth_secret_enc=?, oauth_key_ref=?, oauth_scopes=?, updated_at=?
 		 WHERE tenant_id=? AND id=?`,
 		m.Name, m.Label, m.Transport, m.URL, m.HeadersEnc, m.KeyRef,
 		m.Targets, m.Kinds, m.TimeoutMS, b2i(m.Enabled), b2i(m.UserSecret), m.Auth,
-		m.OAuthIssuer, m.OAuthClientID, m.OAuthSecretEnc, m.OAuthKeyRef, m.UpdatedAt,
+		m.OAuthIssuer, m.OAuthClientID, m.OAuthSecretEnc, m.OAuthKeyRef, m.OAuthScopes, m.UpdatedAt,
 		m.TenantID, m.ID)
 	return err
 }

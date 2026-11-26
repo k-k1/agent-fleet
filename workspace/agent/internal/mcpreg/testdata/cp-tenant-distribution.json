@@ -1,0 +1,49 @@
+{
+  "servers": [
+    {
+      "id": "t-gmail",
+      "name": "gmail",
+      "label": "Gmail",
+      "origin": "tenant",
+      "transport": "http",
+      "url": "https://gmailmcp.googleapis.com/mcp/v1self",
+      "enabled": true,
+      "targets": {
+        "assistant": true,
+        "session": true
+      },
+      "auth": "oauth",
+      "oauthClient": {
+        "issuer": "https://accounts.google.com",
+        "clientId": "corp-agent",
+        "confidential": true
+      },
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "openid"
+      ]
+    },
+    {
+      "id": "t-wiki",
+      "name": "wiki",
+      "origin": "tenant",
+      "transport": "http",
+      "url": "https://wiki.corp.example/mcp",
+      "headers": {
+        "Authorization": "Bearer wiki"
+      },
+      "enabled": true,
+      "targets": {
+        "assistant": false,
+        "session": true
+      },
+      "kinds": [
+        "claude",
+        "codex"
+      ],
+      "timeoutMs": 30000
+    }
+  ],
+  "unreadable": 0,
+  "watchSources": false
+}

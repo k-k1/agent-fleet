@@ -45,6 +45,38 @@ describe("overviewGroups", () => {
     expect(groups[1].sessions.map((x) => x.name)).toEqual(["z"]);
   });
 
+  it("keeps a space, home and other directories out of the repository named like them (#5219)", () => {
+    const repos = [repo("foo"), repo("dev")];
+    const list = [
+      s("r", { repo: "foo", place: { kind: "repo", id: "foo" } }),
+      s("sp", { repo: "foo", place: { kind: "space", id: "foo" } }),
+      s("home", { repo: "dev", place: { kind: "home" } }),
+      s("o", { repo: "foo", place: { kind: "other" } }),
+    ];
+    const groups = overviewGroups(list, repos, null, false);
+    expect(groups.map((g) => [g.label, g.sessions.map((x) => x.name).sort()])).toEqual([
+      ["foo", ["r"]],
+      ["", ["home", "o", "sp"]],
+    ]);
+  });
+
+  it("groups a worktree the list has not caught up with under the parent its place names (#5219)", () => {
+    const repos = [repo("app", { remote: "github.com", remotePath: "acme/app" })];
+    const list = [s("a", { repo: "app" }), s("qa", { repo: "qa-copy", place: { kind: "worktree", id: "qa-copy", parent: "app" } })];
+    const groups = overviewGroups(list, repos, null, false);
+    expect(groups.map((g) => [g.label, g.sessions.map((x) => x.name).sort()])).toEqual([["app", ["a", "qa"]]]);
+    // with app's working set chosen, before and after the worktree's row arrives
+    const w = set({ repos: ["app"] });
+    expect(names(overviewGroups(list, repos, w, false)).map((n) => n.sort())).toEqual([["a", "qa"]]);
+    const listed = [...repos, repo("qa-copy", { worktree: true, parent: "app", remote: "github.com", remotePath: "acme/app" })];
+    expect(names(overviewGroups(list, listed, w, false)).map((n) => n.sort())).toEqual([["a", "qa"]]);
+    // A worktree of a repository outside ~/repos stores no parent; the list's row guesses app from
+    // its git directory's folder name, and must not pull it into app's set.
+    const ext = [s("a", { repo: "app" }), s("x", { repo: "ext-wt", place: { kind: "worktree", id: "ext-wt" } })];
+    const guessed = [...repos, repo("ext-wt", { worktree: true, parent: "app" })];
+    expect(names(overviewGroups(ext, guessed, w, false)).flat()).toEqual(["a"]);
+  });
+
   it("counts the running cards per heading", () => {
     const list = [s("a"), s("b", { alive: false })];
     const groups = overviewGroups(list, [], null, true);

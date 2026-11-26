@@ -53,6 +53,7 @@ func newUpstream(t *testing.T, h func(w http.ResponseWriter, r *http.Request, n 
 		n := len(u.reqs) - 1
 		h := u.handler
 		u.mu.Unlock()
+		r.Body = io.NopCloser(bytes.NewReader(b)) // a handler may read the request too
 		h(w, r, n)
 	}))
 	t.Cleanup(u.srv.Close)

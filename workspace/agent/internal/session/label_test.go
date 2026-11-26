@@ -50,3 +50,17 @@ func TestDisplayStripsLabelTag(t *testing.T) {
 		t.Errorf("Display (title wins) = %q", got)
 	}
 }
+
+// A space or home session records no Repo; its directory's own name stands in, so it is never
+// shown by its opaque slug.
+func TestDisplayFallsBackToTheDirectoryName(t *testing.T) {
+	if got := Display(Meta{Name: "s6bbilu", Dir: "/home/dev/spaces/notes/"}); got != "notes" {
+		t.Errorf("Display (no repo) = %q", got)
+	}
+	if got := Display(Meta{Name: "s6bbilu", Repo: "app", Dir: "/home/dev/spaces/notes"}); got != "app" {
+		t.Errorf("Display (repo wins) = %q", got)
+	}
+	if got := Display(Meta{Name: "s6bbilu"}); got != "s6bbilu" {
+		t.Errorf("Display (nothing else) = %q", got)
+	}
+}

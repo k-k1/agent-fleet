@@ -18,6 +18,7 @@ import { useSettingsUI } from "../settings/store.ts";
 import { setCachedConns } from "./connsCache.ts";
 import { fetchConnsWithRetry } from "./connsRetry.ts";
 import type { ConnectionsStatus, Session } from "../../types/session.ts";
+import { sessionRepo } from "../../lib/project.ts";
 
 export interface RepoRailContext {
   /** Launch kinds the user can actually start: connection-gated and allowed by the credential
@@ -85,10 +86,10 @@ function fetchConns(key: string): Promise<ConnectionsStatus | null> {
   return p;
 }
 
-/** The repository row the attached session lights up, or null. A session in a space (ADR 0142)
- *  has no repository, even when a repository shares its folder name. */
-export function activeRepoOf(s: Session | undefined): string | null | undefined {
-  return s && agentOf(s.kind).caps.runsInDir && !s.space ? s.repo : null;
+/** The repository row the attached session lights up, or null. A session in a space (ADR 0142),
+ *  home or another directory has no repository, even when a repository shares its folder name. */
+export function activeRepoOf(s: Session | undefined): string | null {
+  return (s && agentOf(s.kind).caps.runsInDir && sessionRepo(s)) || null;
 }
 
 export function useRepoRailContext(): RepoRailContext {

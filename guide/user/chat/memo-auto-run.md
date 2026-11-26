@@ -422,6 +422,7 @@ A run stays open until its session has nothing left to wait for. While any of th
 | not known | The state cannot be read |
 
 - Sessions it started count too. While a child is working, the run is not over ([Start child sessions from a session](../fleet/child-sessions.md))
+- While the workspace is running, a message between sessions that has not reached the session or one of its children yet also keeps the run from ending, without a reason shown. The two checks in a row start again after it arrives. This lasts 15 minutes at most after the message was sent or that session last finished a turn, whichever is later. A stopped workspace does not wait for it
 - When none of these holds on two checks in a row, the run becomes "Done". The checks are about a minute apart
 - "As of …" on the reason is when it was last read
 - An open run uses one of the "Sessions at the same time". While all of them are used, no new run starts

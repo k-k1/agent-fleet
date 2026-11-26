@@ -15,6 +15,7 @@ package agents
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -148,4 +149,55 @@ func QueuedPeerTouches(members map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// QueuedPeersTo is the peer messages addressed to session name that have not reached it yet,
+// from both spools: pending (waiting for the session's user) and held (accepted by a Managed
+// queue, not yet handed to the runtime). newest is the latest queue time among them. Held input
+// from another origin (operator, schedule, queue) is not a peer message and is not counted.
+// The caller serialises against the pending spool's writers (sessionx's pendingTarget lock).
+//
+// A file or directory that is there but cannot be read counts as one message queued at its
+// modification time: read as none, a single failed read would let the Control Plane close a
+// run under a message that is still waiting, and its time still bounds how long it counts. A
+// file that reads but does not decode is no message (loadSpool removes it).
+func QueuedPeersTo(name string) (n int, newest time.Time) {
+	if !heldName(name) {
+		return 0, time.Time{}
+	}
+	add := func(at time.Time) {
+		n++
+		if at.After(newest) {
+			newest = at
+		}
+	}
+	for _, sub := range []string{heldSubdir, pendingSubdir} {
+		dir := spoolDir(sub, name)
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			if fi, serr := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) && serr == nil {
+				add(fi.ModTime())
+			}
+			continue
+		}
+		for _, e := range ents {
+			fn := e.Name()
+			if e.IsDir() || strings.HasPrefix(fn, ".") || !strings.HasSuffix(fn, ".json") {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(dir, fn))
+			if err != nil {
+				if fi, ierr := e.Info(); !errors.Is(err, fs.ErrNotExist) && ierr == nil {
+					add(fi.ModTime())
+				}
+				continue
+			}
+			var hp heldPeer
+			if json.Unmarshal(b, &hp) != nil || hp.ID == "" || hp.origin() != OriginPeer {
+				continue
+			}
+			add(hp.QueuedAt)
+		}
+	}
+	return n, newest
 }

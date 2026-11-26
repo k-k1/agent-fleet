@@ -675,7 +675,7 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		ClientID: p.clientID, ClientSecret: p.secret, TokenAuth: p.tokenAuth,
 		TokenEndpoint: p.tokenEndpoint, RevocationEndpoint: p.revocationEndpoint,
 		Resource: p.resource, Scope: scope, AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken,
-		ConnectedAt: now,
+		ConnectedAt: now, SignInID: newSignInID(),
 	}
 	if tok.ExpiresIn > 0 {
 		g.ExpiresAt = now + int64(tok.ExpiresIn)

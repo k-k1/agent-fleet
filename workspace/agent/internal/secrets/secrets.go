@@ -388,6 +388,10 @@ type MCPServer struct {
 	// full mailbox control. Tenant rows only, like OAuthClient: the member's form neither shows
 	// nor keeps it, so an edit would silently drop it from a user row.
 	Scopes []string `json:"scopes,omitempty"`
+	// Elicitation is "" or "relay". "relay" has the Agent's relay answer the server's form
+	// elicitation (input_required) itself, with a person's choice from the Console, instead of
+	// passing it to the CLI (ADR 0146 decision 6). Only an OAuth definition goes through the relay.
+	Elicitation string `json:"elicitation,omitempty"`
 
 	Enabled   bool       `json:"enabled"`
 	Targets   MCPTargets `json:"targets"`
@@ -446,7 +450,11 @@ type MCPOAuthGrant struct {
 	// ExpiresAt is the access token's expiry (unix seconds); 0 when the AS did not say.
 	ExpiresAt   int64 `json:"expiresAt,omitempty"`
 	ConnectedAt int64 `json:"connectedAt"`
-	RefreshedAt int64 `json:"refreshedAt,omitempty"`
+	// SignInID is a random id given at each completed sign-in and kept by renewals, so two
+	// sign-ins within the same second are still told apart (the relay sends a confirmed call
+	// only on the sign-in it was first sent with). Empty on grants made before it existed.
+	SignInID    string `json:"signInId,omitempty"`
+	RefreshedAt int64  `json:"refreshedAt,omitempty"`
 	// SignInAgain is set when the refresh grant was refused (invalid_grant) or the access
 	// token expired with no refresh token. The tokens are dropped; nothing retries it.
 	SignInAgain bool `json:"signInAgain,omitempty"`

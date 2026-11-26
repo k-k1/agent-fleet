@@ -186,20 +186,22 @@ describe("CommandPalette conversations mode", () => {
     expect(useSessionUI.getState().archivedDir).toBeNull();
   });
 
-  it("names each hit's session by slug and branch, or folder when it has no branch", async () => {
+  it("names each hit's session by slug and branch, else its space, else its folder", async () => {
     searchBody = {
       hits: [
         hit("abc1234", 1, "first", { display: "Review", dir: "/home/dev/repos/app@wip-1", branch: "feature/9-x" }),
         hit("def5678", 2, "second", { display: "Review", dir: "/home/dev/repos/app@wip-2" }),
+        // a space session: its space, never the trailing element of a spelling like "/."
+        hit("ghi9012", 3, "third", { display: "Review", dir: "/home/dev/spaces/notes/.", space: "notes" }),
       ],
       indexing: false,
-      indexed: 2,
-      total: 2,
+      indexed: 3,
+      total: 3,
     };
     await typeQuery("review");
     const where = [...document.querySelectorAll(".cp-talk-where")];
-    expect(where.map((e) => e.querySelector(".cp-talk-slug")?.textContent)).toEqual(["abc1234", "def5678"]);
-    expect(where.map((e) => e.querySelector(".cp-talk-place")?.textContent?.trim())).toEqual(["feature/9-x", "app@wip-2"]);
+    expect(where.map((e) => e.querySelector(".cp-talk-slug")?.textContent)).toEqual(["abc1234", "def5678", "ghi9012"]);
+    expect(where.map((e) => e.querySelector(".cp-talk-place")?.textContent?.trim())).toEqual(["feature/9-x", "app@wip-2", "notes"]);
   });
 
   it("says when the index is still being built, and asks again until it is", async () => {

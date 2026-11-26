@@ -13,6 +13,12 @@ describe("rankSpaces", () => {
     expect(rankSpaces(spaces, sessions).map((s) => s.folder)).toEqual(["old-1", "new-1"]);
   });
 
+  it("counts a session by its stored place, on a row that carries no space (#5219)", () => {
+    const spaces = [sp("new-1", "2026-11-20T00:00:00Z"), sp("old-1", "2026-09-01T00:00:00Z")];
+    const placed = { name: "p", createdAt: "2026-11-23T10:00:00Z", place: { kind: "space", id: "old-1" } } as Session;
+    expect(rankSpaces(spaces, [placed]).map((s) => s.folder)).toEqual(["old-1", "new-1"]);
+  });
+
   it("ranks a space with no session by its creation time", () => {
     const spaces = [sp("a-1", "2026-11-01T00:00:00Z"), sp("b-1", "2026-11-02T00:00:00Z"), sp("c-1")];
     expect(rankSpaces(spaces, []).map((s) => s.folder)).toEqual(["b-1", "a-1", "c-1"]);

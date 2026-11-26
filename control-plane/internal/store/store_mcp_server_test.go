@@ -30,8 +30,9 @@ func TestMCPServerOAuthClientPostgres(t *testing.T) {
 	checkMCPServerOAuthClient(t, st)
 }
 
-// checkMCPServerOAuthClient: the tenant client's four columns live in their own migration per
-// dialect, so each backend has to carry them through create, read, list and update.
+// checkMCPServerOAuthClient: the tenant client's four columns and the definition scopes live in
+// their own migrations per dialect, so each backend has to carry them through create, read, list
+// and update.
 func checkMCPServerOAuthClient(t *testing.T, st *SQL) {
 	t.Helper()
 	ctx := context.Background()
@@ -47,7 +48,7 @@ func checkMCPServerOAuthClient(t *testing.T, st *SQL) {
 		ID: "M1", TenantID: tn.ID, Name: "docs", Transport: "http", URL: "https://mcp.example.com/mcp",
 		Targets: "sessions", TimeoutMS: 0, Enabled: true, Auth: "oauth",
 		OAuthIssuer: "https://as.example.com", OAuthClientID: "af-client",
-		OAuthSecretEnc: "sealed", OAuthKeyRef: "k1",
+		OAuthSecretEnc: "sealed", OAuthKeyRef: "k1", OAuthScopes: "openid email",
 		CreatedBy: "I1", CreatedAt: now, UpdatedAt: now,
 	}
 	if err := st.CreateMCPServer(ctx, m); err != nil {
@@ -58,12 +59,13 @@ func checkMCPServerOAuthClient(t *testing.T, st *SQL) {
 		t.Fatalf("get = %v %v", ok, err)
 	}
 	if got.Auth != "oauth" || got.OAuthIssuer != m.OAuthIssuer || got.OAuthClientID != m.OAuthClientID ||
-		got.OAuthSecretEnc != "sealed" || got.OAuthKeyRef != "k1" {
+		got.OAuthSecretEnc != "sealed" || got.OAuthKeyRef != "k1" || got.OAuthScopes != "openid email" {
 		t.Fatalf("after create = %+v", got)
 	}
 
 	// Dropping to a public client clears the secret and its key.
 	got.OAuthClientID, got.OAuthSecretEnc, got.OAuthKeyRef = "af-public", "", ""
+	got.OAuthScopes = "https://www.googleapis.com/auth/drive.readonly openid"
 	if err := st.UpdateMCPServer(ctx, got); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +73,8 @@ func checkMCPServerOAuthClient(t *testing.T, st *SQL) {
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list = %+v %v", list, err)
 	}
-	if l := list[0]; l.OAuthIssuer != m.OAuthIssuer || l.OAuthClientID != "af-public" || l.OAuthSecretEnc != "" || l.OAuthKeyRef != "" {
+	if l := list[0]; l.OAuthIssuer != m.OAuthIssuer || l.OAuthClientID != "af-public" || l.OAuthSecretEnc != "" || l.OAuthKeyRef != "" ||
+		l.OAuthScopes != "https://www.googleapis.com/auth/drive.readonly openid" {
 		t.Fatalf("after update = %+v", l)
 	}
 }

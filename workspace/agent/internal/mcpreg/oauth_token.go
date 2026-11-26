@@ -6,10 +6,13 @@ package mcpreg
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -147,9 +150,29 @@ func RefreshAccessToken(ctx context.Context, serverID, rejected string) (string,
 // It returns the resource the grant was made for, so a caller that sends the token somewhere can
 // check the two belong together from the same snapshot.
 func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, resource string, err error) {
+	token, resource, _, err = refreshGrantGen(ctx, serverID, rejected)
+	return token, resource, err
+}
+
+// grantGeneration names one sign-in, not its tokens: a renewal keeps it, signing in again (perhaps
+// as another account) changes it. Nothing secret is in it.
+func grantGeneration(g *secrets.MCPOAuthGrant) string {
+	return g.Issuer + "\n" + g.ClientID + "\n" + strconv.FormatInt(g.ConnectedAt, 10) + "\n" + g.SignInID
+}
+
+// newSignInID is a grant's SignInID.
+func newSignInID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// refreshGrantGen is refreshGrantRes with the generation of the grant the token belongs to, read
+// from the same snapshot.
+func refreshGrantGen(ctx context.Context, serverID, rejected string) (token, resource, gen string, err error) {
 	g0 := currentGrant(serverID)
 	if g0 == nil {
-		return "", "", ErrNotSignedIn
+		return "", "", "", ErrNotSignedIn
 	}
 	key := serverID + "\n" + g0.Issuer
 	mu := lockFor(key)
@@ -158,10 +181,10 @@ func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, res
 
 	g := currentGrant(serverID)
 	if g == nil {
-		return "", "", ErrNotSignedIn
+		return "", "", "", ErrNotSignedIn
 	}
 	if g.SignInAgain {
-		return "", "", ErrSignInAgain
+		return "", "", "", ErrSignInAgain
 	}
 	rotatedMu.Lock()
 	r, have := rotated[key]
@@ -169,7 +192,7 @@ func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, res
 	if have {
 		if g.RefreshToken == r.oldRefresh {
 			if err := persistRotation(g.ServerID, g.Issuer, r); err != nil {
-				return "", "", errors.New("mcp oauth: the renewed grant could not be saved yet")
+				return "", "", "", errors.New("mcp oauth: the renewed grant could not be saved yet")
 			}
 			applyRotation(g, r)
 		}
@@ -178,11 +201,11 @@ func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, res
 		rotatedMu.Unlock()
 	}
 	if fresh(g, oauthNow()) && (rejected == "" || g.AccessToken != rejected) {
-		return g.AccessToken, g.Resource, nil
+		return g.AccessToken, g.Resource, grantGeneration(g), nil
 	}
 	if g.RefreshToken == "" {
 		markSignInAgain(g.ServerID, g.Issuer, "")
-		return "", "", ErrSignInAgain
+		return "", "", "", ErrSignInAgain
 	}
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
@@ -193,9 +216,9 @@ func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, res
 	if terr != nil {
 		if terr.code == "invalid_grant" {
 			markSignInAgain(g.ServerID, g.Issuer, g.RefreshToken)
-			return "", "", ErrSignInAgain
+			return "", "", "", ErrSignInAgain
 		}
-		return "", "", errors.New("mcp oauth: the authorization server did not renew the grant (" + terr.code + ")")
+		return "", "", "", errors.New("mcp oauth: the authorization server did not renew the grant (" + terr.code + ")")
 	}
 	rot := rotation{oldRefresh: g.RefreshToken, tok: tok, at: oauthNow().Unix()}
 	// The rotated refresh token is written before the new access token is used: the old one
@@ -205,9 +228,9 @@ func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, res
 		rotatedMu.Lock()
 		rotated[key] = rot
 		rotatedMu.Unlock()
-		return "", "", errors.New("mcp oauth: the renewed grant could not be saved yet")
+		return "", "", "", errors.New("mcp oauth: the renewed grant could not be saved yet")
 	}
-	return tok.AccessToken, g.Resource, nil
+	return tok.AccessToken, g.Resource, grantGeneration(g), nil
 }
 
 // markSignInAgain drops the tokens of a grant that cannot be renewed and flags it. spent, when

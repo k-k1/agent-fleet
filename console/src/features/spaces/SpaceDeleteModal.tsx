@@ -13,6 +13,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { Session } from "../../types/session.ts";
 import { isTerminalSession } from "../../lib/project.ts";
+import { sessionInSpace } from "./running.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { deleteSpace, spacesOwner, useSpacesStore } from "./store.ts";
 
@@ -49,9 +50,7 @@ export function SpaceDeleteModal({
     (s) => s.spaces.find((x) => x.folder === folder)?.dir ?? "",
   );
   const all = useSessionsStore((s) => s.sessions);
-  const inSpace = (s: Session) =>
-    s.space === folder ||
-    (!!dir && !!s.dir && (s.dir === dir || s.dir.startsWith(dir + "/")));
+  const inSpace = (s: Session) => sessionInSpace(s, folder, dir);
   const current = all.filter(inSpace);
   // What the member read: frozen, so a press never lands on a set they did not see. When the
   // sessions in the space change while the dialog is open (a shell opened elsewhere, one removed)

@@ -242,6 +242,14 @@ type WakerHolder struct {
 	Timer   bool   `json:"timer,omitempty"`
 }
 
+// PendingPeers is the peer messages addressed to a session that have not reached it yet: waiting
+// for its user, being delivered, or held for a Managed runtime that has not taken them.
+type PendingPeers struct {
+	Count int `json:"count"`
+	// NewestAt is the queue time of the newest of them (RFC 3339, the Agent's clock).
+	NewestAt string `json:"newestAt"`
+}
+
 // Session is the wire representation of a Claude session (one tmux session).
 type Session struct {
 	Name string `json:"name"`
@@ -322,6 +330,10 @@ type Session struct {
 	// with the row, so its sessionWire has to carry them too.
 	Wakers        *Wakers `json:"wakers,omitempty"`
 	WakersUnknown bool    `json:"wakersUnknown,omitempty"`
+	// PendingPeers is what is still on its way to this session as peer messages, omitted when
+	// nothing is. A queue run's tree is not finished while a message to a member is in transit
+	// (#5270), so the Control Plane's sessionWire has to carry it too.
+	PendingPeers *PendingPeers `json:"pendingPeers,omitempty"`
 	// TitleSetBy mirrors Meta.TitleSetBy ("user" | "parent" | ""): who last set Title. It
 	// rides the wire so a reader outside this process can tell a name the user chose from one
 	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;
@@ -552,7 +564,7 @@ type CatalogEntry struct {
 	Name          string `json:"name"`
 	Kind          string `json:"kind"`
 	Dir           string `json:"dir"`
-	Repo          string `json:"repo"`
+	Repo          string `json:"repo"` // FolderLabel: display only, a share is matched by WorkingCopyID
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
 	Title         string `json:"title,omitempty"`
 	Label         string `json:"label,omitempty"`
@@ -1195,6 +1207,16 @@ func StoppedTTL() (d time.Duration, ok bool) {
 	return StoppedArchiveDefault, true
 }
 
+// FolderLabel is the folder a session is shown by: its working copy (Repo), else the directory's
+// own name, because a space or home session records no Repo and would otherwise be shown by
+// its opaque slug. Display only; never a key.
+func FolderLabel(m Meta) string {
+	if m.Repo != "" || m.Dir == "" {
+		return m.Repo
+	}
+	return filepath.Base(m.Dir)
+}
+
 // Display derives a human-readable session name, mirroring the Console's
 // displayName (lib/sessionview.ts): the user title if set; else a claude session's
 // --name label (minus the "[AF:<name>] " tag, label.go); else "{repo}@MMDD-HHMM". The random slug
@@ -1207,7 +1229,7 @@ func Display(m Meta) string {
 	if m.Label != "" {
 		return StripLabel(m.Label)
 	}
-	base := m.Repo
+	base := FolderLabel(m)
 	if base == "" {
 		base = m.Name
 	}

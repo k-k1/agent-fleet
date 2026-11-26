@@ -1688,13 +1688,17 @@ var sessionLabelTagRe = regexp.MustCompile(`^\[AF(?::[A-Za-z0-9][A-Za-z0-9_-]*)?
 
 // sessionRowDisplay is the DB-mirror fallback for a human-readable session name (the
 // Agent supplies Session.Display live; the store row has no title). Prefer the claude
-// --name label (minus the "[AF:<name>] " tag), else the repo, else the opaque slug.
+// --name label (minus the "[AF:<name>] " tag), else the repo, else the directory's own name
+// (a space or home session records no repo), else the opaque slug.
 func sessionRowDisplay(r store.SessionRow) string {
 	if r.Label != "" {
 		return strings.TrimSpace(sessionLabelTagRe.ReplaceAllString(r.Label, ""))
 	}
 	if r.Repo != "" {
 		return r.Repo
+	}
+	if d := strings.TrimRight(r.Dir, "/"); d != "" {
+		return d[strings.LastIndex(d, "/")+1:]
 	}
 	return r.Name
 }

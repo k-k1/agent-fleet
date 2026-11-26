@@ -41,6 +41,8 @@ beforeEach(() => {
     sessions: [
       { name: "s-fleet", kind: "claude", alive: true, repo: "fleet" },
       { name: "s-app", kind: "claude", alive: true, repo: "app" },
+      // a space named like the repository fleet, from an Agent that still wrote its folder as repo
+      { name: "s-space", kind: "claude", alive: true, repo: "fleet", place: { kind: "space", id: "fleet" } },
     ],
   });
   useWorkItemStore.setState({ payload: null, loaded: true, loadErr: "" });
@@ -63,6 +65,11 @@ describe("DocView ticket links", () => {
   it("follows the session's repo, not another one", async () => {
     // Bitbucket numbers are never guessed, so the same text stays plain for that session.
     await render("s-app");
+    expect(links()).toEqual([]);
+  });
+
+  it("leaves #N as text for a space session named like a repository (#5219)", async () => {
+    await render("s-space");
     expect(links()).toEqual([]);
   });
 

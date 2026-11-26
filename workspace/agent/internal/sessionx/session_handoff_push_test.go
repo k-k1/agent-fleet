@@ -245,7 +245,9 @@ func TestHandleSessionHandoffPush(t *testing.T) {
 	work, origin := pushFixture(t)
 	gitRun(t, work, "checkout", "-q", "-b", "temp/http")
 	commitFile(t, work, "a", "one")
-	session.WriteMeta(session.Meta{Name: "push1", Dir: work, Kind: session.KindClaude})
+	// Stored as a space: the context after the push names the repo by the stored place, as
+	// GET handoff-context does, not by what the directory looks like now.
+	session.WriteMeta(session.Meta{Name: "push1", Dir: work, Kind: session.KindClaude, Place: &session.Place{Kind: session.PlaceSpace, ID: "work"}})
 	session.WriteMeta(session.Meta{Name: "push2", Kind: session.KindClaude})
 	signer := memberorigintest.Install(t)
 	h := memberorigin.Require(HandoffPushMaxRequest, http.HandlerFunc(HandleSessionHandoffPush))
@@ -289,6 +291,9 @@ func TestHandleSessionHandoffPush(t *testing.T) {
 	}
 	if res.Context["headSha"] != remoteRef(origin, "refs/heads/temp/http") || res.Context["blocked"] != nil {
 		t.Fatalf("context after push = %v", res.Context)
+	}
+	if res.Context["repo"] != "" {
+		t.Errorf("context after push names repo %v for a session stored as a space", res.Context["repo"])
 	}
 }
 

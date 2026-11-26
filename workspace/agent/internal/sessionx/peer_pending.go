@@ -57,6 +57,9 @@ var (
 	// pendingPeerWait is the loop's pause between two looks at the target. Tests replace it
 	// to step the loop one look at a time.
 	pendingPeerWait = time.Sleep
+	// pendingWrittenBack runs after a refused delivery is back in the spool, before the delivery
+	// returns. Tests read the session row there.
+	pendingWrittenBack = func(string) {}
 )
 
 // queueableBlocker reports whether a peer send to a target in state st waits instead of being
@@ -131,8 +134,14 @@ var peerDeliveryReady = func(m session.Meta) (ready, alive bool) {
 // while it is out the spool can read empty, and a new send must still queue behind it. gen
 // moves on every drop (archive, trash, recreate, a gone session), so a delivery that was in
 // flight across one does not write its message back.
+//
+// view is taken inside mu, around the two-step moves of a message between the spool and
+// inflight (the claim, the write-back, the clear), so pendingPeersOf sees each message in one
+// place. The session list takes view alone: mu is held across enqueueDecision's pane checks,
+// which run tmux (up to 30 s), and the list must not wait for them.
 type pendingTarget struct {
 	mu       sync.Mutex
+	view     sync.Mutex
 	inflight *agents.PendingPeer
 	gen      uint64
 }
@@ -345,16 +354,23 @@ func deliverPendingPeer(name string, p agents.PendingPeer) bool {
 	defer lease.Release()
 	t := pendingTargetOf(name)
 	t.mu.Lock()
-	if t.inflight != nil || !agents.TakePendingPeer(name, p.ID) {
+	t.view.Lock()
+	took := t.inflight == nil && agents.TakePendingPeer(name, p.ID)
+	if took {
+		t.inflight = &p
+	}
+	t.view.Unlock()
+	if !took {
 		t.mu.Unlock()
 		return false // the member dropped it meanwhile
 	}
-	t.inflight = &p
 	gen := t.gen
 	t.mu.Unlock()
 	defer func() {
 		t.mu.Lock()
+		t.view.Lock()
 		t.inflight = nil
+		t.view.Unlock()
 		t.mu.Unlock()
 	}()
 	body, _ := json.Marshal(map[string]string{"prompt": p.Message, "peer_from": p.From, "peer_intent": p.Intent})
@@ -388,14 +404,21 @@ func deliverPendingPeer(name string, p agents.PendingPeer) bool {
 		rec.status == http.StatusInternalServerError && e.Code != "tmux_failed"
 	if keep {
 		t.mu.Lock()
-		defer t.mu.Unlock()
 		if t.gen != gen {
+			t.mu.Unlock()
 			log.Printf("pending peer message: %s: dropped %s from %s (the spool was dropped during its delivery)", name, p.ID, p.From)
 			return false
 		}
+		// Back in the spool and out of inflight in one step for the session list, which would
+		// otherwise count the message twice in between.
+		t.view.Lock()
 		if err := agents.PutPendingPeer(name, p); err != nil {
 			log.Printf("pending peer message: %s: lost %s from %s: write back: %v", name, p.ID, p.From, err)
 		}
+		t.inflight = nil
+		t.view.Unlock()
+		t.mu.Unlock()
+		pendingWrittenBack(name)
 		return false
 	}
 	log.Printf("pending peer message: %s: dropped %s from %s (delivery answered %d %s)",
@@ -519,4 +542,29 @@ func pendingInflightTouches(members map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// pendingPeersOf is the peer messages still on their way to session name (#5270), nil for none: the
+// pending spool, the one claimed from it and in /input, and held peer input. The spool and the
+// claim are read under the target's view lock, which every move between them takes: read apart,
+// a message written back and released between the two reads would be in neither.
+//
+// A message being handed to a Managed runtime that queues it behind a turn can be counted twice
+// for the moment until /input returns: the runtime's held copy carries an id and a queue time of
+// its own. The count is an upper bound; the Control Plane reads only whether it is above zero.
+func pendingPeersOf(name string) *session.PendingPeers {
+	t := pendingTargetOf(name)
+	t.view.Lock()
+	n, newest := agents.QueuedPeersTo(name)
+	if in := t.inflight; in != nil {
+		n++
+		if in.QueuedAt.After(newest) {
+			newest = in.QueuedAt
+		}
+	}
+	t.view.Unlock()
+	if n == 0 {
+		return nil
+	}
+	return &session.PendingPeers{Count: n, NewestAt: newest.UTC().Format(time.RFC3339)}
 }

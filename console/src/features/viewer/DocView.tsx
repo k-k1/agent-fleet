@@ -22,6 +22,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { sessionRepo } from "../../lib/project.ts";
 import { applyQuoteMarks, selectionAnchor } from "./quoteMarks.ts";
 import {
   addPlanComment,
@@ -76,7 +77,10 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
   const revealInFiles = useFilesStore((s) => s.revealInFiles);
   const settings = useSettings();
   const bodyRef = useRef<HTMLDivElement>(null);
-  const docRepo = useSessionsStore((s) => (session ? s.sessions.find((x) => x.name === session)?.repo ?? null : null));
+  const docRepo = useSessionsStore((s) => {
+    const meta = session ? s.sessions.find((x) => x.name === session) : undefined;
+    return (meta && sessionRepo(meta)) || null;
+  });
   const key = session ? planKey(session, content || "") : null;
   const comments = usePlanComments(key);
   // The pill attached to a selection (null = hidden), and the comment input opened from it.

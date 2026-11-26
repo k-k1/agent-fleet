@@ -192,6 +192,15 @@ function knownParent(s: Session, folder: string, byFolder: Map<string, Repo>): s
   return "";
 }
 
+/** The main working copy a worktree's stored place names, "" for anything else. */
+const storedParentName = (s: Session): string => (s.place?.kind === "worktree" && s.place.parent) || "";
+
+/** The listed working copy a worktree's stored place names as its parent, or "". */
+function storedParent(s: Session, byFolder: Map<string, Repo>): string {
+  const parent = storedParentName(s);
+  return parent && byFolder.has(parent) ? parent : "";
+}
+
 // The space's name is looked up here rather than through the spaces store's helper: that
 // module reaches the api client, and this file has to stay loadable without a browser.
 function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[], reposKnown: boolean): GroupId {
@@ -205,13 +214,15 @@ function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[], repos
   // made from a worktree), so the longest known prefix wins. The list can lag behind a session
   // that just started in a new worktree (or behind a tab that was hidden): the parent stands in
   // for the missing row, and the session stays under its repository's heading, not "Other".
-  const parent = knownParent(s, folder, byFolder);
+  // A row with a stored place says itself whether it is a worktree and of which copy, so the
+  // name is guessed only on a row without one: "app@notes" may be a clone of its own.
+  const parent = s.place ? storedParent(s, byFolder) : knownParent(s, folder, byFolder);
   if (parent) return { ...repoGroupId(parent, byFolder), kind: "repo" };
   // No list at all (the first load failed or has not answered): nothing can be called "other"
   // yet, so the folder's base names the heading; it moves to the repository's own key once the
   // list arrives.
   if (!reposKnown && folder) {
-    const base = folder.includes("@") ? folder.slice(0, folder.lastIndexOf("@")) : folder;
+    const base = s.place ? storedParentName(s) || folder : folder.includes("@") ? folder.slice(0, folder.lastIndexOf("@")) : folder;
     return { key: "c:" + base, kind: "repo", label: base, hint: base };
   }
   return { key: OTHER_GROUP, kind: "other", label: "", hint: "" };
