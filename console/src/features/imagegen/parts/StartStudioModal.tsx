@@ -11,7 +11,7 @@ import type { Repo } from "../../repos/store.ts";
 import { getStudio } from "../api.ts";
 import { attachAgent } from "../attach.ts";
 import { openImagegen } from "../open.ts";
-import { AttachAgentModal, type AttachOpts } from "./AttachAgentModal.tsx";
+import { AttachAgentModal, type AttachDone, type AttachOpts } from "./AttachAgentModal.tsx";
 
 export function StartStudioModal({ repo, onClose }: { repo: Repo; onClose: () => void }) {
   const tr = useT();
@@ -20,14 +20,14 @@ export function StartStudioModal({ repo, onClose }: { repo: Repo; onClose: () =>
   // A studio made by an attempt whose session then failed: the retry binds that one instead of
   // leaving an empty studio behind per press.
   const made = useRef<string | null>(null);
-  const onAttach = async (o: AttachOpts): Promise<boolean> => {
+  const onAttach = async (o: AttachOpts): Promise<AttachDone> => {
     // The retry's pick may differ from the first attempt's: `existing` writes it into the studio.
     const prev = made.current ? await getStudio(made.current).catch(() => null) : null;
     const existing = prev && !prev.error && prev.id ? { title: prev.title || "", updatedAt: prev.updated_at, draft: prev.draft || {} } : undefined;
     const r = await attachAgent({ studioId: existing ? made.current : null, draft: () => ({}), opts: o, existing });
     if (r.studioId) made.current = r.studioId;
     if (r.error) toast(r.error || tr("imggen.attach_failed"), { kind: "error" });
-    if (!r.session || !r.studioId) return false;
+    if (!r.session || !r.studioId) return r.spaceRefused ? "space_refused" : false;
     made.current = null;
     void refreshSessions();
     void openImagegen({ studioId: r.studioId, newPane: true });

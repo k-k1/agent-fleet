@@ -13,7 +13,7 @@
 // so taking it over, declining and giving back behave exactly as there.
 import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
-import { useEffect, useId, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -22,6 +22,7 @@ import { api, apiJSON, errText, type ApiError } from "../../core/api/client.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
+import { useSpaceLaunch } from "./spaceLaunch.ts";
 import { HandoffOfferRow } from "../sharing/HandoffOfferRow.tsx";
 import { refreshReceivedIfStale, senderLabel, useHandoffStore, type HandoffOffer } from "../sharing/handoffStore.ts";
 import {
@@ -103,6 +104,7 @@ export function InboxModal({ onClose }: { onClose: () => void }) {
   const received = receivedItems(items);
   const sent = sentItems(items);
   return (
+    <>
     <Modal title={tr("inbox.title")} onClose={onClose} className="inbox-modal">
       <div className="ui-modal-body">
         <div className="ui-seg choice-seg inbox-tabs" role="tablist">
@@ -135,6 +137,8 @@ export function InboxModal({ onClose }: { onClose: () => void }) {
         {tab === "settings" && <SettingsPane />}
       </div>
     </Modal>
+    <SpaceLaunchHost />
+    </>
   );
 }
 
@@ -323,16 +327,48 @@ export function ItemCard({ item }: { item: InboxItem }) {
   );
 }
 
-/** The assignee's launch: pick a working copy, then the ordinary launch dialog opens with
- *  the request as its prompt. The CP checks the claim again before the session exists. */
+/** The place value that stands for "a space" in the launch picker; no working copy has this name. */
+const SPACE_PLACE = "\u0000space";
+
+// Loaded on first use: the space form carries the whole launch dialog, which the inbox has no
+// other reason to bring in.
+const SpaceLaunchModal = lazy(() => import("../repos/SpaceLaunchModal.tsx").then((m) => ({ default: m.SpaceLaunchModal })));
+
+/** The space launch dialog, hosted outside the request cards (see spaceLaunch.ts). Closes with the inbox. */
+export function SpaceLaunchHost() {
+  const request = useSpaceLaunch((s) => s.request);
+  useEffect(() => () => useSpaceLaunch.getState().close(), []);
+  if (!request) return null;
+  return (
+    <Suspense fallback={null}>
+      <SpaceLaunchModal
+        key={request.id}
+        prompt={request.body}
+        inboxItemId={request.id}
+        onClose={() => useSpaceLaunch.getState().close(request)}
+      />
+    </Suspense>
+  );
+}
+
+/** The assignee's launch: pick a working copy or a space, then the ordinary launch dialog (or the
+ *  space form) opens with the request as its prompt. The CP checks the claim again before the
+ *  session exists. A member without working copies starts in a space: that is the default then. */
 function LaunchRow({ item }: { item: InboxItem }) {
   const tr = useT();
   const toast = useToast();
   const repos = useReposStore((s) => s.repos);
-  const [repoName, setRepoName] = useState(() => repos[0]?.name || "");
+  // Empty = not chosen yet: the first working copy, or a space when there is none.
+  const [pick, setPick] = useState("");
   const repoId = useId();
+  const place = pick || (repos[0]?.name ?? SPACE_PLACE);
+  const inSpace = place === SPACE_PLACE;
   const launch = () => {
-    const repo = repos.find((r) => r.name === repoName);
+    if (inSpace) {
+      useSpaceLaunch.getState().open({ id: item.id, body: item.body });
+      return;
+    }
+    const repo = repos.find((r) => r.name === place);
     if (!repo?.path) {
       toast(tr("inbox.launch_no_repo"));
       return;
@@ -347,16 +383,16 @@ function LaunchRow({ item }: { item: InboxItem }) {
         <FieldLabel htmlFor={repoId} info={tr("inbox.launch_hint")}>
           {tr("inbox.launch_repo")}
         </FieldLabel>
-        <select id={repoId} value={repoName} onChange={(e) => setRepoName(e.target.value)}>
+        <select id={repoId} value={place} onChange={(e) => setPick(e.target.value)}>
           {repos.map((r) => (
             <option key={r.name} value={r.name}>
               {r.name}
             </option>
           ))}
+          <option value={SPACE_PLACE}>{tr("inbox.launch_space")}</option>
         </select>
       </div>
-      {repos.length === 0 && <p className="ui-field-hint inbox-warn">{tr("inbox.launch_no_repo")}</p>}
-      <Button variant="primary" disabled={!repoName} onClick={launch}>
+      <Button variant="primary" onClick={launch}>
         <Icon name="run" /> {tr("inbox.launch")}
       </Button>
     </div>

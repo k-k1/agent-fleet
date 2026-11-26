@@ -81,6 +81,22 @@ export function planPlace(p: {
   };
 }
 
+// --- spaces as a place ---------------------------------------------------------------------------
+
+// The place picker's value for a space: working copies are named by folder, and none can start
+// with a NUL, so these never collide with one. SPACE_PLACE alone is a new space.
+export const SPACE_PLACE = "\u0000space";
+const SPACE_PLACE_PREFIX = SPACE_PLACE + ":";
+
+/** The picker value for the space in `folder` ("" = a new one). */
+export const spacePlaceValue = (folder: string): string => (folder ? SPACE_PLACE_PREFIX + folder : SPACE_PLACE);
+
+/** The space a picker value stands for (folder "" = a new one), or null for a working copy or home. */
+export function parseSpacePlace(v: string): { folder: string } | null {
+  if (v === SPACE_PLACE) return { folder: "" };
+  return v.startsWith(SPACE_PLACE_PREFIX) ? { folder: v.slice(SPACE_PLACE_PREFIX.length) } : null;
+}
+
 /**
  * The working copies in picker order: each base clone followed by its own worktrees, so a
  * worktree reads as belonging to its parent. A worktree whose parent is not listed goes last.
@@ -109,6 +125,9 @@ export interface AttachLast {
   skipPermissions?: boolean;
   /** The working copy's name; "" = home. */
   repo: string;
+  /** The last place was a space. Only "a new space" is remembered: an existing one may be gone,
+   *  and a summary must not name a place the start would replace. */
+  space?: boolean;
   worktree: boolean;
   imageProvider: string;
   imageModel: string;
@@ -130,6 +149,7 @@ export function readAttachLast(tenant: string): AttachLast | null {
       effort: s(v.effort),
       ...(typeof v.skipPermissions === "boolean" ? { skipPermissions: v.skipPermissions } : {}),
       repo: s(v.repo),
+      ...(v.space === true ? { space: true } : {}),
       worktree: v.worktree !== false,
       imageProvider: s(v.imageProvider),
       imageModel: s(v.imageModel),

@@ -21,8 +21,12 @@ import type { MutableRefObject } from "react";
 //
 // The guard entry carries { afModal: true }; App's drawer popstate logic keys off
 // { drawer: true }, so the two histories don't collide.
+/** What a back handler may answer: "hold" swallows the press and puts the guard entry back, so the
+ *  layer stays open and the next press finds it again (a locked dialog stacked on another one). */
+type BackAnswer = void | "hold";
+
 interface Layer {
-  cb: MutableRefObject<(() => void) | undefined>;
+  cb: MutableRefObject<(() => BackAnswer) | undefined>;
   closedByBack: boolean;
 }
 
@@ -41,11 +45,18 @@ function wire(): void {
     const top = stack[stack.length - 1];
     if (!top) return;
     top.closedByBack = true; // the browser already popped this layer's entry
-    top.cb.current?.();
+    if (top.cb.current?.() === "hold") {
+      // The press is refused: restore the entry it consumed, or the next one would fall through to
+      // the layer below, and then to the page behind the Console.
+      top.closedByBack = false;
+      try {
+        history.pushState({ __af: true, afModal: true }, "");
+      } catch {}
+    }
   });
 }
 
-export function useBackClose(onClose: (() => void) | undefined, active = true): void {
+export function useBackClose(onClose: (() => BackAnswer) | undefined, active = true): void {
   const cb = useRef(onClose);
   cb.current = onClose;
   const on = active && !!onClose;

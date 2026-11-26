@@ -14,6 +14,9 @@ import { useBackClose } from "../lib/backClose.ts";
 import { useFocusTrap } from "../lib/focusTrap.ts";
 import { useBackdropClose } from "../lib/backdropClose.ts";
 
+const swallow = () => {};
+const holdBack = () => "hold" as const;
+
 interface ModalProps {
   title?: ReactNode;
   onClose?: () => void;
@@ -21,6 +24,10 @@ interface ModalProps {
   as?: "div" | "form";
   onSubmit?: (e: FormEvent) => void;
   lockClose?: boolean;
+  /** With `lockClose`, keep this dialog's Escape and back layers (swallowing the keys) instead of
+   * dropping them: dropped, the keys fall to the dialog underneath, which closes with whatever
+   * the locked one was holding. Use it for a dialog stacked on another that must not close. */
+  holdKeys?: boolean;
   /** Disable the throwaway browser-history entry for dialogs that themselves
    * arbitrate layout history (the dirty editor guard). */
   backClose?: boolean;
@@ -34,16 +41,18 @@ export function Modal({
   as = "div",
   onSubmit,
   lockClose = false,
+  holdKeys = false,
   backClose = true,
   children,
 }: ModalProps) {
   const tr = useT();
   // Esc closes (unless an operation is in flight) — layered, so with a confirm
   // dialog open above this modal, Esc peels the confirm first, not both at once.
-  useEscLayer(onClose, !lockClose);
+  const holding = lockClose && holdKeys;
+  useEscLayer(holding ? swallow : onClose, !lockClose || holdKeys);
   // The device/browser back button (and back-swipe) closes the modal too, instead
   // of navigating the page away — same layered peel as Esc.
-  useBackClose(onClose, !lockClose && backClose);
+  useBackClose(holding ? holdBack : onClose, (!lockClose || holdKeys) && backClose);
 
   // On touch devices, undo any child's autoFocus once the panel mounts so opening a
   // dialog doesn't pop the soft keyboard (GBoard) — the user usually reviews/taps

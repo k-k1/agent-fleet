@@ -9,7 +9,7 @@ import type { TeamCloneTarget } from "./tenantLaunchDefaults.ts";
 import { teamCloneHost, teamCloneTargets, teamFirst } from "./tenantLaunchDefaults.ts";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { api, isTransientErr } from "../../core/api/client.ts";
+import { api } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -35,7 +35,8 @@ import { deriveRepoName } from "./reponame.ts";
 import { useFoldValue } from "../../lib/useFold.ts";
 import { HubComposer } from "./HubComposer.tsx";
 import { SpaceLaunchForm } from "./LaunchModal.tsx";
-import { spacesOwner, useSpacesStore } from "../spaces/store.ts";
+import { useSpaceSupport } from "../spaces/useSpaceSupport.ts";
+import { SpaceSupportHint } from "../spaces/SpaceSupportHint.tsx";
 import type { LaunchAccess, LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import type { SharedDraft } from "./hubDraft.ts";
 
@@ -72,10 +73,6 @@ type Stage = "place" | "clone" | "newdir" | "ssm";
 type Section = "space" | "repo" | "other";
 /** The open section, per user and tenant like the rail's folds; space the very first time. */
 const SECTION_KEY = "af-start-section";
-
-/** Whether this workspace's Agent can start a session in a space: an older one ignores the
- *  field and would start in home instead (#4978), so the hub asks GET /api/spaces first. */
-type SpaceSupport = "checking" | "yes" | "no" | "failed";
 
 function HubSection({ open, icon, label, disabled, onOpen, children }: { open: boolean; icon: string; label: string; disabled: boolean; onOpen: () => void; children: ReactNode }) {
   return (
@@ -116,36 +113,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
   };
   const [repoQuery, setRepoQuery] = useState("");
   const [ssmProfiles, setSsmProfiles] = useState<SsmProfile[] | null>(null);
-  const [spaceSupport, setSpaceSupport] = useState<SpaceSupport>("checking");
-  const [spaceProbe, setSpaceProbe] = useState(0);
-  // A switch of workspace makes the answer for the old one meaningless: ask again.
-  const spacesFrom = spacesOwner();
-  useEffect(() => {
-    let alive = true;
-    setSpaceSupport("checking");
-    const ticket = useSpacesStore.getState().begin();
-    api("api/spaces")
-      .then((d) => {
-        if (!alive) return;
-        if (d && !d.error && Array.isArray(d.spaces)) {
-          setSpaceSupport("yes");
-          // The same answer is the place chip's list: the hub asks the Agent once, and "Check
-          // again" refreshes both.
-          // Superseded meanwhile (a switch of workspace clears the store after this request began,
-          // a later refresh started): the list is read again rather than left empty under a
-          // support answer that says "yes".
-          if (!useSpacesStore.getState().adopt(ticket, d)) void useSpacesStore.getState().refresh();
-        }
-        // Only "no such route" means an Agent without spaces; anything else may pass. A plain-text
-        // 404 / 405 (the Agent's mux) arrives as http_404 / http_405 with no status.
-        else if (d?.error && !isTransientErr(d) && (d.error.status === 404 || d.error.status === 405 || d.error.code === "http_404" || d.error.code === "http_405")) setSpaceSupport("no");
-        else setSpaceSupport("failed");
-      })
-      .catch(() => alive && setSpaceSupport("failed"));
-    return () => {
-      alive = false;
-    };
-  }, [spaceProbe, spacesFrom]);
+  const { support: spaceSupport, recheck: recheckSpaces } = useSpaceSupport();
   // The composer's send key launches the space form below it.
   const spaceSubmit = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -303,19 +271,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
         <div className="ui-modal-body start-hub">
           <HubSection open={section === "space"} disabled={pickPending} icon="folder-library" label={tr("start.sec_space")} onOpen={() => openSection("space")}>
             <HubComposer draft={draft} busy={busy} onSubmit={() => spaceSubmit.current?.()} />
-            {spaceSupport !== "yes" && (
-              <span className={"ui-field-hint" + (spaceSupport === "checking" ? "" : " ui-field-hint--warn")} role="status">
-                {tr(spaceSupport === "checking" ? "start.space_checking" : spaceSupport === "no" ? "start.space_unsupported" : "start.space_check_failed")}
-                {spaceSupport === "failed" && (
-                  <>
-                    {" "}
-                    <button type="button" className="linklike" onClick={() => setSpaceProbe((n) => n + 1)}>
-                      {tr("start.space_check_again")}
-                    </button>
-                  </>
-                )}
-              </span>
-            )}
+            <SpaceSupportHint support={spaceSupport} onRecheck={recheckSpaces} />
             <SpaceLaunchForm
               kinds={kinds}
               access={access}

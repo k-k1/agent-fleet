@@ -17,7 +17,19 @@ vi.mock("../../core/api/client.ts", () => ({
   rel: (p: string) => p,
 }));
 
-import { ItemCard, inboxErrorText } from "./InboxModal.tsx";
+// The space dialog is loaded on first use and is tested on its own (SpaceLaunchModal.dom.test.tsx);
+// here it only has to open with the request as its prompt.
+let spaceModalProps: { prompt: string; inboxItemId: string; onClose: () => void } | null = null;
+vi.mock("../repos/SpaceLaunchModal.tsx", () => ({
+  SpaceLaunchModal: (p: { prompt: string; inboxItemId: string; onClose: () => void }) => {
+    spaceModalProps = p;
+    return <div data-testid="space-modal">{p.prompt}</div>;
+  },
+}));
+
+import { ItemCard, SpaceLaunchHost, inboxErrorText } from "./InboxModal.tsx";
+import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
+import { useSpaceLaunch } from "./spaceLaunch.ts";
 import type { InboxItem } from "./store.ts";
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 
@@ -56,6 +68,7 @@ async function render(item: InboxItem) {
         <ul>
           <ItemCard item={item} />
         </ul>
+        <SpaceLaunchHost />
       </ToastProvider>,
     );
   });
@@ -71,6 +84,10 @@ afterEach(() => {
   host = null;
   api.mockReset();
   apiJSON.mockReset();
+  spaceModalProps = null;
+  useLaunchSeed.getState().clear();
+  useLaunchTarget.getState().clear();
+  useReposStore.setState({ repos: [] });
 });
 
 describe("ItemCard", () => {
@@ -170,3 +187,100 @@ describe("inboxErrorText", () => {
     expect(inboxErrorText(tr as never, { code: "inbox_invalid_recipient", message: "" })).toBe("inbox_invalid_recipient");
   });
 });
+
+describe("the assignee's launch", () => {
+  const mine = { ...base, state: "claimed" as const, canClaim: false, delivery: "read" as const, assignedToMe: true, assignee: { userKey: "me", email: "me@example.com", removed: false } };
+  const select = () => document.querySelector<HTMLSelectElement>(".inbox-launch select")!;
+  const launchBtn = () => document.querySelector<HTMLButtonElement>(".inbox-launch .ui-btn-primary")!;
+  async function open(repos: { name: string; path: string }[]) {
+    useReposStore.setState({ repos: repos as never });
+    await render(mine);
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(".inbox-card-head")!.click();
+    });
+  }
+  async function pick(el: HTMLSelectElement, label: string) {
+    const opt = [...el.options].find((o) => o.text.includes(label))!;
+    await act(async () => {
+      el.value = opt.value;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  it("a member without working copies is offered a space, by default, and can start", async () => {
+    await open([]);
+    expect(select().selectedOptions[0].text).toMatch(/スペース|space/i);
+    expect(launchBtn().disabled).toBe(false);
+    expect(document.querySelector(".inbox-warn")).toBeNull();
+    await act(async () => launchBtn().click());
+    expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe(base.body);
+    // The request travels as props, so the space launch goes through the request route and the
+    // global seed (which another launch may read) is never written.
+    expect(spaceModalProps?.inboxItemId).toBe("item-1");
+    expect(useLaunchSeed.getState().inboxItemId).toBe("");
+    expect(useLaunchSeed.getState().prompt).toBe("");
+    expect(useLaunchTarget.getState().target).toBeNull();
+  });
+
+  it("keeps the working copy as the default and offers the space beside it", async () => {
+    await open([{ name: "app", path: "/home/dev/repos/app" }]);
+    expect(select().selectedOptions[0].text).toBe("app");
+    await act(async () => launchBtn().click());
+    expect(useLaunchTarget.getState().target?.name).toBe("app");
+    expect(useLaunchSeed.getState().inboxItemId).toBe("item-1");
+    expect(document.querySelector("[data-testid=space-modal]")).toBeNull();
+  });
+
+  it("starts in a space when that is picked over a working copy", async () => {
+    await open([{ name: "app", path: "/home/dev/repos/app" }]);
+    await pick(select(), "app");
+    await pick(select(), spaceOptionText());
+    await act(async () => launchBtn().click());
+    expect(document.querySelector("[data-testid=space-modal]")).not.toBeNull();
+    expect(useLaunchTarget.getState().target).toBeNull();
+  });
+
+  it("keeps the space dialog (and what is typed in it) when the request's card goes away", async () => {
+    await open([]);
+    await act(async () => launchBtn().click());
+    expect(document.querySelector("[data-testid=space-modal]")).not.toBeNull();
+    // The sender withdrew it: the card is gone from the list, the dialog is not.
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ul />
+          <SpaceLaunchHost />
+        </ToastProvider>,
+      );
+    });
+    expect(document.querySelector(".inbox-launch")).toBeNull();
+    expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe(base.body);
+  });
+
+  it("a late completion of an earlier launch does not close the dialog opened for another request", async () => {
+    await open([]);
+    await act(async () => launchBtn().click());
+    const lateCloseOfA = spaceModalProps!.onClose;
+    // The inbox was replaced (tenant switch) while A's create was out; the member opens request B.
+    await act(async () => root!.unmount());
+    host!.remove();
+    await open([]);
+    useSpaceLaunch.getState().open({ id: "item-2", body: "request B" });
+    await act(async () => {});
+    expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe("request B");
+    await act(async () => lateCloseOfA());
+    expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe("request B");
+  });
+
+  it("closes the space dialog without touching the seed", async () => {
+    await open([]);
+    await act(async () => launchBtn().click());
+    await act(async () => spaceModalProps!.onClose());
+    expect(document.querySelector("[data-testid=space-modal]")).toBeNull();
+    expect(useLaunchSeed.getState().inboxItemId).toBe("");
+  });
+});
+
+function spaceOptionText(): string {
+  return [...document.querySelectorAll<HTMLOptionElement>(".inbox-launch option")].find((o) => /スペース|space/i.test(o.text))!.text;
+}

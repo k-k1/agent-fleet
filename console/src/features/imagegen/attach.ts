@@ -21,6 +21,8 @@ export interface AttachResult {
   studioId: string | null;
   session?: string;
   error?: string;
+  /** The Agent refused the space (removed, or an agent moved in): the place must not be sent again. */
+  spaceRefused?: boolean;
 }
 
 export async function attachAgent(p: {
@@ -52,7 +54,8 @@ export async function attachAgent(p: {
     }
     // /halt, not /stop: /stop deletes the session (to the trash, ADR 0101) —
     // while switching agents only ends this one's turn at the studio. Halted, it stays resumable
-    // (the Console's own stop button is the same call).
+    // (the Console's own stop button is the same call). Before the create, not after: a session
+    // limit counts the old session until it is halted.
     void raw(`api/sessions/${encodeURIComponent(p.replacing)}/halt`, { method: "POST" }).catch(() => undefined);
   }
   const o = p.opts;
@@ -84,6 +87,9 @@ export async function attachAgent(p: {
   if (o.effort) body.effort = o.effort;
   if (typeof o.skipPermissions === "boolean") body.skip_permissions = o.skipPermissions;
   if (o.subdir) body.subdir = o.subdir;
+  // A space names the directory in place of dir (which stays ""), as in the Start hub's launch: the
+  // Agent makes or looks up ~/spaces/<folder>, and refuses the field together with dir or a worktree.
+  if (o.space) body.space = o.space.folder ? { folder: o.space.folder } : { name: "" };
   if (o.worktree) {
     body.worktree = true;
     if (o.base) body.branch = o.base;
@@ -96,7 +102,14 @@ export async function attachAgent(p: {
   } catch {
     return { studioId, error: t("err.network") };
   }
-  if (!res || res.error || !res.name) return { studioId, error: res?.error ? errDetail(res.error) : t("imggen.attach_failed") };
+  if (!res || res.error || !res.name) {
+    const code = res?.error && typeof res.error === "object" ? (res.error as { code?: string }).code : "";
+    return {
+      studioId,
+      error: res?.error ? errDetail(res.error) : t("imggen.attach_failed"),
+      ...(o.space && (code === "space_not_found" || code === "space_busy") ? { spaceRefused: true } : {}),
+    };
+  }
   // The create just named the worktree's creator; a repo list read before it still carries the
   // "created, no session" placeholder until the next poll.
   if (o.worktree) void useReposStore.getState().refresh();
