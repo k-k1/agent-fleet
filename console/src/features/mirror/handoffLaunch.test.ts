@@ -54,4 +54,29 @@ describe("handoffLaunchTarget", () => {
     const t = handoffLaunchTarget(sess({ repo: "ghost", dir: "/home/dev/repos/ghost", branch: "main" }), [], false);
     expect(t).toEqual({ repo: { name: "ghost", path: "/home/dev/repos/ghost", branch: "main", worktree: undefined } });
   });
+
+  // A space is never a row of the repos rail. Built from the session alone it would pass for a
+  // git working copy (no vcs) and the launch dialog would offer a worktree and a branch in it.
+  describe("a session running in a space", () => {
+    const inSpace = (o: Partial<Session> = {}) => sess({ space: "research-aaa", dir: "/home/dev/spaces/research-aaa", ...o });
+
+    it("targets the space by its folder and carries nothing a repository dialog could read", () => {
+      const t = handoffLaunchTarget(inSpace(), [GIT], false);
+      expect(t).toEqual({ space: "research-aaa", dir: "/home/dev/spaces/research-aaa" });
+      expect("repo" in t).toBe(false);
+    });
+
+    it("stays on the space even when a repository row happens to share its folder name or path", () => {
+      const clash: Repo = { name: "research-aaa", path: "/home/dev/spaces/research-aaa", branch: "main" };
+      expect(handoffLaunchTarget(inSpace({ repo: "research-aaa" }), [clash], false)).toMatchObject({ space: "research-aaa" });
+    });
+
+    it("ignores the new-worktree opt-in: a space has no parent clone to branch from", () => {
+      expect(handoffLaunchTarget(inSpace({ worktree: true }), [GIT, WT], true)).toMatchObject({ space: "research-aaa" });
+    });
+
+    it("needs no directory to name the space", () => {
+      expect(handoffLaunchTarget(inSpace({ dir: undefined }), [], false)).toEqual({ space: "research-aaa", dir: "" });
+    });
+  });
 });

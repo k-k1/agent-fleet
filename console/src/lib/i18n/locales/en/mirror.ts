@@ -20,6 +20,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.handoff_intro_launched": "A session was already started from this handoff. It is kept here so you can re-read or reuse it. Discard it when you no longer need it.",
   "mirror.handoff_discard": "Discard",
   "mirror.handoff_no_dir": "This session's working folder is unknown, so its handoff cannot be launched.",
+  "mirror.launch_space_gone": "This session's space no longer exists, so nothing was started from it. Nothing was changed.",
   "mirror.handoff_new_worktree": "Start in a new worktree (in this workspace; only committed work carries over)",
   "mirror.handoff_no_parent": "This session's base working copy is unknown, so a new worktree can't be launched.",
   "mirror.handoff_save_failed": "Couldn't save the handoff proposal: {msg}",

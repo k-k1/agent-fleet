@@ -13,7 +13,8 @@ let launchKinds = ["claude"];
 vi.mock("./useRepoRail.ts", () => ({
   useRepoRailContext: () => ({ access: { kinds: { get: (k: string) => ({ kind: k }), has: () => true }, noRoute: false, allOff: false, refresh: () => {} }, launchKinds, connsSettling: false, claudeExpired: false }),
 }));
-vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
+const markHandoffLaunched = vi.fn();
+vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: (...a: unknown[]) => markHandoffLaunched(...a) }));
 
 const apiGet = vi.fn(async (_path: string): Promise<unknown> => []);
 const apiPost = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({}));
@@ -164,6 +165,58 @@ describe("Start hub — start in a space", () => {
     await typeInto(hubBox(), "古い下書き");
     await openHub();
     expect(hubBox().value).toBe("");
+  });
+});
+
+describe("Start hub — seeded by a session that runs in a space", () => {
+  const space = (folder: string, name: string) => ({ folder, name, dir: "/home/dev/spaces/" + folder });
+  const chip = () => document.querySelector<HTMLButtonElement>(".start-place-chip--btn")!;
+  const seedFromSpaceSession = () => {
+    useLaunchSeed.getState().set("引き継ぎの本文", "続き その2", "src", "p-1");
+    useLaunchSeed.getState().setSpace("old-aaa");
+  };
+  beforeEach(() => {
+    markHandoffLaunched.mockClear();
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { spaces: [space("old-aaa", "Budget"), space("new-bbb", "Other")] } : []));
+  });
+
+  it("opens the space section on that space with the handoff text, whatever section was open last", async () => {
+    seedFromSpaceSession();
+    await openHub("repo");
+    expect(head(t("start.sec_space")).getAttribute("aria-expanded")).toBe("true");
+    expect(chip().textContent).toContain("Budget");
+    expect(hubBox().value).toBe("引き継ぎの本文");
+  });
+
+  it("starts the successor in that space by its folder, keeps the handoff lineage and badges the proposal", async () => {
+    seedFromSpaceSession();
+    await openHub();
+    await click(spaceGo());
+    expect(createCalls()).toHaveLength(1);
+    const body = createCalls()[0][2] as Record<string, unknown>;
+    expect(body).toMatchObject({ dir: "", space: { folder: "old-aaa" }, initial_prompt: "引き継ぎの本文", title: "続き その2", origin_session: "src", origin_proposal: "p-1" });
+    for (const k of ["worktree", "branch", "new_branch", "subdir"]) expect(body).not.toHaveProperty(k);
+    expect(markHandoffLaunched).toHaveBeenCalledWith("src", "p-1");
+  });
+
+  it("does not badge the proposal when the launch failed", async () => {
+    seedFromSpaceSession();
+    apiPost.mockImplementation(async (...a: unknown[]) => (a[0] === "api/sessions" ? { error: { code: "runtime_failed", message: "boom" } } : {}));
+    await openHub();
+    await click(spaceGo());
+    expect(markHandoffLaunched).not.toHaveBeenCalled();
+  });
+
+  it("leaves the remembered section alone and does not carry the space into the next opening", async () => {
+    seedFromSpaceSession();
+    await openHub("repo");
+    await click(head(t("start.sec_repo")));
+    expect(head(t("start.sec_repo")).getAttribute("aria-expanded")).toBe("true"); // the member's own pick wins from here
+    const close = document.querySelector<HTMLButtonElement>(`button[aria-label="${t("ui.close")}"]`)!;
+    await click(close);
+    expect(useLaunchSeed.getState().space).toBe("");
+    await openHub();
+    expect(chip().textContent).toContain(t("start.place_new_space"));
   });
 });
 

@@ -59,6 +59,10 @@ interface StartModalProps {
   /** "Launch an agent at home" was picked — the host opens the start-work dialog in its
    * repo-less (home) form on top of this hub. */
   onPickHome: () => void;
+  /** A launch seeded by a session that runs in a space opens on that space (its folder) with the
+   *  title the seed proposed (the title only rides along with a space; "" opens as usual). */
+  seedSpace?: string;
+  seedTitle?: string;
 }
 
 type Stage = "place" | "clone" | "newdir" | "ssm";
@@ -84,7 +88,7 @@ function HubSection({ open, icon, label, disabled, onOpen, children }: { open: b
   );
 }
 
-export function StartModal({ kinds, access, claudeExpired, settling, draft, onLaunchSpace, onClose, onPickRepo, onPickHome, pickPending = false }: StartModalProps) {
+export function StartModal({ kinds, access, claudeExpired, settling, draft, onLaunchSpace, onClose, onPickRepo, onPickHome, pickPending = false, seedSpace = "", seedTitle = "" }: StartModalProps) {
   useKindCatalogVersion(); // effort / start-mode rows and the driver sent depend on the catalog's facts
   const toast = useToast();
   const tr = useT();
@@ -100,7 +104,14 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
 
   // --- place: the accordion (space / repository / other) ---
   const [storedSection, setSection] = useFoldValue(SECTION_KEY);
-  const section: Section = storedSection === "repo" || storedSection === "other" ? storedSection : "space";
+  // A space seeded by the launch (a handoff from a space session) opens the space section whatever
+  // the remembered one is, until the member opens another; that choice is not written over theirs.
+  const [pinSpace, setPinSpace] = useState(!!seedSpace);
+  const section: Section = pinSpace ? "space" : storedSection === "repo" || storedSection === "other" ? storedSection : "space";
+  const openSection = (k: Section) => {
+    setPinSpace(false);
+    setSection(k);
+  };
   const [repoQuery, setRepoQuery] = useState("");
   const [ssmProfiles, setSsmProfiles] = useState<SsmProfile[] | null>(null);
   const [spaceSupport, setSpaceSupport] = useState<SpaceSupport>("checking");
@@ -288,7 +299,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
     >
       {stage === "place" && (
         <div className="ui-modal-body start-hub">
-          <HubSection open={section === "space"} disabled={pickPending} icon="folder-library" label={tr("start.sec_space")} onOpen={() => setSection("space")}>
+          <HubSection open={section === "space"} disabled={pickPending} icon="folder-library" label={tr("start.sec_space")} onOpen={() => openSection("space")}>
             <HubComposer draft={draft} busy={busy} onSubmit={() => spaceSubmit.current?.()} />
             {spaceSupport !== "yes" && (
               <span className={"ui-field-hint" + (spaceSupport === "checking" ? "" : " ui-field-hint--warn")} role="status">
@@ -313,11 +324,13 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               setBusy={setBusy}
               launchBlocked={spaceSupport !== "yes" || pickPending}
               submitRef={spaceSubmit}
+              initialSpaceFolder={seedSpace || undefined}
+              initialTitle={(seedSpace && seedTitle) || undefined}
               onClose={onClose}
               onLaunch={onLaunchSpace}
             />
           </HubSection>
-          <HubSection open={section === "repo"} disabled={pickPending} icon="repo" label={tr("start.sec_repo")} onOpen={() => setSection("repo")}>
+          <HubSection open={section === "repo"} disabled={pickPending} icon="repo" label={tr("start.sec_repo")} onOpen={() => openSection("repo")}>
             <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_repo")} />
             <div className="ui-field start-repos">
               <label className="ui-field-label" htmlFor="start-repo-search">{tr("start.repo_launch_label")}</label>
@@ -344,7 +357,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               </div>
             </div>
           </HubSection>
-          <HubSection open={section === "other"} disabled={pickPending} icon="ellipsis" label={tr("start.sec_other")} onOpen={() => setSection("other")}>
+          <HubSection open={section === "other"} disabled={pickPending} icon="ellipsis" label={tr("start.sec_other")} onOpen={() => openSection("other")}>
             <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_other")} />
             <div className="start-list">
               {kinds.length > 0 && (

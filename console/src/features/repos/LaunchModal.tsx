@@ -286,6 +286,8 @@ interface FormExtras {
   launchBlocked?: boolean;
   /** Set to this form's launch, guarded like its button, for a composer outside the form. */
   submitRef?: MutableRefObject<(() => void) | null>;
+  /** The existing space (its folder) the space form opens on; "" or absent starts a new one. */
+  initialSpaceFolder?: string;
 }
 
 /** What the Start hub hands to the space form. */
@@ -297,6 +299,8 @@ export interface SpaceLaunchProps extends FormExtras {
   shared: SharedDraft;
   onClose: () => void;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
+  /** A title proposed by the session this launch continues (a handoff's). */
+  initialTitle?: string;
 }
 
 /** SpaceLaunchForm is the launch form in its space form, for the Start hub. */
@@ -320,7 +324,7 @@ function useNarrowLaunchLabel(): boolean {
   return narrow;
 }
 
-function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef }: LaunchModalProps & FormExtras) {
+function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef, initialSpaceFolder }: LaunchModalProps & FormExtras) {
   const settings = useSettings();
   // Neither home nor a space has a working copy: no templates file, skills, subdir or worktree.
   const repoLess = home || space;
@@ -507,7 +511,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // A new space's display name; "" lets the Agent name the folder alone.
   const [spaceName, setSpaceName] = useState("");
   // The existing space the launch runs in (its folder); "" starts a new one.
-  const [spaceFolder, setSpaceFolder] = useState("");
+  const [spaceFolder, setSpaceFolder] = useState(initialSpaceFolder ?? "");
   // The picked space was removed since the list was read: the launch stops until another place is
   // chosen, and the draft stays as it is.
   // A pick the Agent itself refused as unknown stays refused until another place is chosen.

@@ -7,7 +7,8 @@ import type { useToast } from "../../../ui/ToastProvider.tsx";
 import { dismissToast } from "../../../ui/toast.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../../repos/store.ts";
-import { handoffLaunchTarget } from "../handoffLaunch.ts";
+import { handoffLaunchTarget, targetDir } from "../handoffLaunch.ts";
+import { openSpaceLaunch, spaceStillThere } from "../spaceLaunch.ts";
 import { discardCarriedAfterReview } from "../carriedPlanReview.ts";
 import { deliverPlanComments, planKey } from "../planComments.ts";
 import {
@@ -162,19 +163,25 @@ export function usePlanActions({
       toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
       return;
     }
+    if ("space" in target && !(await spaceStillThere(target.space))) {
+      toast(tr("mirror.launch_space_gone"));
+      return;
+    }
     markRejected(plan, true); // optimistic "rejected" badge; planOutcome reconciles it
     wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
     await sendInterrupt();
     // Only the prompt and the title: the lineage fields belong to a handoff PROPOSAL, and
     // StartHost would try to badge one that does not exist.
     useLaunchSeed.getState().set(
-      reviewPrompt({ parent: session, path: res.path, dir: target.repo.path || "" }),
+      reviewPrompt({ parent: session, path: res.path, dir: targetDir(target) }),
       reviewTitle(planTitle(plan)),
     );
     useLaunchSeed.getState().setOnLaunched(rememberOnLaunch(res));
     // inPlace: the reviewer reads the working copy this plan is about, uncommitted work
     // included. A worktree would show it the base instead — the dialog still offers one.
-    useLaunchTarget.getState().open(target.repo, "", true);
+    // A space session's reviewer starts in that same space.
+    if ("space" in target) openSpaceLaunch(target.space);
+    else useLaunchTarget.getState().open(target.repo, "", true);
   };
 
   // One "review again" at a time per card: a press holds this from before its first await until
@@ -303,8 +310,12 @@ export function usePlanActions({
       toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
       return;
     }
+    if ("space" in target && !(await spaceStillThere(target.space))) {
+      toast(tr("mirror.launch_space_gone"));
+      return;
+    }
     useLaunchSeed.getState().set(
-      reviewPrompt({ parent: session, path: res.path, dir: target.repo.path || "" }),
+      reviewPrompt({ parent: session, path: res.path, dir: targetDir(target) }),
       reviewTitle(planTitle(plan)),
     );
     const discard = discardCarriedAfterReview({ session, setCarried, toast });
@@ -313,7 +324,8 @@ export function usePlanActions({
       remember(name);
       discard();
     });
-    useLaunchTarget.getState().open(target.repo, "", true);
+    if ("space" in target) openSpaceLaunch(target.space);
+    else useLaunchTarget.getState().open(target.repo, "", true);
   };
 
   // Why plan comments cannot be sent ("" = they can). The composer disappears entirely while

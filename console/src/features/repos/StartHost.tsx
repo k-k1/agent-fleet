@@ -40,6 +40,7 @@ export function StartHost() {
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
+  const seedSpace = useLaunchSeed((s) => s.space);
   // A launch that came from a work item (docs/log/80). The ledger is written only AFTER the
   // launch succeeded.
   const seedWorkItem = useLaunchSeed((s) => s.workItem);
@@ -104,10 +105,17 @@ export function StartHost() {
           onLaunchSpace={async (o) => {
             // dir "" with a space: the Agent makes ~/spaces/<folder> and starts the session there.
             const r = await startWork({ dir: "", repo: "" }, o);
-            // A memo that seeded the draft is done with once its text reached a session.
-            if (r.ok) finishSeed(r.name || "");
+            if (r.ok) {
+              // Seeded by a handoff proposal (from a session in a space): badge it as launched now
+              // that a session really exists, as the repository dialog's success path does.
+              if (seedHandoff && seedHandoffId) void markHandoffLaunched(seedHandoff, seedHandoffId);
+              // A memo that seeded the draft is done with once its text reached a session.
+              finishSeed(r.name || "");
+            }
             return r;
           }}
+          seedSpace={seedSpace}
+          seedTitle={seedTitle}
           onClose={() => {
             hubGen.current++;
             setShow(false);

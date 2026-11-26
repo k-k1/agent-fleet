@@ -19,6 +19,7 @@ import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts"
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import { handoffLaunchTarget } from "./handoffLaunch.ts";
+import { openSpaceLaunch, spaceStillThere } from "./spaceLaunch.ts";
 import { HandoffOfferModal } from "../sharing/HandoffOfferModal.tsx";
 import { offerForSession, recipientLabel, useHandoffStore } from "../sharing/handoffStore.ts";
 import type { Session } from "../../types/session.ts";
@@ -230,6 +231,15 @@ export function HandoffProposal({
     const target = handoffLaunchTarget(sessionMeta, repos, newWorktree);
     if ("error" in target) {
       toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
+      return;
+    }
+    if ("space" in target) {
+      if (!(await spaceStillThere(target.space))) {
+        toast(tr("mirror.launch_space_gone"));
+        return;
+      }
+      useLaunchSeed.getState().set(proposal.prompt, proposal.title, session, proposal.id);
+      openSpaceLaunch(target.space);
       return;
     }
     const repo = target.repo;
