@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // memoTools are the memo queue, which lives in the CP store, not the Agent. list_memos, add_memo
@@ -225,15 +227,20 @@ func memoTools() []toolSpec {
 					return mcpToolErr(req.ID, "id（メモ id）が必要です")
 				}
 				// As on a create, the caller is this server's own session, never an argument. It
-				// only picks the bucket a named repo maps to, so it is sent with a move to one alone:
-				// any other edit goes through without the session being read.
+				// only decides whether a bare name means the caller's space (memorelay.NeedsCaller),
+				// so it is sent with such a move alone: any other edit goes through without it.
 				path := "/memos/" + url.PathEscape(a.ID)
-				if selfReportOnly() && memoPatchNamesRepo(p.Args) {
+				if selfReportOnly() && memorelay.NeedsCaller(memoPatchRepo(p.Args)) {
 					self, err := mcpOwningSession()
-					if err != nil {
+					switch {
+					case err == nil:
+						path += "?from=" + url.QueryEscape(self)
+					case memoCwdSpace() != "":
+						// Some session in a space, but not which: the name could be that space or a
+						// repository, and a guess could run the work in the wrong one.
 						return mcpToolErr(req.ID, err.Error())
 					}
-					path += "?from=" + url.QueryEscape(self)
+					// Not in a space: no caller here can mean a space, so the name is a repository's.
 				}
 				out, err := agentDoTimeout(http.MethodPatch, path, memoArgsObject(p.Args), memoAgentTimeout)
 				if err != nil {
@@ -659,12 +666,22 @@ func memoCreateBody(from string, args json.RawMessage) ([]byte, error) {
 	return json.Marshal(in)
 }
 
-// memoPatchNamesRepo reports whether update_memo's arguments move the memo to a named bucket.
-func memoPatchNamesRepo(args json.RawMessage) bool {
+// memoPatchRepo is the bucket update_memo's arguments move the memo to, "" when they move nothing.
+func memoPatchRepo(args json.RawMessage) string {
 	var in struct {
-		Repo *string `json:"repo"`
+		Repo string `json:"repo"`
 	}
-	return json.Unmarshal(memoArgsObject(args), &in) == nil && in.Repo != nil && strings.TrimSpace(*in.Repo) != ""
+	_ = json.Unmarshal(memoArgsObject(args), &in)
+	return in.Repo
+}
+
+// memoCwdSpace is the space this MCP process runs in, "" when its directory is none.
+func memoCwdSpace() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return spacex.FolderOf(cwd)
 }
 
 // memoRelayErr is the tool error for a failed relay call. The relay's own "no bridge here"

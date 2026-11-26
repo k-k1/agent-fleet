@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // callTool runs one tools/call through the stdio dispatcher.
@@ -165,30 +166,60 @@ func TestMemoToolsSendTheReference(t *testing.T) {
 }
 
 // update_memo names this server's own session in the query, as add_memo does in its body, so the
-// relay can file a repo the model names under the session's space. Only a move to a named bucket
-// carries it: any other edit goes through without the session being read. The model cannot name
-// a session, and the operator names none.
+// relay can tell whether a bare name means the session's space. Only a move to a name that could
+// be a space folder carries it: any other edit, a worktree folder or an explicit spaces/<folder>
+// goes through without the session being read. The model cannot name a session, and the operator
+// names none.
 func TestUpdateMemoNamesTheServersOwnSession(t *testing.T) {
 	agent := setUpMemoSession(t)
-	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"})
-	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "body": "b"})
-	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": ""})
-	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"from=slot01", "", ""}) {
-		t.Errorf("a session's update_memo sent the queries %q, want from=slot01 on the move only", got)
+	for _, args := range []map[string]any{
+		{"id": "m1", "repo": "app"},
+		{"id": "m1", "repo": "app@one"},
+		{"id": "m1", "repo": "spaces/app"},
+		{"id": "m1", "body": "b"},
+		{"id": "m1", "repo": ""},
+	} {
+		callMemoTool(t, "update_memo", args)
+	}
+	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"from=slot01", "", "", "", ""}) {
+		t.Errorf("a session's update_memo sent the queries %q, want from=slot01 on the bare name only", got)
 	}
 	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app", "from": "other"}); !strings.Contains(resp, "unknown argument") {
 		t.Errorf("update_memo with a from argument was not refused: %s", resp)
 	}
 
-	// No session to name: a move is refused before anything is sent, any other edit still goes.
+	// No session to name, outside any space: no caller here can mean a space, so every move and
+	// edit still goes, without from.
 	mcpSourceSession = ""
 	agent = memoFakeAgent(t)
-	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"}); !strings.Contains(resp, "isError") {
-		t.Errorf("a move with no session to name was not refused: %s", resp)
+	for _, args := range []map[string]any{
+		{"id": "m1", "repo": "app"},
+		{"id": "m1", "repo": "app@one"},
+		{"id": "m1", "body": "b"},
+	} {
+		if resp := callMemoTool(t, "update_memo", args); strings.Contains(resp, "isError") {
+			t.Errorf("update_memo %v with no session outside a space was refused: %s", args, resp)
+		}
 	}
+	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"", "", ""}) {
+		t.Errorf("with no session outside a space the queries were %q, want none", got)
+	}
+
+	// No session to name, inside a space: a bare name could be that space or a repository, so it
+	// is refused; a move whose bucket is plain either way still goes.
+	sp, err := spacex.Create("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sp.Dir)
+	agent = memoFakeAgent(t)
+	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": sp.Folder}); !strings.Contains(resp, "isError") {
+		t.Errorf("a bare-name move in a space with no session to name was not refused: %s", resp)
+	}
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "spaces/" + sp.Folder})
 	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "body": "b"})
-	if got := agent.memoCalls(); len(got) != 1 || !strings.HasPrefix(got[0], "PATCH /memos/m1 ") {
-		t.Errorf("with no session to name the Agent got %q, want the body edit alone", got)
+	if got := agent.memoCalls(); len(got) != 2 {
+		t.Errorf("in a space with no session to name the Agent got %q, want the explicit move and the edit", got)
 	}
 
 	oldWrite := writeEnabled()

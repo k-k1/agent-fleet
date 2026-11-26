@@ -89,6 +89,9 @@ func TestUpdateFromASpaceFilesUnderTheSpace(t *testing.T) {
 		// stops neither another edit nor an unfiling.
 		{"/memos/m1?from=nobody", `{"body":"b"}`, `{"body":"b"}`},
 		{"/memos/m1?from=nobody", `{"repo":""}`, `{"repo":""}`},
+		// Nor a move whose bucket does not depend on the caller.
+		{"/memos/m1?from=nobody", `{"repo":"app@one"}`, `{"repo":"app"}`},
+		{"/memos/m1?from=nobody", `{"repo":"spaces/app"}`, `{"repo":"spaces/app"}`},
 	} {
 		cp.bodies = nil
 		rec := serve(HandleUpdate, http.MethodPatch, c.target, c.body)

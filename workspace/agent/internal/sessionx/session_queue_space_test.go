@@ -111,7 +111,8 @@ func TestQueueCreateRefusesADirThatIsNotARepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	alias := filepath.Join(p.home, "repos", "notes")
+	// The link carries the space's own folder name: the same-name case of #5222.
+	alias := filepath.Join(p.home, "repos", sp.Folder)
 	if err := os.Symlink(sp.Dir, alias); err != nil {
 		t.Fatal(err)
 	}
@@ -122,16 +123,25 @@ func TestQueueCreateRefusesADirThatIsNotARepository(t *testing.T) {
 	for i, c := range []struct {
 		dir      string
 		worktree bool
-	}{{"repos/notes", false}, {alias, true}, {nested, false}} {
+		code     string
+	}{
+		{"repos/" + sp.Folder, false, "queue_dir_not_repository"},
+		{alias, true, "queue_dir_not_repository"},
+		{nested, false, "queue_dir_not_repository"},
+		// A dir that cannot be read when it is judged is refused, never let through to a later
+		// read that a link put in place meanwhile would lead into a space.
+		{"repos/absent", false, "bad_dir"},
+		{"repos/absent", true, "bad_dir"},
+	} {
 		key := "q_d-alias-" + string(rune('a'+i))
 		reserveDurable(p, key)
 		body := queueBody(p, []map[string]any{{"id": "m-1", "kind": "text", "body": "x", "provenance": "member"}})
 		body["dir"], body["worktree"], body["idempotency_key"] = c.dir, c.worktree, key
 		rec := p.post(body, "")
-		if rec.Code != http.StatusBadRequest || spaceErrCode(t, rec.Body.Bytes()) != "queue_dir_not_repository" ||
+		if rec.Code != http.StatusBadRequest || spaceErrCode(t, rec.Body.Bytes()) != c.code ||
 			rec.Result().Header.Get(createOutcomeHeader) != "refused" {
-			t.Errorf("queue create in %s (worktree %v) = %d %v %s, want 400 queue_dir_not_repository, refused",
-				c.dir, c.worktree, rec.Code, rec.Result().Header, rec.Body)
+			t.Errorf("queue create in %s (worktree %v) = %d %v %s, want 400 %s, refused",
+				c.dir, c.worktree, rec.Code, rec.Result().Header, rec.Body, c.code)
 		}
 	}
 	if n := len(session.ListMetas()); n != 2 {

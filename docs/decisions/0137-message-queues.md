@@ -1195,18 +1195,20 @@ in `repos/<folder>`, failing with `bad_dir` or, when a repository of that name e
 
 - **Key.** A space's bucket is `spaces/<folder>` in the existing `repo` column. A folder under `~/repos` is one path
   segment and cannot hold `/`, so no repository's bucket can read as a space's, and nothing in the store changes.
-- **Filing.** The Agent's relay files a create (and an `update_memo` move to a named bucket, which now names its
-  session in `?from=`) from a session whose stored place is a space, and that names its own space's folder, under
+- **Filing.** The Agent's relay files a create (and an `update_memo` move to a bare name that could be a space folder,
+  the only move that now names its session in `?from=`) from a session whose stored place is a space, and that names its own space's folder, under
   `spaces/<folder>` (`memorelay.bucketFor`). The name is trimmed first, as the Control Plane trims it. The meta read for
   the attribution is the one the bucket is decided from; a meta written before places were stored falls back to the
   space marker, never the name. `""` stays unfiled; any other name still goes through the worktree mapping of §2. An
-  edit that moves nothing never reads the session, so a meta that cannot be read stops only a move.
+  edit, an unfiling, a worktree folder or an explicit `spaces/<folder>` never reads the session. With no session to name,
+  the MCP process sends such a move without `from` unless it runs in a space, where it refuses rather than guess.
 - **Running.** `memoQueuePlace` (`control-plane/memo_delivery.go`) resolves a repository name only to `repos/<name>` and
   a space bucket only to the Agent's `space: {folder}` target, with no `dir` and the worktree setting ignored. The Agent
   then applies the Console launch's checks (`space_not_found`, "being deleted") after the durable key is claimed, so a
   refusal closes the run as not sent. A bucket that starts with `spaces/` but names no valid folder is refused with
   `memo_queue_bad_repo`. The Agent also refuses a queue's `dir` that exists but is not a repository or a worktree
   directly under `~/repos` (`queue_dir_not_repository`): a symlink there could lead a repository's queue into a space.
+  It checks the dir as named (a dir it cannot read is `bad_dir`) and again the dir the session starts in.
 - **No repository.** A space's category has no settings file: the repository settings routes answer
   `memo_queue_no_repo`, the re-read skips it, and the Console hides the card and the worktree switch.
 - **Rolling update.** The Agent's session list carries `queueSpace: 1`; a space's delivery is sent only to an Agent that

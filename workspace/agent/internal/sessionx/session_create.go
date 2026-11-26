@@ -59,6 +59,8 @@ type createRun struct {
 	// by the sender. A clash it meets later falls back to the throwaway branch instead of
 	// failing the delivery.
 	queueNamed bool
+	// queueRepo is a queue's create that names its repository by dir (queueDirIsRepository).
+	queueRepo bool
 	// defaultFixed is the member's default route when it is one the kind resolves by itself (a
 	// fixed route): the create stays empty and checkRoute requires the judged launch to be on it,
 	// and on its saved connection when it names one.
@@ -504,6 +506,7 @@ func (c *createRun) resolveWorkingCopy() bool {
 			c.req.Dir = made.Dir
 		}
 	}
+	c.queueRepo = c.req.QueueDelivery != nil && c.req.Space == nil && strings.TrimSpace(c.req.Dir) != ""
 	if !c.queueDirIsRepository() {
 		return false
 	}
@@ -655,6 +658,9 @@ func (c *createRun) resolveWorkingCopy() bool {
 		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+c.req.Dir)
 		return false
 	}
+	if !c.queueDirIsRepository() {
+		return false
+	}
 	// Two agents in one working copy (ADR 0073 decision 7). Checked HERE, against the resolved
 	// req.Dir, because that is the directory the session will actually run in: an empty dir
 	// becomes home and a relative one is joined onto home a few lines above, so comparing the
@@ -693,20 +699,23 @@ func (c *createRun) resolveWorkingCopy() bool {
 	return true
 }
 
-// queueDirIsRepository refuses a queue's create whose dir exists but is not a repository or a
-// worktree directly under ~/repos: a queue names a repository by folder, and a symlink or a
-// nested folder there could lead it into a space or anywhere else. A space is named by
-// Space, never by dir; a missing dir is left to the checks below, which name it.
+// queueDirIsRepository refuses a queue's create whose dir is not a repository or a worktree
+// directly under ~/repos: a queue names a repository by folder, and a symlink or a nested folder
+// there could lead it into a space or anywhere else. A space is named by Space, never by dir, and
+// the common bucket sends no dir. It runs on the dir as named and again on the dir the session
+// will start in, so a link put in place while the working copy is resolved is caught too; a dir
+// that cannot be read is refused rather than let through to a later read that may follow a link.
 func (c *createRun) queueDirIsRepository() bool {
-	if c.req.QueueDelivery == nil || c.req.Space != nil || strings.TrimSpace(c.req.Dir) == "" {
+	if !c.queueRepo {
 		return true
 	}
 	dir := c.req.Dir
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(homeDir(), dir)
 	}
-	if _, err := os.Stat(dir); err != nil {
-		return true
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+dir)
+		return false
 	}
 	switch PlaceOf(dir).Kind {
 	case session.PlaceRepo, session.PlaceWorktree:

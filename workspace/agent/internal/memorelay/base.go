@@ -29,12 +29,19 @@ const SpacePrefix = "spaces/"
 // bucket and the check that the session exists cannot see two different reads.
 func bucketFor(m *session.Meta, repo string) string {
 	repo = strings.TrimSpace(repo)
-	if repo != "" && m != nil {
+	if m != nil && NeedsCaller(repo) {
 		if f := spaceOf(*m); f != "" && repo == f {
 			return SpacePrefix + f
 		}
 	}
 	return baseRepo(repo)
+}
+
+// NeedsCaller reports whether the bucket for repo depends on who names it: only a bare name that
+// could be a space folder can mean the caller's own space. "", a worktree folder (app@one) or an
+// explicit spaces/<folder> is the same bucket whoever names it, so no session is read for it.
+func NeedsCaller(repo string) bool {
+	return spacex.ValidFolder(strings.TrimSpace(repo))
 }
 
 // spaceOf is the space folder the session of meta m runs in, "" when it runs in none. The place

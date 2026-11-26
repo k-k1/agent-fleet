@@ -274,8 +274,9 @@ func attribution(from string, m *session.Meta) (producer, origin string) {
 }
 
 // HandleUpdate is PATCH /memos/{id}. The query's from is the calling session, filled by the MCP
-// process from its own identity like a create's From and absent for the operator: it decides only
-// which bucket a repo the model names is filed under (bucketFor).
+// process from its own identity like a create's From, and absent for the operator and for a move
+// whose bucket does not depend on the caller: it decides only which bucket a repo the model names
+// is filed under (bucketFor).
 func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -288,10 +289,11 @@ func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Repo != nil {
-		// Only a move to a named bucket reads the session: an edit of anything else, or an unfiling,
-		// goes through whatever from says, so a meta that cannot be read stops nothing but the move.
+		// Only a move to a name that could be the caller's space reads the session (NeedsCaller):
+		// any other edit goes through whatever from says, so a meta that cannot be read stops
+		// nothing but such a move, which it could otherwise file under a same-named repository.
 		var caller *session.Meta
-		if strings.TrimSpace(*p.Repo) != "" {
+		if NeedsCaller(*p.Repo) {
 			var msg string
 			if caller, msg = callerMeta(r.URL.Query().Get("from")); msg != "" {
 				httpx.WriteErr(w, http.StatusBadRequest, "bad_from", msg)
