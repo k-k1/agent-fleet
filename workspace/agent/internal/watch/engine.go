@@ -1173,6 +1173,9 @@ func (e *Engine) matchLocked(id SubjectID, events []Event) {
 			if !selects(s.Types, ev.Type) || !TokenOK(ev.Type) {
 				continue
 			}
+			if !ev.Occurred.IsZero() && !ev.Occurred.After(s.Created) {
+				continue // it happened before this subscription was made: history for it
+			}
 			if v, ok := s.Told[ev.Type]; ok && v == ev.Version {
 				continue
 			}

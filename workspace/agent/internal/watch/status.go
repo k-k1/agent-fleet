@@ -65,11 +65,7 @@ const (
 	statusPageTTL = 2 * time.Minute
 	// statusFailTTL keeps a failed read for a short while, so six subjects of one dead page cost one
 	// timeout and not six.
-	statusFailTTL  = 30 * time.Second
-	statusSeenKeep = 7 * 24 * time.Hour
-	statusSeenMax  = 200
-	// statusResFresh is how long after the last read of incidents.json a new subscriber still
-	// trusts the cursor's floor and Seen.
+	statusFailTTL     = 30 * time.Second
 	statusResFresh    = 10 * time.Minute
 	statusMaxBody     = 4 << 20
 	statusMaxComps    = 8
@@ -414,17 +410,6 @@ func (s *Status) Resolve(ctx context.Context, ref, _ string) (Resolved, error) {
 	}
 	seed, _ := json.Marshal(statusCursor{FloorMs: floor})
 	res := Resolved{Subject: SubjectID(subj), URL: SafeURL("https://" + StatusHosts[r.service]), Seed: seed}
-	// What is already resolved is history for this subscription: the newest listed resolution that
-	// the watch would count is told, so the engine suppresses it for this subscription only. The
-	// shared cursor cannot do this per subscriber. A list that cannot be read now leaves it out;
-	// that watch then may be told one old resolution, never miss a new one.
-	if pr, err := s.fetch(ctx, r.service, "/api/v2/incidents.json", validIncidents); err == nil {
-		var list spIncidents
-		_ = json.Unmarshal(pr.body, &list)
-		if id := newestResolvedID(list.Incidents, ids); id != "" {
-			res.Told = map[string]string{EventStatusIncidentResolved: id}
-		}
-	}
 	return res, nil
 }
 
@@ -437,8 +422,8 @@ func (s *Status) SeedCursor(cursor, seed json.RawMessage) json.RawMessage {
 		_ = json.Unmarshal(cursor, &c)
 	}
 	// The first floor stays whatever later subscribers do: moving it up would erase a resolution
-	// that an earlier subscription has not been told yet. A later subscriber is kept from history
-	// by its own Told (see Resolve), not by the shared cursor.
+	// that an earlier subscription has not been told yet. A later subscriber is kept from
+	// history by the event's Occurred time against its own creation time (see matchLocked).
 	if c.FloorMs > 0 {
 		return cursor
 	}
@@ -447,38 +432,6 @@ func (s *Status) SeedCursor(cursor, seed json.RawMessage) json.RawMessage {
 	c.FloorMs = sd.FloorMs
 	out, _ := json.Marshal(c)
 	return out
-}
-
-// newestResolvedID is the id of the newest resolved incident that names a watched component (any,
-// for the whole page), "" when there is none.
-func newestResolvedID(list []spIncident, ids []string) string {
-	var best string
-	var bestMs int64
-	for _, inc := range list {
-		if !statusIDRE.MatchString(inc.ID) || !isResolvedStatus(inc.Status) {
-			continue
-		}
-		t, err := time.Parse(time.RFC3339, inc.ResolvedAt)
-		if err != nil {
-			continue
-		}
-		if len(ids) > 0 {
-			hit := false
-			for _, ic := range inc.Components {
-				if slices.Contains(ids, ic.ID) {
-					hit = true
-					break
-				}
-			}
-			if !hit {
-				continue
-			}
-		}
-		if ms := t.UnixMilli(); best == "" || ms > bestMs || ms == bestMs && inc.ID > best {
-			best, bestMs = inc.ID, ms
-		}
-	}
-	return best
 }
 
 func findComponent(list []spComponent, name string) (spComponent, bool) {
@@ -504,22 +457,15 @@ func wantsStatus(want []string, typ string) bool {
 
 // statusCursor is what a subject keeps between reads. The generations make the versions of the
 // level events: a level that comes back after it went away is a new version, and a level that
-// merely stays is the same one, whatever the page's timestamps do. Seen holds the resolved
-// incidents already reported (pruned to the ones the provider still lists).
-// statusSeen is a resolved incident already reported, kept for statusSeenKeep from its
-// resolution so a listing that drops it for one read does not make it new again.
-type statusSeen struct {
-	ID string `json:"id"`
-	Ms int64  `json:"ms"`
-}
-
+// merely stays is the same one, whatever the page's timestamps do. FloorMs and MarkID are the
+// high-water mark of the resolved incidents already reported.
 type statusCursor struct {
-	FloorMs int64        `json:"floor_ms,omitempty"`
-	Seen    []statusSeen `json:"seen,omitempty"`
-	RecGen  int          `json:"rec_gen,omitempty"`
-	RecHold bool         `json:"rec_hold,omitempty"`
-	DegGen  int          `json:"deg_gen,omitempty"`
-	DegSig  string       `json:"deg_sig,omitempty"`
+	FloorMs int64  `json:"floor_ms,omitempty"` // also the mark: nothing at or before it is news
+	MarkID  string `json:"mark_id,omitempty"`
+	RecGen  int    `json:"rec_gen,omitempty"`
+	RecHold bool   `json:"rec_hold,omitempty"`
+	DegGen  int    `json:"deg_gen,omitempty"`
+	DegSig  string `json:"deg_sig,omitempty"`
 }
 
 func (s *Status) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
@@ -728,29 +674,27 @@ func statusLevelEvents(service string, subject SubjectID, watched []spComponent,
 	return evs
 }
 
-// resolvedIncidentEvent reports the incidents resolved after the floor that are not in Seen yet
-// and name a watched component (any, for the whole page). The version is the newest one's id and
-// the others ride along as data, because the engine keeps one pending event per type: two
-// incidents that first show up in one read are one notice, not one lost.
+// resolvedIncidentEvent reports the newest incident resolved after the high-water mark (first the
+// floor of the first subscription) that names a watched component (any, for the whole page), and
+// moves the mark to it. One event per read: the engine keeps one pending event per type anyway,
+// and a mark in the cursor (not a set of ids) means an incident the provider lists late or drops
+// for one read, or whose time is edited, is never told twice. Occurred is the resolution time, so
+// the engine treats the event as history for a subscription created after it: the cursor is
+// shared and cannot do that per subscriber.
 func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident, ids []string, at time.Time, cur *statusCursor) *Event {
-	type cand struct {
-		inc spIncident
-		ms  int64
-	}
-	seen := map[string]bool{}
-	for _, e := range cur.Seen {
-		seen[e.ID] = true
-	}
-	var cands []cand
-	for _, inc := range list {
-		if !statusIDRE.MatchString(inc.ID) {
+	var best *spIncident
+	var bestMs int64
+	for i := range list {
+		inc := &list[i]
+		if !statusIDRE.MatchString(inc.ID) || !isResolvedStatus(inc.Status) {
 			continue // one broken entry must not hide the others
 		}
-		if !isResolvedStatus(inc.Status) || seen[inc.ID] {
+		t, err := time.Parse(time.RFC3339, inc.ResolvedAt)
+		if err != nil {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, inc.ResolvedAt)
-		if err != nil || t.UnixMilli() <= max(cur.FloorMs, at.Add(-statusSeenKeep).UnixMilli()) {
+		ms := t.UnixMilli()
+		if ms < cur.FloorMs || ms == cur.FloorMs && (cur.MarkID == "" || inc.ID <= cur.MarkID) {
 			continue
 		}
 		if len(ids) > 0 {
@@ -765,53 +709,18 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 				continue
 			}
 		}
-		cands = append(cands, cand{inc, t.UnixMilli()})
-	}
-	// Told incidents are remembered by their resolution time, whether or not the provider keeps
-	// listing them.
-	cutoff := at.Add(-statusSeenKeep).UnixMilli()
-	var keep []statusSeen
-	for _, e := range cur.Seen {
-		if e.Ms >= cutoff {
-			keep = append(keep, e)
+		if best == nil || ms > bestMs || ms == bestMs && inc.ID > best.ID {
+			best, bestMs = inc, ms
 		}
 	}
-	cur.Seen = keep
-	if len(cands) == 0 {
+	if best == nil {
 		return nil
 	}
-	sort.Slice(cands, func(i, j int) bool {
-		if cands[i].ms != cands[j].ms {
-			return cands[i].ms > cands[j].ms
-		}
-		return cands[i].inc.ID > cands[j].inc.ID
-	})
-	// A notice carries a few details (the renderer cuts at 2 KiB). The ones that do not fit are
-	// not marked as told: the next read reports them, so none is lost to the cut.
-	total := len(cands)
-	var data []DataItem
-	used, shown := 0, 0
-	for _, c := range cands {
-		d := DataItem{Text: CleanText(fmt.Sprintf("Incident: %s (status: %s)", c.inc.Name, c.inc.Status), statusDataMax), URL: SafeURL(c.inc.Shortlink)}
-		n := len(dataLine(d))
-		if shown > 0 && (shown >= noticeItemsMax || used+n > noticeDataMax) {
-			break
-		}
-		used += n
-		shown++
-		data = append(data, d)
-		cur.Seen = append(cur.Seen, statusSeen{ID: c.inc.ID, Ms: c.ms})
+	cur.FloorMs, cur.MarkID = bestMs, best.ID
+	return &Event{
+		Source: StatusKind, Subject: subject, Type: EventStatusIncidentResolved, Version: best.ID, At: at,
+		Occurred: time.UnixMilli(bestMs).UTC(),
+		Summary:  fmt.Sprintf("%s status: an incident was resolved.", service),
+		Data:     []DataItem{{Text: CleanText(fmt.Sprintf("Incident: %s (status: %s)", best.Name, best.Status), statusDataMax), URL: SafeURL(best.Shortlink)}},
 	}
-	cands = cands[:shown]
-	if len(cur.Seen) > statusSeenMax {
-		cur.Seen = cur.Seen[len(cur.Seen)-statusSeenMax:]
-	}
-	summary := fmt.Sprintf("%s status: an incident was resolved.", service)
-	if total > 1 {
-		summary = fmt.Sprintf("%s status: %d incidents were resolved.", service, total)
-		if total > len(cands) {
-			summary = fmt.Sprintf("%s status: %d incidents were resolved (%d more not shown).", service, total, total-len(cands))
-		}
-	}
-	return &Event{Source: StatusKind, Subject: subject, Type: EventStatusIncidentResolved, Version: cands[0].inc.ID, At: at, Summary: summary, Data: data}
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -255,8 +254,8 @@ func TestStatusIncidentResolved(t *testing.T) {
 	s, f := newStatusFake(t)
 	f.incidents = map[string]any{"incidents": []any{inc("old", "Old", "resolved", "2026-11-25T01:00:00Z", "aaa1")}}
 	res, _ := s.Resolve(context.Background(), "github:Actions", "")
-	seed := s.SeedCursor(nil, res.Seed)
-	evs, cur := poll(t, s, res.Subject, seed, EventStatusIncidentResolved)
+	cur := s.SeedCursor(nil, res.Seed)
+	evs, cur := poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
 	if len(evs) != 0 {
 		t.Fatalf("history told: %+v", evs)
 	}
@@ -269,33 +268,75 @@ func TestStatusIncidentResolved(t *testing.T) {
 	}}
 	s.pages = nil
 	evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
-	if len(evs) != 1 || evs[0].Version != "new2" || len(evs[0].Data) != 2 || !strings.Contains(evs[0].Summary, "2 incidents") {
-		t.Fatalf("both new incidents must arrive in one notice, newest as the version: %+v", evs)
+	if len(evs) != 1 || evs[0].Version != "new2" || evs[0].Type != EventStatusIncidentResolved || evs[0].Occurred.IsZero() {
+		t.Fatalf("the newest matching resolution, with its time: %+v", evs)
 	}
 	if evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved); len(evs) != 0 {
 		t.Fatalf("told twice: %+v", evs)
 	}
-	// An older incident that the provider lists late is still told, and one whose time is edited
-	// after it was told is not told again.
+	// The provider drops the told one for a read, lists an older one, and brings it back: nothing.
+	f.incidents = map[string]any{"incidents": []any{inc("new1", "Actions down", "resolved", "2026-11-26T03:30:00.250Z", "aaa1")}}
+	s.pages = nil
+	if evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved); len(evs) != 0 {
+		t.Fatalf("an older incident was told after a newer one: %+v", evs)
+	}
 	f.incidents = map[string]any{"incidents": []any{
-		inc("late", "Late", "resolved", "2026-11-26T03:20:00Z", "aaa1"),
-		inc("new1", "Actions down", "resolved", "2026-11-26T03:45:00Z", "aaa1"),
-		inc("new2", "Actions slow", "resolved", "2026-11-26T03:31:00Z", "aaa1"),
+		inc("new2", "Actions slow", "resolved", "2026-11-26T03:45:00Z", "aaa1"), // its time edited later
+		inc("new3", "Actions again", "resolved", "2026-11-26T03:50:00Z", "aaa1"),
 	}}
 	s.pages = nil
 	evs, _ = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
-	if len(evs) != 1 || evs[0].Version != "late" {
-		t.Fatalf("late arrival: %+v", evs)
+	if len(evs) != 1 || evs[0].Version != "new3" {
+		t.Fatalf("%+v", evs)
 	}
 	// Only the types asked for are read.
 	f.hits.Store(0)
 	s.pages = nil
 	poll(t, s, res.Subject, nil, EventStatusRecovered)
-	if f.hits.Load() != 2 { // summary, once for the types and once shared for the component check
-		t.Logf("requests = %d", f.hits.Load())
-	}
-	if f.hits.Load() > 1 {
+	if f.hits.Load() != 1 {
 		t.Fatalf("one URL was read %d times", f.hits.Load())
+	}
+}
+
+// A subject is shared by watches made at different times: through the engine, a later watch is not
+// told what was resolved before it was made, and an earlier one still is.
+func TestStatusEngineKeepsHistoryFromLaterWatches(t *testing.T) {
+	s, f := newStatusFake(t)
+	clk := &clock{t: time.Date(2026, 11, 26, 3, 0, 0, 0, time.UTC)}
+	s.Now = clk.now
+	f.date.Store("Thu, 26 Nov 2026 03:00:00 GMT")
+	sink := &fakeSink{answer: Ready}
+	e := New(&memStore{}, sink, s)
+	e.now = clk.now
+	ctx := context.Background()
+	req := func(owner string) Request {
+		return Request{Owner: owner, Source: StatusKind, Ref: "github:Actions", Types: []string{EventStatusIncidentResolved}}
+	}
+	if _, err := e.Subscribe(ctx, req("a")); err != nil {
+		t.Fatal(err)
+	}
+	// Twelve incidents resolve before b exists, one more after it.
+	var l []any
+	for i := 0; i < 12; i++ {
+		l = append(l, inc(fmt.Sprintf("h%02d", i), "Hist", "resolved", fmt.Sprintf("2026-11-26T03:%02d:00Z", 1+i), "aaa1"))
+	}
+	f.incidents = map[string]any{"incidents": l}
+	clk.add(20 * time.Minute)
+	s.pages = nil
+	f.date.Store("Thu, 26 Nov 2026 03:20:00 GMT")
+	if _, err := e.Subscribe(ctx, req("b")); err != nil {
+		t.Fatal(err)
+	}
+	e.Tick(ctx)
+	if strings.Join(sink.told, ",") != "a:status.incident.resolved:h11" {
+		t.Fatalf("told = %v", sink.told)
+	}
+	f.incidents = map[string]any{"incidents": append(l, inc("fresh", "Fresh", "resolved", "2026-11-26T03:25:00Z", "aaa1"))}
+	clk.add(5 * time.Minute)
+	s.pages = nil
+	e.Tick(ctx)
+	if got := strings.Join(sink.told, ","); got != "a:status.incident.resolved:h11,b:status.incident.resolved:fresh" {
+		t.Fatalf("told = %v", got)
 	}
 }
 
@@ -322,33 +363,6 @@ func TestStatusFloorIsTheSubscribersMoment(t *testing.T) {
 		t.Fatalf("subjects differ: %q %q", again.Subject, res.Subject)
 	}
 	_ = f
-}
-
-func TestStatusLaterSubscriberKeepsEarlierOnesAndGetsNoHistory(t *testing.T) {
-	s, f := newStatusFake(t)
-	// A watches resolutions of Actions from the start.
-	resA, _ := s.Resolve(context.Background(), "github:Actions", "")
-	cur := s.SeedCursor(nil, resA.Seed)
-	if resA.Told != nil {
-		t.Fatalf("nothing resolved yet, Told = %v", resA.Told)
-	}
-	// An incident resolves before A's first poll, and B joins the same subject (recovered only).
-	f.incidents = map[string]any{"incidents": []any{inc("tue", "Tue", "resolved", "2026-11-26T03:30:00Z", "aaa1")}}
-	s.Now = func() time.Time { return time.Date(2026, 11, 26, 5, 0, 0, 0, time.UTC) }
-	f.date.Store("Thu, 26 Nov 2026 05:00:00 GMT")
-	s.pages = nil
-	resB, _ := s.Resolve(context.Background(), "github:Actions", "")
-	if got := s.SeedCursor(cur, resB.Seed); string(got) != string(cur) {
-		t.Fatalf("a later subscriber moved the floor: %s", got)
-	}
-	// A is told; B's own Told holds that same version, so the engine drops it for B only.
-	evs, _ := poll(t, s, resA.Subject, cur, EventStatusIncidentResolved)
-	if len(evs) != 1 || evs[0].Version != "tue" {
-		t.Fatalf("the earlier subscriber lost its resolution: %+v", evs)
-	}
-	if resB.Told[EventStatusIncidentResolved] != "tue" {
-		t.Fatalf("history was not marked told for the later subscriber: %v", resB.Told)
-	}
 }
 
 func TestStatusToldIncidentSurvivesAListingGap(t *testing.T) {
@@ -378,72 +392,6 @@ func TestStatusToldIncidentSurvivesAListingGap(t *testing.T) {
 	list("a", "b")
 	if evs, _ = poll(t, s, res.Subject, cur, EventStatusIncidentResolved); len(evs) != 0 {
 		t.Fatalf("a told incident came back as new: %+v", evs)
-	}
-}
-
-func TestStatusManyResolvedFitTheNoticeAndNoneIsLost(t *testing.T) {
-	s, f := newStatusFake(t)
-	res, _ := s.Resolve(context.Background(), "github", "")
-	cur := s.SeedCursor(nil, res.Seed)
-	var l []any
-	for i := 0; i < 12; i++ {
-		l = append(l, inc(fmt.Sprintf("i%02d", i), fmt.Sprintf("n%02d ", i)+strings.Repeat("long name ", 30), "resolved", fmt.Sprintf("2026-11-26T03:%02d:00Z", 10+i)))
-	}
-	f.incidents = map[string]any{"incidents": l}
-	told := map[string]bool{}
-	for round := 0; round < 4; round++ {
-		s.pages = nil
-		s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 30+round*3, 0, 0, time.UTC) }
-		var evs []Event
-		evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
-		if len(evs) == 0 {
-			break
-		}
-		text := Notice(Subscription{ID: "w1", Until: UntilFirst}, evs[0])
-		for _, d := range evs[0].Data {
-			if !strings.Contains(text, strconv.Quote(d.Text)) {
-				t.Fatalf("a counted incident is missing from the rendered notice:\n%s", text)
-			}
-		}
-		for _, d := range evs[0].Data {
-			told[d.URL] = true
-		}
-	}
-	if len(told) != 12 {
-		t.Fatalf("%d of 12 incidents were ever told", len(told))
-	}
-}
-
-func TestStatusNoticeBudgetCountsLongURLsAndMultibyteTitles(t *testing.T) {
-	s, f := newStatusFake(t)
-	res, _ := s.Resolve(context.Background(), "github", "")
-	cur := s.SeedCursor(nil, res.Seed)
-	var l []any
-	for i := 0; i < 5; i++ {
-		x := inc(fmt.Sprintf("i%d", i), fmt.Sprintf("障害%d ", i)+strings.Repeat("あ", 120), "resolved", fmt.Sprintf("2026-11-26T03:%02d:00Z", 10+i))
-		x["shortlink"] = "https://stspg.io/" + strings.Repeat("a", 470)
-		l = append(l, x)
-	}
-	f.incidents = map[string]any{"incidents": l}
-	told := map[string]bool{}
-	for round := 0; round < 6; round++ {
-		s.pages = nil
-		s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 30+round*3, 0, 0, time.UTC) }
-		var evs []Event
-		evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
-		if len(evs) == 0 {
-			break
-		}
-		text := Notice(Subscription{ID: "w1", Until: UntilDeadline}, evs[0])
-		for _, d := range evs[0].Data {
-			if !strings.Contains(text, strconv.Quote(CleanText(d.Text, noticeTextMax))) {
-				t.Fatalf("an incident marked told is not in the rendered notice:\n%s", text)
-			}
-			told[d.Text] = true
-		}
-	}
-	if len(told) != 5 {
-		t.Fatalf("%d of 5 incidents were ever shown", len(told))
 	}
 }
 
@@ -498,7 +446,7 @@ func TestStatusStarterCancelsLikeAnyWaiter(t *testing.T) {
 	if err != nil || res.Subject == "" {
 		t.Fatalf("%v", err)
 	}
-	if f.hits.Load() != 2 { // the cancelled starter's summary, shared, and the incident list
+	if f.hits.Load() != 1 {
 		t.Fatalf("%d requests", f.hits.Load())
 	}
 	f.delay.Store(0)
