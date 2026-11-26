@@ -6,6 +6,8 @@ package mcpreg
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
@@ -155,7 +157,14 @@ func refreshGrantRes(ctx context.Context, serverID, rejected string) (token, res
 // grantGeneration names one sign-in, not its tokens: a renewal keeps it, signing in again (perhaps
 // as another account) changes it. Nothing secret is in it.
 func grantGeneration(g *secrets.MCPOAuthGrant) string {
-	return g.Issuer + "\n" + g.ClientID + "\n" + strconv.FormatInt(g.ConnectedAt, 10)
+	return g.Issuer + "\n" + g.ClientID + "\n" + strconv.FormatInt(g.ConnectedAt, 10) + "\n" + g.SignInID
+}
+
+// newSignInID is a grant's SignInID.
+func newSignInID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // refreshGrantGen is refreshGrantRes with the generation of the grant the token belongs to, read

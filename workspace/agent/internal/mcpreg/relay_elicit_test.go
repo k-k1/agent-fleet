@@ -1251,3 +1251,200 @@ func TestAcceptsEventStream(t *testing.T) {
 		}
 	}
 }
+
+// Only exactly one JSON object is read for a flagged server; anything else is refused, since a
+// lenient decoder on the server (one that skips a byte-order mark) could still read a call in it.
+func TestElicitRelayRefusesWhatIsNotOneJSONObject(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	cont := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send_mail","requestState":"s","inputResponses":{}}}`
+	for _, body := range []string{"\uFEFF" + cont, "\uFEFF[" + cont + "]", "not json", ""} {
+		resp := e.do(http.MethodPost, relayPath(), strings.NewReader(body), sseHeaders)
+		readAll(t, resp)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%q: status %d", body, resp.StatusCode)
+		}
+	}
+	if up.count() != 0 {
+		t.Fatalf("%d requests reached the server", up.count())
+	}
+}
+
+// An answer whose control members fold together ("result" and "Result") may be read one way by
+// the relay and the other by the CLI: it ends the call, and the CLI sees no confirmation.
+func TestElicitRelayRefusesAmbiguousAnswers(t *testing.T) {
+	ir := `{"resultType":"input_required","inputRequests":{"k":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE"]}}}}}},"requestState":"s"}`
+	done := `{"resultType":"complete","content":[]}`
+	for name, tc := range map[string]struct{ ct, body string }{
+		"json, result and Result":   {"application/json", `{"jsonrpc":"2.0","id":7,"result":` + ir + `,"Result":` + done + `}`},
+		"json, resultType twice":    {"application/json", `{"jsonrpc":"2.0","id":7,"result":{"resultType":"input_required","ResultType":"complete"}}`},
+		"json, a folded resultType": {"application/json", `{"jsonrpc":"2.0","id":7,"result":{"resultType":"complete","ResultType":"input_required","content":[]}}`},
+		"stream, result and Result": {"text/event-stream",
+			"data: " + `{"jsonrpc":"2.0","id":7,"result":` + ir + `,"Result":` + done + `}` + "\n\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetElicitations(t)
+			up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+				w.Header().Set("Content-Type", tc.ct)
+				_, _ = io.WriteString(w, tc.body)
+			})
+			e := newRelayEnv(t, up)
+			flagElicitation(t, ElicitationRelay)
+			res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+			if strings.Contains(res.body, "input_required") || len(PendingElicitations()) != 0 || up.count() != 1 {
+				t.Fatalf("CLI got %q", res.body)
+			}
+		})
+	}
+}
+
+// A first answer that is compressed, or an event stream on an error status, may carry the call's
+// result, so neither is passed through as a plain HTTP error is.
+func TestElicitRelayDoesNotPassMessagesOnAnErrorStatus(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ct, ce string
+		body   string
+		status int // what the CLI must get
+	}{
+		"compressed":   {"text/plain", "gzip", "\x1f\x8b", http.StatusBadGateway},
+		"event stream": {"text/event-stream", "", "data: " + googleInputRequired("7") + "\n\n", http.StatusBadGateway},
+		"plain text":   {"text/plain", "", "server error", http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetElicitations(t)
+			up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+				w.Header().Set("Content-Type", tc.ct)
+				if tc.ce != "" {
+					w.Header().Set("Content-Encoding", tc.ce)
+				}
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, tc.body)
+			})
+			e := newRelayEnv(t, up)
+			flagElicitation(t, ElicitationRelay)
+			res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+			if res.resp.StatusCode != tc.status || strings.Contains(res.body, "input_required") || strings.Contains(res.body, "\x1f\x8b") {
+				t.Fatalf("status %d body %q", res.resp.StatusCode, res.body)
+			}
+		})
+	}
+}
+
+// Two sign-ins in the same second are told apart: the retry is not sent on the second, whether
+// it is found before the retry or by the renewal after the server refused the first's token.
+func TestElicitRelayDoesNotRetryOnASignInOfTheSameSecond(t *testing.T) {
+	signInAgain := func(t *testing.T) {
+		t.Helper()
+		if err := secrets.Update(func(s *secrets.Data) error {
+			s.MCPOAuth[0].SignInID = "another-sign-in"
+			s.MCPOAuth[0].AccessToken = "tok-other-account"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("before the retry", func(t *testing.T) {
+		resetElicitations(t)
+		up := newUpstream(t, jsonAnswer(askThenComplete))
+		e := newRelayEnv(t, up)
+		flagElicitation(t, ElicitationRelay)
+		ch := e.startCall(elicitCallBody, sseHeaders)
+		p := waitPending(t, 1)[0]
+		signInAgain(t)
+		if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+			t.Fatal(err)
+		}
+		if res := waitCall(t, ch); up.count() != 1 || lastMessage(t, res.body)["error"] == nil {
+			t.Fatalf("CLI got %q after %d requests", res.body, up.count())
+		}
+	})
+	t.Run("at the renewal", func(t *testing.T) {
+		resetElicitations(t)
+		up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+			if n == 0 {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, googleInputRequired(reqID(r)))
+				return
+			}
+			signInAgain(t) // the sign-in lands while the retry is out
+			w.WriteHeader(http.StatusUnauthorized)
+		})
+		e := newRelayEnv(t, up)
+		flagElicitation(t, ElicitationRelay)
+		ch := e.startCall(elicitCallBody, sseHeaders)
+		p := waitPending(t, 1)[0]
+		if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+			t.Fatal(err)
+		}
+		if res := waitCall(t, ch); up.count() != 2 || lastMessage(t, res.body)["error"] == nil {
+			t.Fatalf("CLI got %q after %d requests", res.body, up.count())
+		}
+	})
+}
+
+func TestElicitRelayRefusesConstraintsItDoesNotCheck(t *testing.T) {
+	for name, field := range map[string]string{
+		"enum and const":  `{"type":"string","enum":["ALLOW_ONCE","ALLOW_TOOL_ALWAYS"],"const":"ALLOW_ONCE"}`,
+		"a pattern":       `{"type":"string","enum":["ALLOW_ONCE","ALLOW_TOOL_ALWAYS"],"pattern":"^ALLOW_ONCE$"}`,
+		"a folded member": `{"type":"string","enum":["ALLOW_ONCE"],"Enum":["DENY_ONCE"]}`,
+		"an option's own": `{"type":"string","oneOf":[{"const":"ALLOW_ONCE","deprecated":true}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := `{"inputRequests":{"k":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"c":` + field + `}}}}}}`
+			if _, err := parseInputRequired(json.RawMessage(res)); err == nil {
+				t.Fatalf("accepted %s", field)
+			}
+		})
+	}
+	if _, err := parseInputRequired(json.RawMessage(`{"inputRequests":{"k":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["A"]}},"additionalProperties":true}}}}}`)); err == nil {
+		t.Fatal("accepted a schema member the relay does not check")
+	}
+}
+
+// One request or answer must not buy unbounded work: many member names are checked in linear
+// time, and a numeric id is never expanded, however large its exponent.
+func TestElicitRelayParsingStaysCheap(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{`)
+	for i := 0; i < 200000; i++ {
+		fmt.Fprintf(&b, `"k%d":0,`, i)
+	}
+	b.WriteString(`"z":0}}`)
+	start := time.Now()
+	if _, v, _ := readFlagged([]byte(b.String())); v != flaggedPass {
+		t.Fatalf("verdict %v", v)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("200000 names took %v", d)
+	}
+	start = time.Now()
+	if sameJSONID(json.RawMessage(`1e999999999999`), json.RawMessage(`1`)) || sameJSONID(json.RawMessage(strings.Repeat("9", 1<<20)), json.RawMessage(`7`)) {
+		t.Fatal("different ids compared equal")
+	}
+	if !sameJSONID(json.RawMessage(`1e3`), json.RawMessage(`1000`)) || !sameJSONID(json.RawMessage(`10.50`), json.RawMessage(`1.05e1`)) {
+		t.Fatal("equal numbers compared different")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("comparing ids took %v", d)
+	}
+}
+
+// A CLI that takes no event stream gets the call's response alone, as JSON, even when the server
+// streams it.
+func TestElicitRelayAnswersJSONWhenTheServerStreams(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, ": ping\n\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}\n\n")
+		fmt.Fprintf(w, "data: %s\n\n", completeFor(reqID(r)))
+	})
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	res := waitCall(t, e.startCall(elicitCallBody, map[string]string{"Accept": "application/json, text/event-stream;q=0"}))
+	var m map[string]any
+	if err := json.Unmarshal([]byte(res.body), &m); err != nil || res.resp.Header.Get("Content-Type") != "application/json" || fmt.Sprint(m["id"]) != "7" {
+		t.Fatalf("CLI got %q (%s)", res.body, res.resp.Header.Get("Content-Type"))
+	}
+}

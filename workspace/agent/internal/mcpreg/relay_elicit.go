@@ -38,7 +38,6 @@ import (
 	"io"
 	"log"
 	"math"
-	"math/big"
 	"mime"
 	"net/http"
 	"net/url"
@@ -47,6 +46,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // ElicitationRelay is the ServerDef.Elicitation value that has the relay answer form elicitation.
@@ -102,16 +102,12 @@ const (
 // answers form elicitation only, so a "url" capability would invite a request nobody here can
 // answer). For flaggedRefuse the string says why.
 func readFlagged(body []byte) (elicitCall, flaggedVerdict, string) {
-	t := bytes.TrimLeft(body, " \t\r\n")
-	switch {
-	case len(t) == 0 || (t[0] != '{' && t[0] != '['):
-		return elicitCall{}, flaggedPass, "" // not JSON: no server reads it as a request
-	case t[0] == '[':
-		return elicitCall{}, flaggedRefuse, "a batch of requests"
-	}
+	// Anything but exactly one JSON object is refused rather than passed: a lenient decoder on
+	// the server (one that skips a byte-order mark, or takes a batch) could still read it as a
+	// call the relay never looked at.
 	keys, top, ok := objectMembers(body)
 	if !ok {
-		return elicitCall{}, flaggedRefuse, "a request that is not valid JSON"
+		return elicitCall{}, flaggedRefuse, "a request that is not exactly one JSON object"
 	}
 	if foldDuplicate(keys) {
 		return elicitCall{}, flaggedRefuse, "a request with two members of the same name"
@@ -217,14 +213,45 @@ func objectMembers(raw []byte) ([]string, map[string]json.RawMessage, bool) {
 // foldDuplicate reports two names a case-insensitive JSON decoder would take for one (Go's
 // encoding/json folds with Unicode simple folding, as strings.EqualFold does).
 func foldDuplicate(keys []string) bool {
-	for i := range keys {
-		for j := i + 1; j < len(keys); j++ {
-			if strings.EqualFold(keys[i], keys[j]) {
-				return true
+	seen := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		f := foldKey(k)
+		if seen[f] {
+			return true
+		}
+		seen[f] = true
+	}
+	return false
+}
+
+// foldKey maps every rune to the smallest rune of its Unicode simple-folding orbit, so two names
+// have the same key exactly when strings.EqualFold says they are equal.
+func foldKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		m := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < m {
+				m = f
+			}
+		}
+		b.WriteRune(m)
+	}
+	return b.String()
+}
+
+// canonical reports whether every member whose name folds to one of names is spelled exactly so:
+// a decoder that folds names must not find a member the relay did not read.
+func canonical(keys []string, names ...string) bool {
+	for _, k := range keys {
+		for _, n := range names {
+			if strings.EqualFold(k, n) && k != n {
+				return false
 			}
 		}
 	}
-	return false
+	return true
 }
 
 // foldGet finds the member whose name folds to name, with the name as it is written.
@@ -484,6 +511,19 @@ func (o *elicitOut) raw(b []byte) bool {
 	return true
 }
 
+// writeJSON ends a call that is not streaming with one JSON message.
+func (o *elicitOut) writeJSON(msg []byte) {
+	var c bytes.Buffer
+	if json.Compact(&c, msg) != nil {
+		o.fail(errStray)
+		return
+	}
+	o.w.Header().Set("Content-Type", "application/json")
+	o.w.Header().Set("Cache-Control", "no-store")
+	o.w.WriteHeader(http.StatusOK)
+	_, _ = o.w.Write(c.Bytes())
+}
+
 // result ends the call with a JSON-RPC result of the relay's own.
 func (o *elicitOut) result(result json.RawMessage) {
 	msg := rawObject(map[string]json.RawMessage{"jsonrpc": json.RawMessage(`"2.0"`), "id": o.cliID, "result": result})
@@ -562,13 +602,20 @@ const (
 )
 
 // classify reads one server message. A response counts only when its id is the current
-// attempt's; input_required is held only on a 200.
+// attempt's; input_required is held only on a 200. A message whose control members are ambiguous
+// to a decoder that folds names is stray: the CLI might read another member than the relay did.
 func (o *elicitOut) classify(raw []byte, status int) (message, msgKind) {
 	var m message
-	if _, vals, ok := objectMembers(raw); !ok || vals == nil || json.Unmarshal(raw, &m) != nil {
+	keys, vals, ok := objectMembers(raw)
+	if !ok || vals == nil || foldDuplicate(keys) || !canonical(keys, "jsonrpc", "id", "method", "params", "result", "error") {
 		return m, msgStray
 	}
-	if m.Method != "" {
+	m = message{ID: vals["id"], Result: vals["result"], Error: vals["error"], Params: vals["params"]}
+	if raw, has := vals["method"]; has {
+		var isStr bool
+		if m.Method, isStr = jsonString(raw); !isStr || m.Method == "" {
+			return m, msgStray
+		}
 		if len(m.ID) == 0 {
 			return m, msgNotification
 		}
@@ -577,14 +624,19 @@ func (o *elicitOut) classify(raw []byte, status int) (message, msgKind) {
 	if (len(m.Result) == 0) == (len(m.Error) == 0) || !sameJSONID(m.ID, o.upID) {
 		return m, msgStray
 	}
-	if len(m.Result) > 0 {
-		var res struct {
-			ResultType string `json:"resultType"`
+	if len(m.Result) == 0 {
+		return m, msgResponse
+	}
+	rkeys, rvals, ok := objectMembers(m.Result)
+	if !ok || rvals == nil || foldDuplicate(rkeys) || !canonical(rkeys, "resultType", "inputRequests", "requestState") || status != http.StatusOK {
+		return m, msgStray // a result needs a 200, and one that cannot be read cannot be checked
+	}
+	if rt, has := rvals["resultType"]; has {
+		t, isStr := jsonString(rt)
+		if !isStr {
+			return m, msgStray
 		}
-		if json.Unmarshal(m.Result, &res) != nil || status != http.StatusOK {
-			return m, msgStray // a result needs a 200; an unreadable one cannot be checked
-		}
-		if res.ResultType == "input_required" {
+		if t == "input_required" {
 			return m, msgHeld
 		}
 	}
@@ -647,15 +699,21 @@ func (o *elicitOut) pass(serverID string, resp *http.Response) (held json.RawMes
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		o.fail(&relayProblem{http.StatusBadGateway, relayRedirectMsg})
 		return nil, false
-	case resp.StatusCode != http.StatusOK && !o.streaming && firstAttempt && (encoded || mt != "application/json"):
-		// No result can be in it: passed on as any other definition's answer is.
-		relayCopyResponse(o.w, o.r, resp)
-		return nil, false
 	case encoded:
 		o.fail(&relayProblem{http.StatusBadGateway, "the MCP server answered compressed although the relay asked it not to"})
 		return nil, false
-	case resp.StatusCode == http.StatusOK && mt == "text/event-stream":
-		o.startStream(resp.Header)
+	case resp.StatusCode != http.StatusOK && !o.streaming && firstAttempt && mt != "application/json" && mt != "text/event-stream":
+		// No MCP message can be in it: passed on as any other definition's answer is.
+		relayCopyResponse(o.w, o.r, resp)
+		return nil, false
+	case mt == "text/event-stream":
+		if resp.StatusCode != http.StatusOK {
+			o.fail(&relayProblem{http.StatusBadGateway, fmt.Sprintf("the MCP server answered HTTP %d with an event stream", resp.StatusCode)})
+			return nil, false
+		}
+		if o.acceptsSSE {
+			o.startStream(resp.Header)
+		}
 		return o.passStream(resp.Body)
 	case mt == "application/json":
 		b, err := io.ReadAll(io.LimitReader(resp.Body, relayMaxBody+1))
@@ -679,6 +737,10 @@ func (o *elicitOut) pass(serverID string, resp *http.Response) (held json.RawMes
 		if o.streaming {
 			o.event(b)
 			return nil, false
+		}
+		var c bytes.Buffer
+		if json.Compact(&c, b) == nil {
+			b = c.Bytes()
 		}
 		copyResponseHeaders(o.w.Header(), resp.Header)
 		o.w.Header().Del("Content-Length")
@@ -710,7 +772,7 @@ func (o *elicitOut) passStream(body io.Reader) (json.RawMessage, bool) {
 		if raw != nil {
 			switch {
 			case strings.HasPrefix(line, ":"):
-				if !o.raw(raw) {
+				if o.streaming && !o.raw(raw) {
 					return nil, false
 				}
 			case len(line) == 0:
@@ -724,17 +786,24 @@ func (o *elicitOut) passStream(body io.Reader) (json.RawMessage, bool) {
 						o.fail(errStray)
 						return nil, false
 					}
-					if out, changed := o.rewrite(msg, m, kind); changed {
+					out, changed := o.rewrite(msg, m, kind)
+					switch {
+					case !o.streaming:
+						// A CLI that takes no stream gets the response alone, as JSON.
+						if kind == msgResponse {
+							o.writeJSON(out)
+						}
+					case changed:
 						if out != nil && !o.event(out) {
 							return nil, false
 						}
-					} else if !o.raw(append(ev.Bytes(), '\n')) {
+					case !o.raw(append(ev.Bytes(), '\n')):
 						return nil, false
 					}
 					if kind == msgResponse {
 						return nil, false
 					}
-				} else if ev.Len() > 0 && !o.raw(append(ev.Bytes(), '\n')) {
+				} else if o.streaming && ev.Len() > 0 && !o.raw(append(ev.Bytes(), '\n')) {
 					return nil, false
 				}
 				ev.Reset()
@@ -835,36 +904,46 @@ func (s *sseLines) finish(cur []byte) (string, []byte, error) {
 // sameJSONID compares two JSON-RPC ids: a string never equals a number, and numbers are compared
 // by value, exactly (never through float64: 2^53+1 is not 2^53, and -0 is 0).
 func sameJSONID(a, b json.RawMessage) bool {
-	norm := func(r json.RawMessage) (any, bool) {
-		dec := json.NewDecoder(bytes.NewReader(r))
-		dec.UseNumber()
-		var v any
-		if dec.Decode(&v) != nil {
-			return nil, false
-		}
-		switch x := v.(type) {
-		case string:
-			return x, true
-		case json.Number:
-			q, ok := new(big.Rat).SetString(x.String())
-			return q, ok
-		}
-		return nil, false
+	x, ok1 := idKey(a)
+	y, ok2 := idKey(b)
+	return ok1 && ok2 && x == y
+}
+
+// idKey is a JSON-RPC id in a form that compares by value: "s:" and the string, or "n:" and the
+// number's sign, significant digits and power of ten. It never expands a number, so an id with
+// a huge exponent costs no more than its length.
+func idKey(raw json.RawMessage) (string, bool) {
+	t := bytes.TrimSpace(raw)
+	if len(t) > 0 && t[0] == '"' {
+		s, ok := jsonString(raw)
+		return "s:" + s, ok
 	}
-	x, ok1 := norm(a)
-	y, ok2 := norm(b)
-	if !ok1 || !ok2 {
-		return false
+	if !json.Valid(t) || len(t) == 0 || (t[0] != '-' && (t[0] < '0' || t[0] > '9')) {
+		return "", false
 	}
-	switch xv := x.(type) {
-	case string:
-		yv, ok := y.(string)
-		return ok && xv == yv
-	case *big.Rat:
-		yv, ok := y.(*big.Rat)
-		return ok && xv.Cmp(yv) == 0
+	num := string(t)
+	neg := strings.HasPrefix(num, "-")
+	num = strings.TrimPrefix(num, "-")
+	mant, exp, _ := strings.Cut(strings.ToLower(num), "e")
+	intPart, frac, _ := strings.Cut(mant, ".")
+	digits := strings.TrimLeft(intPart+frac, "0")
+	e, err := strconv.ParseInt(strings.TrimPrefix(exp, "+"), 10, 64)
+	if exp == "" {
+		e, err = 0, nil
 	}
-	return false
+	if err != nil {
+		return "", false // an exponent no id needs
+	}
+	if digits == "" {
+		return "n:0", true // -0 and 0.000 are 0
+	}
+	trimmed := strings.TrimRight(digits, "0")
+	e += int64(len(digits)-len(trimmed)) - int64(len(frac))
+	sign := "+"
+	if neg {
+		sign = "-"
+	}
+	return "n:" + sign + trimmed + "e" + strconv.FormatInt(e, 10), true
 }
 
 // copyResponseHeaders copies a server's response headers for the CLI, minus hop-by-hop ones and
@@ -898,113 +977,189 @@ type inputRequired struct {
 // parseInputRequired accepts form elicitations whose fields are all choices (an enum of strings,
 // with or without labels): an approval. Anything else (free text, sampling, roots, a URL to open,
 // a constraint the relay would not check) is refused, since a person answering a card cannot give
-// it. A result with only a requestState has no inputs and is retried at once.
+// it. A result with only a requestState has no inputs and is retried at once. Every object is read
+// with exact member names and none that fold together: the relay must check what the server meant.
 func parseInputRequired(result json.RawMessage) (inputRequired, error) {
-	var res struct {
-		InputRequests map[string]struct {
-			Method string `json:"method"`
-			Params struct {
-				Mode            string `json:"mode"`
-				Message         string `json:"message"`
-				RequestedSchema struct {
-					Type       string                     `json:"type"`
-					Properties map[string]json.RawMessage `json:"properties"`
-					Required   []string                   `json:"required"`
-				} `json:"requestedSchema"`
-			} `json:"params"`
-		} `json:"inputRequests"`
-		RequestState json.RawMessage `json:"requestState"`
-	}
-	if err := json.Unmarshal(result, &res); err != nil {
-		return inputRequired{}, errors.New("an unreadable input request")
+	unreadable := errors.New("an unreadable input request")
+	_, res, ok := strictObject(result, nil)
+	if !ok {
+		return inputRequired{}, unreadable
 	}
 	out := inputRequired{}
-	if len(res.RequestState) > 0 {
-		if _, ok := jsonString(res.RequestState); !ok {
+	if raw, has := res["requestState"]; has {
+		if _, ok := jsonString(raw); !ok {
 			return inputRequired{}, errors.New("a requestState that is not a string")
 		}
-		out.requestState = res.RequestState
+		out.requestState = raw
 	}
-	if len(res.InputRequests) == 0 && out.requestState == nil {
+	var keys []string
+	var reqs map[string]json.RawMessage
+	if raw, has := res["inputRequests"]; has {
+		if keys, reqs, ok = strictObject(raw, nil); !ok {
+			return inputRequired{}, unreadable
+		}
+	}
+	if len(reqs) == 0 && out.requestState == nil {
 		return inputRequired{}, errors.New("no input request")
 	}
-	for key, req := range res.InputRequests {
-		if req.Method != "elicitation/create" {
-			return inputRequired{}, fmt.Errorf("a %s request", cut(req.Method, elicitMaxText))
+	for _, key := range keys {
+		_, req, ok := strictObject(reqs[key], []string{"method", "params"})
+		if !ok {
+			return inputRequired{}, unreadable
 		}
-		if req.Params.Mode != "" && req.Params.Mode != "form" {
-			return inputRequired{}, fmt.Errorf("a %s-mode elicitation", cut(req.Params.Mode, elicitMaxText))
+		if method, _ := jsonString(req["method"]); method != "elicitation/create" {
+			return inputRequired{}, fmt.Errorf("a %s request", cut(method, elicitMaxText))
 		}
-		schema := req.Params.RequestedSchema
-		if schema.Type != "object" || len(schema.Properties) == 0 {
-			return inputRequired{}, errors.New("a form with no fields")
+		_, params, ok := strictObject(req["params"], nil)
+		if !ok {
+			return inputRequired{}, unreadable
 		}
-		in := ElicitInput{Key: key, Message: cut(req.Params.Message, elicitMaxMessage)}
-		required := map[string]bool{}
-		for _, n := range schema.Required {
-			if _, ok := schema.Properties[n]; !ok {
-				return inputRequired{}, errors.New("a required field the form does not describe")
+		if raw, has := params["mode"]; has {
+			if mode, _ := jsonString(raw); mode != "form" {
+				return inputRequired{}, fmt.Errorf("a %s-mode elicitation", cut(mode, elicitMaxText))
 			}
-			required[n] = true
 		}
-		for name, raw := range schema.Properties {
-			f, err := parseChoiceField(name, raw)
-			if err != nil {
-				return inputRequired{}, err
+		in := ElicitInput{Key: key}
+		if raw, has := params["message"]; has {
+			msg, ok := jsonString(raw)
+			if !ok {
+				return inputRequired{}, unreadable
 			}
-			f.Required = required[name]
-			in.Fields = append(in.Fields, f)
+			in.Message = cut(msg, elicitMaxMessage)
 		}
-		sort.Slice(in.Fields, func(i, j int) bool { return in.Fields[i].Name < in.Fields[j].Name })
+		fields, err := parseFormSchema(params["requestedSchema"])
+		if err != nil {
+			return inputRequired{}, err
+		}
+		in.Fields = fields
 		out.inputs = append(out.inputs, in)
 	}
 	sort.Slice(out.inputs, func(i, j int) bool { return out.inputs[i].Key < out.inputs[j].Key })
 	return out, nil
 }
 
-// parseChoiceField reads one string property that is a choice: enum (with optional enumNames
-// labels, Google's form) or oneOf of const/title, never both (the relay would check one and not
-// the other). Every value must be a string the server wrote; a null or a missing const is refused
-// rather than read as "".
-func parseChoiceField(name string, raw json.RawMessage) (ElicitField, error) {
-	var p struct {
-		Type      string            `json:"type"`
-		Title     string            `json:"title"`
-		Enum      []json.RawMessage `json:"enum"`
-		EnumNames []json.RawMessage `json:"enumNames"`
-		OneOf     []struct {
-			Const json.RawMessage `json:"const"`
-			Title string          `json:"title"`
-		} `json:"oneOf"`
+// strictObject reads raw as one JSON object with no two names that fold together. allowed, when
+// not nil, lists every name it may have.
+func strictObject(raw json.RawMessage, allowed []string) ([]string, map[string]json.RawMessage, bool) {
+	keys, vals, ok := objectMembers(raw)
+	if !ok || vals == nil || foldDuplicate(keys) {
+		return nil, nil, false
 	}
-	if json.Unmarshal(raw, &p) != nil || p.Type != "string" {
+	if allowed != nil {
+		for _, k := range keys {
+			known := false
+			for _, a := range allowed {
+				known = known || k == a
+			}
+			if !known {
+				return nil, nil, false
+			}
+		}
+	}
+	return keys, vals, true
+}
+
+// Members a form may carry. Anything else may be a constraint the relay would not enforce, so a
+// form that has one is refused rather than shown with it dropped.
+var (
+	formSchemaMembers = []string{"type", "properties", "required", "title", "description", "$schema"}
+	formFieldMembers  = []string{"type", "title", "description", "enum", "enumNames", "oneOf", "default"}
+	formOptionMembers = []string{"const", "title", "description"}
+)
+
+// parseFormSchema reads a form's requestedSchema: an object of choice fields.
+func parseFormSchema(raw json.RawMessage) ([]ElicitField, error) {
+	_, schema, ok := strictObject(raw, formSchemaMembers)
+	if !ok {
+		return nil, errors.New("a form with members the relay does not check")
+	}
+	if t, _ := jsonString(schema["type"]); t != "object" {
+		return nil, errors.New("a form that is not an object")
+	}
+	names, props, ok := strictObject(schema["properties"], nil)
+	if !ok || len(names) == 0 {
+		return nil, errors.New("a form with no fields")
+	}
+	required := map[string]bool{}
+	if raw, has := schema["required"]; has {
+		var req []json.RawMessage
+		if json.Unmarshal(raw, &req) != nil {
+			return nil, errors.New("an unreadable list of required fields")
+		}
+		for _, r := range req {
+			n, ok := jsonString(r)
+			if _, described := props[n]; !ok || !described {
+				return nil, errors.New("a required field the form does not describe")
+			}
+			required[n] = true
+		}
+	}
+	var fields []ElicitField
+	for _, name := range names {
+		f, err := parseChoiceField(name, props[name])
+		if err != nil {
+			return nil, err
+		}
+		f.Required = required[name]
+		fields = append(fields, f)
+	}
+	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
+	return fields, nil
+}
+
+// parseChoiceField reads one string property that is a choice: enum (with optional enumNames
+// labels, Google's form) or oneOf of const/title, never both. Every value must be a string the
+// server wrote; a null or a missing const is refused rather than read as "".
+func parseChoiceField(name string, raw json.RawMessage) (ElicitField, error) {
+	_, p, ok := strictObject(raw, formFieldMembers)
+	if !ok {
+		return ElicitField{}, errors.New("a field with members the relay does not check")
+	}
+	if t, _ := jsonString(p["type"]); t != "string" {
 		return ElicitField{}, errors.New("a field that is not a choice")
 	}
-	f := ElicitField{Name: name, Title: cut(p.Title, elicitMaxText)}
+	f := ElicitField{Name: name}
+	if raw, has := p["title"]; has {
+		title, ok := jsonString(raw)
+		if !ok {
+			return ElicitField{}, errors.New("a field with an unreadable title")
+		}
+		f.Title = cut(title, elicitMaxText)
+	}
+	var enum, names, oneOf []json.RawMessage
+	for k, dst := range map[string]*[]json.RawMessage{"enum": &enum, "enumNames": &names, "oneOf": &oneOf} {
+		if raw, has := p[k]; has && json.Unmarshal(raw, dst) != nil {
+			return ElicitField{}, errors.New("a field with an unreadable list of choices")
+		}
+	}
 	switch {
-	case len(p.Enum) > 0 && len(p.OneOf) > 0:
+	case len(enum) > 0 && len(oneOf) > 0:
 		return ElicitField{}, errors.New("a field with both enum and oneOf")
-	case len(p.Enum) > 0:
-		for i, r := range p.Enum {
+	case len(enum) > 0:
+		for i, r := range enum {
 			v, ok := jsonString(r)
 			if !ok {
 				return ElicitField{}, errors.New("a choice that is not a string")
 			}
 			label := v
-			if i < len(p.EnumNames) {
-				if l, ok := jsonString(p.EnumNames[i]); ok && l != "" {
+			if i < len(names) {
+				if l, ok := jsonString(names[i]); ok && l != "" {
 					label = l
 				}
 			}
 			f.Options = append(f.Options, ElicitOption{Value: v, Label: cut(label, elicitMaxText)})
 		}
-	case len(p.OneOf) > 0:
-		for _, o := range p.OneOf {
-			v, ok := jsonString(o.Const)
+	case len(oneOf) > 0:
+		for _, r := range oneOf {
+			_, o, ok := strictObject(r, formOptionMembers)
+			if !ok {
+				return ElicitField{}, errors.New("a choice with members the relay does not check")
+			}
+			v, ok := jsonString(o["const"])
 			if !ok {
 				return ElicitField{}, errors.New("a choice that is not a string")
 			}
-			label := o.Title
+			label, _ := jsonString(o["title"])
 			if label == "" {
 				label = v
 			}
