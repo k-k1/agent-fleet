@@ -156,7 +156,7 @@ COMPOSE_PROFILES=egress
 
 What changes for a fenced workspace:
 
-- A program that ignores the proxy variables connects to nothing. The attempt fails and is not recorded
+- A program that ignores the proxy variables and connects to the outside directly fails, and the attempt is not recorded. The host's own listeners at the gateway address (below) and an explicit use of the proxy are not affected
 - A direct connection to the outside that does not use the proxy fails (the host's own listeners at the network's gateway address, below, are the exception). Non-HTTP traffic is not blocked as such, though: the proxy accepts `CONNECT` to any port and decides by host only. In enforce, a host on the allowlist is reachable on every port, so Git over SSH to `github.com` (a built-in entry) works through the proxy, for example with `ProxyCommand nc -X connect -x af-egress:3128 %h %p`. In log-only every host and port is dialled. Databases and queries sent straight to an outside DNS server do not pass, because they do not use the proxy
 - On this fence a host entry covers every port and TCP port entries are not needed. That differs from the AWS egress gateway, where a host entry is HTTP(S) only and a non-HTTP port needs a [TCP port entry](#allow-a-non-http-destination-aws-egress-gateway-only)
 - Name lookups depend on the Docker Engine. On 20.10.24 the embedded resolver forwards outside names, so DNS resolves inside the fence, and the internal container has a default route, so a direct connection times out instead of failing at once (it is still fenced). On 28.5.2 neither is the case. Do not count on the fence to stop data carried in DNS queries
