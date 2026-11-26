@@ -1,6 +1,7 @@
 ---
 audience: "anyone running several pieces of work in one repository at the same time"
 source_of_truth: "Location in the Console's Start working dialog"
+search_keywords: "worktree, git worktree, working copy, parallel work, separate branch"
 ---
 
 # Work in parallel with worktrees

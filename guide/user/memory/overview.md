@@ -1,6 +1,7 @@
 ---
 audience: "anyone who wants to check or correct what agents remember"
 source_of_truth: "the Console's Memory view of the left pane (the Memory icon on the activity bar) and the Memory pane (Settings > Agent memory > Open memory view)"
+search_keywords: "agent memory, memory, remember, forget, pin"
 ---
 
 # Read and correct agent memory
