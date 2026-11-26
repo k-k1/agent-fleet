@@ -279,7 +279,10 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
       // The form closes on ok and a hub or space dialog keeps no draft of its own, so what the
       // person typed or attached would be gone. Save the whole draft as a new memo (the restored
       // memo, if any, stays too) and say whether that worked.
-      const stash = await stashLaunchDraft(repo, prompt, images ?? []);
+      // A file the Agent refuses (too large) is refused by the memo store too, so when the whole
+      // draft cannot be saved the text alone is, and the files are the part that is lost.
+      let stash = await stashLaunchDraft(repo, prompt, images ?? []);
+      if (!stash.ok && prompt.trim() && images?.length) stash = await stashLaunchDraft(repo, prompt, []);
       toast(t(stash.ok ? "rp.draft_saved" : "rp.draft_kept"));
       return { ok: true, name: res.name, incomplete: { files: lostFiles, prompt: promptLost, saved: stash.ok } };
     }

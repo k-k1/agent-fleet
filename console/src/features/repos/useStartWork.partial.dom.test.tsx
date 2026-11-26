@@ -112,6 +112,16 @@ describe("partial draft delivery", () => {
     expect(toasts()).toContain(t("rp.draft_kept"));
   });
 
+  it("falls back to saving the text alone when the files cannot be saved", async () => {
+    stash.mockReset();
+    stash.mockResolvedValueOnce({ ok: false, reason: "too_large" }).mockResolvedValueOnce({ ok: true });
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413, error: { code: "paste_too_large" } });
+    const r = await launch([file("big.png")]);
+    expect(stash).toHaveBeenNthCalledWith(2, "x", "look at these", []);
+    expect(r.incomplete?.saved).toBe(true);
+  });
+
   it("reports a first prompt whose request itself failed", async () => {
     apiJSON.mockImplementation((p: string) => (p === "api/sessions" ? Promise.resolve({ name: "s1" }) : Promise.reject(new Error("x"))));
     pasteImage.mockResolvedValue({ status: 200, path: "/p/a.png" });
