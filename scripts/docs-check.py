@@ -116,6 +116,10 @@ LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 FM_RE = re.compile(r"^---\n(.*?)\n---\s*\n", re.S)
 FM_KEY_RE = re.compile(r'^([a-z_]+):\s*"(.*)"\s*$', re.M)
 FM_KEYS = ("audience", "source_of_truth")
+# Optional: the site's search index weights this value (docs/CONVENTIONS.md §3). A line
+# FM_KEY_RE cannot read (unquoted) is dropped from the index without a sound, so it is an error.
+FM_SEARCH_KEY = "search_keywords"
+FM_SEARCH_LINE_RE = re.compile(r"^search_keywords:", re.M)
 
 # Implementation vocabulary that must not appear on reader-facing shelves. The brake
 # that keeps those shelves written in the names shown on screen.
@@ -672,6 +676,13 @@ def check_header(files: list[str], f: Findings, strict: bool) -> None:
             if key == "source_of_truth" and key in inherited:
                 continue  # the shelf README declares it on their behalf
             f.error(f"{src}: front matter has no {key}")
+        m = FM_RE.match(read(path))
+        if m and FM_SEARCH_LINE_RE.search(m.group(1)):
+            value = fm.get(FM_SEARCH_KEY)
+            if value is None:
+                f.error(f"{src}: {FM_SEARCH_KEY} must be one double-quoted line")
+            elif not [w for w in value.split(",") if w.strip()]:
+                f.error(f"{src}: {FM_SEARCH_KEY} is empty")
 
 
 def check_vocab(files: list[str], f: Findings, strict: bool) -> None:

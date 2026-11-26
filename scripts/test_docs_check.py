@@ -949,6 +949,12 @@ class SizeAndHeaderTests(unittest.TestCase):
         self.assertEqual(self.header('---\naudience: "a"\nsource_of_truth: "b"\n---\n'), "")
         self.assertIn("no source_of_truth", self.header('---\naudience: "a"\n---\n'))
 
+    def test_search_keywords_is_optional_but_must_be_quoted_and_non_empty(self):
+        base = 'audience: "a"\nsource_of_truth: "b"\n'
+        self.assertEqual(self.header(f'---\n{base}search_keywords: "worktree, ワークツリー"\n---\n'), "")
+        self.assertIn("double-quoted", self.header(f'---\n{base}search_keywords: worktree\n---\n'))
+        self.assertIn("is empty", self.header(f'---\n{base}search_keywords: " , "\n---\n'))
+
 
 class TableTests(unittest.TestCase):
     """A blank line between two table rows splits the table."""
