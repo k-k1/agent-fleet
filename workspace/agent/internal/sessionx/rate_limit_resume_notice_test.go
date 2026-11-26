@@ -9,6 +9,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // The resume reaches the session behind the notice line, in both locales and whether the session
@@ -88,7 +89,7 @@ func TestCreateRateLimitScheduleFallsBackOnlyWhenTheRouteIsAbsent(t *testing.T) 
 			}
 			if len(tc.wantPaths) == 2 {
 				if err != nil || id != "sch_1" || legacy["reuse_target"] != m.Name || legacy["session_mode"] != "reuse" ||
-					!strings.HasPrefix(legacy["prompt"].(string), "[agent-fleet:notice kind=limit-resume") {
+					legacy["prompt"] != rateLimitResumeBodyFor(uiprefs.Locale()) || !isRateLimitResumePrompt(legacy["prompt"].(string)) {
 					t.Fatalf("fallback id=%q err=%v body=%v", id, err, legacy)
 				}
 			} else if err == nil {

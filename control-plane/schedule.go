@@ -647,7 +647,7 @@ func (a scheduleAPI) pause(w http.ResponseWriter, r *http.Request, mv store.Memb
 // booking is exempt from the approval hold only for its one timed fire; run-now, or a resume after
 // a spent fire, would let a session deliver the fixed nudge as often as it likes.
 func (a scheduleAPI) limitResumeTokenRefusal(r *http.Request, sch store.Schedule) *apiError {
-	if a.holdTokenWrites && viaScheduleToken(r) && schedlimit.IsShape(sch) {
+	if a.holdTokenWrites && viaScheduleToken(r) && schedlimit.IsBooking(sch) {
 		return &apiError{http.StatusConflict, "limit_resume_fixed",
 			"a usage-limit resume fires once at its time; book a new one instead of running or resuming it"}
 	}
@@ -1171,6 +1171,16 @@ func (a scheduleAPI) createLimitResume(w http.ResponseWriter, r *http.Request, m
 	if err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", err.Error()})
 		return
+	}
+	// A booking for the same session and instant that is already live is the answer to a request
+	// whose reply was lost: hand back its id rather than a second live row the Agent could not track.
+	if rows, lerr := a.store.ListSchedules(r.Context(), mv.MembershipID); lerr == nil {
+		for _, old := range rows {
+			if old.Enabled && !old.ApprovalPending && old.ReuseTarget == s.ReuseTarget && old.Spec == s.Spec && schedlimit.IsBooking(old) {
+				writeJSON(w, http.StatusOK, withSchedulerWarning(scheduleToDTO(old)))
+				return
+			}
+		}
 	}
 	s.ID = "sch_" + store.NewID()
 	s.Enabled = true

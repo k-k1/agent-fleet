@@ -789,7 +789,8 @@ func createRateLimitSchedule(m session.Meta, at time.Time) (string, error) {
 var scheduleDo = mcpx.CPScheduleDo
 
 // legacyRateLimitScheduleBody is the generic booking an Agent sent before the dedicated route: every
-// policy field spelled out. A CP that has the route never sees it; one that lacks it holds it.
+// policy field spelled out, with the wording as that Agent sent it (no notice line, so an older
+// Agent still recognises the delivery). A CP that has the route never sees it; one that lacks it holds it.
 func legacyRateLimitScheduleBody(m session.Meta, at time.Time) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"spec_kind":             "once",
@@ -802,7 +803,7 @@ func legacyRateLimitScheduleBody(m session.Meta, at time.Time) ([]byte, error) {
 		"overlap_policy":        "skip",
 		"wake_policy":           "wake",
 		"agent_kind":            NormalizeKind(m.Kind),
-		"prompt":                rateLimitResumePrompt(),
+		"prompt":                rateLimitResumeBodyFor(uiprefs.Locale()),
 		"report":                false,
 	})
 }

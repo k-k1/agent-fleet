@@ -128,9 +128,9 @@ type ScheduleStore interface {
 	// DeleteHeldSchedule deletes a schedule only while it is still the held version the caller read:
 	// same membership, approval_pending still set, same generation. false means something changed it.
 	DeleteHeldSchedule(ctx context.Context, id, membershipID string, generation int) (bool, error)
-	// OneOffDone / MarkOneOffDone record that a start-time pass named name has finished on this database.
-	OneOffDone(ctx context.Context, name string) (bool, error)
-	MarkOneOffDone(ctx context.Context, name, doneAt string) error
+	// ClaimOneOff atomically records that a start-time pass named name has begun on this database and
+	// reports whether this caller is the one that recorded it.
+	ClaimOneOff(ctx context.Context, name, at string) (bool, error)
 	// ListDueSchedules returns enabled schedules whose next_run is non-empty and at
 	// or before nowRFC (an RFC3339 UTC cutoff; RFC3339 sorts chronologically).
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
@@ -392,15 +392,13 @@ func (s *SQL) DeleteHeldSchedule(ctx context.Context, id, membershipID string, g
 	return n > 0, err
 }
 
-func (s *SQL) OneOffDone(ctx context.Context, name string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cp_oneoff WHERE name=?`, name).Scan(&n)
+func (s *SQL) ClaimOneOff(ctx context.Context, name, at string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO cp_oneoff (name, done_at) VALUES (?, ?) ON CONFLICT (name) DO NOTHING`, name, at)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
 	return n > 0, err
-}
-
-func (s *SQL) MarkOneOffDone(ctx context.Context, name, doneAt string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO cp_oneoff (name, done_at) VALUES (?, ?) ON CONFLICT (name) DO NOTHING`, name, doneAt)
-	return err
 }
 
 func (s *SQL) DeleteSchedule(ctx context.Context, id, membershipID string) error {

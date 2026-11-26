@@ -111,7 +111,7 @@ func legacyHeld(mv store.MembershipView, id string, spec time.Time, mut func(*st
 		SpecLabel:           schedlimit.Label("ja", "s"),
 		MissingTargetPolicy: "fail", OverlapPolicy: "skip", WakePolicy: "wake", AgentKind: "claude",
 		Prompt: schedlimit.Prompts[2], Enabled: true, ApprovalPending: true,
-		NextRun: spec.UTC().Format(time.RFC3339), CreatedAt: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339), UpdatedAt: "x"}
+		NextRun: spec.UTC().Format(time.RFC3339), CreatedAt: time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339), UpdatedAt: "x"}
 	if mut != nil {
 		mut(&s)
 	}
@@ -133,12 +133,14 @@ func TestReleaseHeldLimitResumes(t *testing.T) {
 	mk("future", future, nil)
 	mk("future-en", future, func(s *store.Schedule) { s.SpecLabel = schedlimit.Label("en", "s"); s.Prompt = schedlimit.Prompts[3] })
 	mk("past", past, nil)
-	mk("edge", now.Add(-time.Hour).Add(schedlimit.MaxAhead), nil) // created an hour ago: exactly the window
+	mk("edge", now.Add(-3*time.Hour).Add(schedlimit.MaxAhead), nil) // exactly the window after creation
 	mk("renamed", future, func(s *store.Schedule) { s.SpecLabel = "my nightly nudge" })
 	mk("past-renamed", past, func(s *store.Schedule) { s.SpecLabel = "my nightly nudge" })
 	mk("other-prompt", future, func(s *store.Schedule) { s.Prompt = "do something else" })
 	mk("other-mode", future, func(s *store.Schedule) { s.SessionMode = "new" })
 	mk("beyond-window", now.Add(schedlimit.MaxAhead+48*time.Hour), nil)
+	mk("before-creation", now.Add(-5*time.Hour), nil)
+	mk("operator", past, func(s *store.Schedule) { s.DeliverTo = "operator" })
 	mk("shown", future, func(s *store.Schedule) { s.ShowInSessions = true })
 	mk("ran", past, func(s *store.Schedule) { s.LastRun = "2026-11-01T00:00:00Z"; s.LastStatus = "ok" })
 	mk("adopted", future, func(s *store.Schedule) { s.ReuseSession = "other-session" })
@@ -159,7 +161,7 @@ func TestReleaseHeldLimitResumes(t *testing.T) {
 	if ok, _ := state("past"); ok {
 		t.Error("past row kept")
 	}
-	for _, id := range []string{"renamed", "past-renamed", "other-prompt", "other-mode", "beyond-window", "shown", "ran", "adopted"} {
+	for _, id := range []string{"renamed", "past-renamed", "other-prompt", "other-mode", "beyond-window", "before-creation", "operator", "shown", "ran", "adopted"} {
 		if ok, p := state(id); !ok || !p {
 			t.Errorf("%s: ok=%v pending=%v, want kept and held", id, ok, p)
 		}
@@ -227,7 +229,7 @@ func TestLimitResumePromptsCarryTheNotice(t *testing.T) {
 	}
 	api, ctx, mv := newSchedAPITest(t)
 	for loc, want := range map[string]string{"en": en, "ja": ja} {
-		b, _ := json.Marshal(map[string]any{"session": "s1", "resume_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "locale": loc})
+		b, _ := json.Marshal(map[string]any{"session": "s-" + loc, "resume_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "locale": loc})
 		rec := doTokenJSON(api.createLimitResume, mv, "POST", string(b), "")
 		var d scheduleDTO
 		_ = json.Unmarshal(rec.Body.Bytes(), &d)
@@ -303,5 +305,65 @@ func TestLimitResumeRouteThroughTheMux(t *testing.T) {
 	}
 	if d := decode[scheduleDTO](t, rec); d.ApprovalPending || !d.Enabled {
 		t.Fatalf("held or disabled: %+v", d)
+	}
+}
+
+// Two CPs starting on one database: only the first claim runs the pass.
+func TestReleaseHeldClaimsOnce(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	if err := api.store.CreateSchedule(ctx, legacyHeld(mv, "a", time.Now().Add(time.Hour), nil)); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := api.store.ClaimOneOff(ctx, "limit-resume-release-5212", store.NowTS()); err != nil || !ok {
+		t.Fatalf("first claim ok=%v err=%v", ok, err)
+	}
+	// Another CP found the claim: it runs nothing, even though a candidate is there.
+	if rel, rem, err := schedlimit.ReleaseHeld(ctx, api.store, time.Now()); err != nil || rel+rem != 0 {
+		t.Fatalf("second runner released %d removed %d err %v", rel, rem, err)
+	}
+	if s, _, _ := api.store.GetSchedule(ctx, "a"); !s.ApprovalPending {
+		t.Fatal("a claimed pass was run again")
+	}
+}
+
+// A booking whose reply was lost is sent again: the CP answers with the live row instead of a
+// second one; after an explicit delete the same instant books afresh.
+func TestLimitResumeRepeatedBookingReturnsTheLiveRow(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	at := time.Now().Add(time.Hour)
+	var first, again, fresh scheduleDTO
+	r1 := doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at), "")
+	_ = json.Unmarshal(r1.Body.Bytes(), &first)
+	r2 := doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at), "")
+	_ = json.Unmarshal(r2.Body.Bytes(), &again)
+	if r1.Code != http.StatusCreated || r2.Code != http.StatusOK || again.ID != first.ID {
+		t.Fatalf("first %d %s, repeat %d %s", r1.Code, first.ID, r2.Code, again.ID)
+	}
+	if rows, _ := api.store.ListSchedules(ctx, mv.MembershipID); len(rows) != 1 {
+		t.Fatalf("%d rows after a repeated booking", len(rows))
+	}
+	if r := doTokenJSON(api.delete, mv, "DELETE", "", first.ID); r.Code != http.StatusOK {
+		t.Fatalf("delete %d", r.Code)
+	}
+	r3 := doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at), "")
+	_ = json.Unmarshal(r3.Body.Bytes(), &fresh)
+	if r3.Code != http.StatusCreated || fresh.ID == first.ID {
+		t.Fatalf("re-book after delete: %d %s", r3.Code, fresh.ID)
+	}
+}
+
+// Only the Agent's own booking is fixed on the token face; a member's approved row that shares the
+// prompt and policies under a label of its own is an ordinary schedule, as on main.
+func TestMemberApprovedLookalikeStaysRunnableOnTheTokenFace(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	row := legacyHeld(mv, "mine", time.Now().Add(time.Hour), func(s *store.Schedule) {
+		s.ApprovalPending = false
+		s.SpecLabel = "my own nudge"
+	})
+	if err := api.store.CreateSchedule(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if r := doTokenJSON(api.runNow, mv, "POST", "", "mine"); r.Code == http.StatusConflict && strings.Contains(r.Body.String(), "limit_resume_fixed") {
+		t.Fatalf("an ordinary approved row was refused: %s", r.Body.String())
 	}
 }

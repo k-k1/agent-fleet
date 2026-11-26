@@ -96,34 +96,44 @@ func IsShape(s store.Schedule) bool {
 		s.Model == "" && s.Route == "" && s.RouteConnection == "" && (s.DeliverTo == "" || s.DeliverTo == "operator")
 }
 
+// IsBooking is IsShape plus the Agent's own label for that very session. It is what the token face
+// treats as a usage-limit resume (no run-now, no resume): a member's own approved row that merely
+// shares the fixed prompt and policies, under a label of its own, is an ordinary schedule.
+func IsBooking(s store.Schedule) bool {
+	return IsShape(s) && (s.SpecLabel == Label("ja", s.ReuseTarget) || s.SpecLabel == Label("en", s.ReuseTarget))
+}
+
 // oneOffName is the marker under which the release pass is recorded as done.
 const oneOffName = "limit-resume-release-5212"
 
 // legacyBooking reports whether a held row is what an earlier Agent's generic POST left behind:
 // the fixed shape, an Agent-written label for that very session, never shown in sessions, never
-// fired or adopted a session, and a time inside the window counted from its creation. A row a
+// fired or adopted a session, and a time from its creation up to the window after it. A row a
 // member renamed, or anything else that cannot be shown to have that origin, stays held.
 func legacyBooking(s store.Schedule) bool {
-	if !IsShape(s) || s.ShowInSessions || s.ReuseSession != "" || s.LastRun != "" || s.LastStatus != "" {
-		return false
-	}
-	if s.SpecLabel != Label("ja", s.ReuseTarget) && s.SpecLabel != Label("en", s.ReuseTarget) {
+	// DeliverTo is empty: an earlier Agent never sent it, so an explicit "operator" is someone else's row.
+	if !IsBooking(s) || s.DeliverTo != "" || s.ShowInSessions || s.ReuseSession != "" || s.LastRun != "" || s.LastStatus != "" {
 		return false
 	}
 	created, cerr := time.Parse(time.RFC3339, s.CreatedAt)
 	at, aerr := time.Parse(time.RFC3339, s.Spec)
-	return cerr == nil && aerr == nil && !at.After(created.Add(MaxAhead))
+	// An Agent books a moment ahead of the creation, never before it.
+	return cerr == nil && aerr == nil && !at.Before(created) && !at.After(created.Add(MaxAhead))
 }
 
 // ReleaseHeld is the one-off for rows #4631 held before the exemption existed, run once per
-// database (a marker row records it, so a held row written afterwards is never swept in). A row
+// database (the claim row records it, so a held row written afterwards is never swept in). A row
 // matching legacyBooking is approved when its time is still ahead and deleted when it is past (a
 // past once-schedule cannot be approved and would only linger as a "do not approve" card). Both
 // writes are conditional on the version read, so an edit or approval made meanwhile — an older CP
 // may still be serving during a rolling update — leaves the row alone. Everything else stays held.
 func ReleaseHeld(ctx context.Context, st store.ScheduleStore, now time.Time) (released, removed int, err error) {
-	if done, derr := st.OneOffDone(ctx, oneOffName); derr != nil || done {
-		return 0, 0, derr
+	// Claim first, atomically: of several CPs starting on one database exactly one runs the pass, and
+	// it reads its candidates only after the claim, so a row written by the generic route once the
+	// pass has begun elsewhere is never a candidate. A pass that fails half-way is not retried: the
+	// rows it did not reach stay held, which is where they started.
+	if claimed, cerr := st.ClaimOneOff(ctx, oneOffName, store.NowTS()); cerr != nil || !claimed {
+		return 0, 0, cerr
 	}
 	rows, err := st.ListApprovalPendingSchedules(ctx)
 	if err != nil {
@@ -155,9 +165,6 @@ func ReleaseHeld(ctx context.Context, st store.ScheduleStore, now time.Time) (re
 		if ok {
 			released++
 		}
-	}
-	if err := st.MarkOneOffDone(ctx, oneOffName, store.NowTS()); err != nil {
-		return released, removed, err
 	}
 	if released+removed > 0 {
 		log.Printf("schedules: released %d and removed %d held usage-limit resume(s) (#5212)", released, removed)
