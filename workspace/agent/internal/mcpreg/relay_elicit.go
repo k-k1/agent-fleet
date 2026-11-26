@@ -1064,22 +1064,38 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 
 // largestAnswer is the encoded size of the largest accept a person could send: every field
 // answered with the choice whose encoding is longest (not the longest raw value: escaping can
-// grow a shorter one past it). Go escapes more than a browser does, so this is an upper bound.
+// grow a shorter one past it), plus the keys and punctuation. Go escapes more than a browser
+// does, so this is an upper bound. It stops once past ElicitAnswerMaxBytes, and never encodes a
+// string whose raw length alone is past it (an encoding is never shorter than its string): a form
+// it refuses must not cost the Agent its encoding first.
 func largestAnswer(inputs []ElicitInput) int {
-	choices := map[string]map[string]string{}
+	const over = ElicitAnswerMaxBytes + 1
+	encLen := func(s string) int {
+		if len(s) > ElicitAnswerMaxBytes {
+			return over
+		}
+		return len(mustJSON(s))
+	}
+	total := 2 // {}
 	for _, in := range inputs {
-		c := map[string]string{}
+		total += encLen(in.Key) + 4 // :{}, and a comma
 		for _, f := range in.Fields {
-			best := -1
+			total += encLen(f.Name) + 2 // : and a comma
+			best := 0
 			for _, o := range f.Options {
-				if n := len(mustJSON(o.Value)); n > best {
-					best, c[f.Name] = n, o.Value
+				if best = max(best, encLen(o.Value)); best >= over {
+					return over
 				}
 			}
+			if total += best; total > ElicitAnswerMaxBytes {
+				return total
+			}
 		}
-		choices[in.Key] = c
+		if total > ElicitAnswerMaxBytes {
+			return total
+		}
 	}
-	return len(mustJSON(choices))
+	return total
 }
 
 // strictObject reads raw as one JSON object with no two names that fold together. allowed, when

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -191,5 +192,38 @@ func TestElicitManyShortChoicesCountAgainstTheBound(t *testing.T) {
 	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Options: opts}}}}}
 	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir); err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("20000 short choices were held: %v", err)
+	}
+}
+
+// Sizing a form never encodes a choice that is too large on its own: refusing it must not cost
+// the Agent several times its size first.
+func TestLargestAnswerDoesNotEncodeAnOversizedChoice(t *testing.T) {
+	huge := strings.Repeat("<", 4<<20) // six bytes each when encoded
+	inputs := []ElicitInput{{Key: "k", Fields: []ElicitField{{Name: "c", Options: []ElicitOption{{Value: "NO"}, {Value: huge}}}}}}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	n := largestAnswer(inputs)
+	runtime.ReadMemStats(&after)
+	if n <= ElicitAnswerMaxBytes {
+		t.Fatalf("largest answer %d", n)
+	}
+	if got := after.TotalAlloc - before.TotalAlloc; got > 1<<20 {
+		t.Fatalf("sizing allocated %d bytes for a %d-byte choice", got, len(huge))
+	}
+}
+
+// The size is an upper bound of the real encoding of every answer it covers.
+func TestLargestAnswerBoundsTheEncodedAnswer(t *testing.T) {
+	inputs := []ElicitInput{
+		{Key: "a<", Fields: []ElicitField{{Name: "x", Options: []ElicitOption{{Value: "long-ascii-value"}, {Value: "\x00\x01"}}}, {Name: "y&", Options: []ElicitOption{{Value: ""}}}}},
+		{Key: "b", Fields: []ElicitField{{Name: "z", Options: []ElicitOption{{Value: "é "}}}}},
+		{Key: "c"},
+	}
+	for _, x := range []string{"long-ascii-value", "\x00\x01"} {
+		answer := map[string]map[string]string{"a<": {"x": x, "y&": ""}, "b": {"z": "é "}, "c": {}}
+		if real, bound := len(mustJSON(answer)), largestAnswer(inputs); real > bound {
+			t.Fatalf("answer %q encodes to %d, bound %d", x, real, bound)
+		}
 	}
 }
