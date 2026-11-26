@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -32,6 +33,41 @@ type sessionLinkWire struct {
 	URL      string `json:"url,omitempty"`
 	At       string `json:"at,omitempty"`
 	State    string `json:"state,omitempty"`
+	// Facts are a PR link's merge conditions as the Agent last observed them (ADR 0143 decision 4),
+	// a sessionLinkFacts. Held raw and decoded on their own (mirrorFacts): a malformed one must cost
+	// that link its facts, not fail the array's decode and drop every link of the session.
+	Facts json.RawMessage `json:"facts,omitempty"`
+}
+
+// sessionLinkFacts is the Agent's session.PRFacts in its wire shape.
+type sessionLinkFacts struct {
+	Checks           string `json:"checks,omitempty"`
+	ChangesRequested bool   `json:"changesRequested,omitempty"`
+	Conflict         bool   `json:"conflict,omitempty"`
+	Ready            bool   `json:"ready,omitempty"`
+	ObservedAt       string `json:"observedAt"`
+}
+
+// mirrorFacts is what the mirror stores of raw: nothing for no facts, facts that do not decode, or
+// facts without a readable observation time, because a fact with no time cannot be labelled "as
+// of" (ADR 0143 decision 6); and the checks value only when it is one the Agent writes, so an
+// unknown one reads as "nothing ran" (never green). Ready is the Agent's verdict and is stored as
+// sent. The time keeps its sub-second part, which orders two reads within one second.
+func mirrorFacts(raw json.RawMessage) PRFacts {
+	var f sessionLinkFacts
+	if len(raw) == 0 || json.Unmarshal(raw, &f) != nil {
+		return PRFacts{}
+	}
+	at, err := time.Parse(time.RFC3339, f.ObservedAt)
+	if err != nil {
+		return PRFacts{}
+	}
+	out := PRFacts{ChangesRequested: f.ChangesRequested, Conflict: f.Conflict, Ready: f.Ready, ObservedAt: at.UTC().Format(time.RFC3339Nano)}
+	switch f.Checks {
+	case "success", "failure", "pending":
+		out.Checks = f.Checks
+	}
+	return out
 }
 
 // SessionLinksFromJSON reads the relayed links of one session (the Agent's links array). An entry without a provider or a key,
@@ -68,6 +104,7 @@ func SessionLinksFromJSON(raw json.RawMessage) []SessionLink {
 			URL:   url,
 			At:    clipBytes(l.At, mirrorMaxShort),
 			State: clipBytes(l.State, mirrorMaxShort),
+			Facts: mirrorFacts(l.Facts),
 		})
 	}
 	return out
@@ -82,6 +119,9 @@ func SessionLinksJSON(links []SessionLink) json.RawMessage {
 	out := make([]sessionLinkWire, len(links))
 	for i, l := range links {
 		out[i] = sessionLinkWire{Provider: l.Provider, Key: l.Key, Role: l.Role, Title: l.Title, URL: l.URL, At: l.At, State: l.State}
+		if f := l.Facts; f.ObservedAt != "" {
+			out[i].Facts, _ = json.Marshal(sessionLinkFacts{Checks: f.Checks, ChangesRequested: f.ChangesRequested, Conflict: f.Conflict, Ready: f.Ready, ObservedAt: f.ObservedAt})
+		}
 	}
 	b, err := json.Marshal(out)
 	if err != nil {

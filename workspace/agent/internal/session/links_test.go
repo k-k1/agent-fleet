@@ -3,6 +3,7 @@ package session
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeLinkKey(t *testing.T) {
@@ -189,5 +190,109 @@ func TestPRsAllMergedCountsOnlyTheSessionsOwnPRs(t *testing.T) {
 		if got := PRsAllMerged(c.m); got != c.merged {
 			t.Errorf("%s: PRsAllMerged = %v, want %v", c.name, got, c.merged)
 		}
+	}
+}
+
+func TestPRFactsDueOnlyForANewerOrChangedObservation(t *testing.T) {
+	at := func(min int) string {
+		return time.Date(2026, 11, 27, 10, min, 0, 0, time.UTC).Format(time.RFC3339)
+	}
+	held := &PRFacts{Checks: "pending", ObservedAt: at(0)}
+	for _, tc := range []struct {
+		name string
+		held *PRFacts
+		f    PRFacts
+		want bool
+	}{
+		{"first observation", nil, PRFacts{Checks: "pending", ObservedAt: at(0)}, true},
+		{"same facts, read again soon", held, PRFacts{Checks: "pending", ObservedAt: at(2)}, false},
+		{"same facts, refresh due", held, PRFacts{Checks: "pending", ObservedAt: at(10)}, true},
+		{"checks moved", held, PRFacts{Checks: "success", ObservedAt: at(2)}, true},
+		{"review moved", held, PRFacts{Checks: "pending", ChangesRequested: true, ObservedAt: at(2)}, true},
+		{"conflict moved", held, PRFacts{Checks: "pending", Conflict: true, ObservedAt: at(2)}, true},
+		{"ready moved", held, PRFacts{Checks: "pending", Ready: true, ObservedAt: at(2)}, true},
+		{"same read time, other facts", held, PRFacts{Checks: "success", ObservedAt: at(0)}, false},
+		{"older read never wins", &PRFacts{Checks: "success", ObservedAt: at(5)}, PRFacts{Checks: "pending", ObservedAt: at(4)}, false},
+		{"unknown checks value", nil, PRFacts{Checks: "green", ObservedAt: at(0)}, false},
+		{"no observation time", nil, PRFacts{Checks: "success"}, false},
+		{"held time unreadable", &PRFacts{Checks: "pending", ObservedAt: "x"}, PRFacts{Checks: "pending", ObservedAt: at(0)}, true},
+	} {
+		if got := PRFactsDue(tc.held, tc.f); got != tc.want {
+			t.Errorf("%s: PRFactsDue=%v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRecordPRReadRecordsOnTheHeldLinkOrTheLaunchItem(t *testing.T) {
+	now := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	m := Meta{WorkItem: &WorkItemRef{Provider: "github", Key: "o/r#1"},
+		Links: []WorkItemLink{{Provider: "github", Key: "o/r#2", Role: LinkWorking, State: "open"}}}
+	f := PRFacts{Checks: "success", Ready: true, ObservedAt: now}
+	if !RecordPRRead(&m, "github", "O/R#2", "open", &f) || m.Links[0].Facts == nil || !m.Links[0].Facts.Ready {
+		t.Fatalf("links=%+v, want o/r#2's facts recorded", m.Links)
+	}
+	if RecordPRRead(&m, "github", "o/r#2", "open", &f) {
+		t.Fatal("the same observation was recorded twice")
+	}
+	if !RecordPRRead(&m, "github", "o/r#1", "open", &PRFacts{Checks: "failure", ObservedAt: now}) || m.WorkItemFacts == nil ||
+		m.WorkItemFacts.Checks != "failure" || m.WorkItemState != "open" {
+		t.Fatalf("workItem state=%q facts=%+v, want the launch PR's read on the meta", m.WorkItemState, m.WorkItemFacts)
+	}
+	if l := LinksOf(m); l[0].Facts == nil || l[0].Facts.Checks != "failure" || l[1].Facts == nil || l[1].Facts.Checks != "success" {
+		t.Fatalf("LinksOf=%+v, want each link with its own facts", l)
+	}
+	if RecordPRRead(&m, "github", "o/r#3", "open", &f) {
+		t.Fatal("a read was recorded for an item the session does not hold")
+	}
+	// A read with no time records its state alone.
+	if !RecordPRRead(&m, "github", "o/r#2", "draft", nil) || m.Links[0].State != "draft" || m.Links[0].Facts.ObservedAt != now {
+		t.Fatalf("link=%+v, want the state recorded and the facts kept", m.Links[0])
+	}
+	// Replaced, never edited in place: a child holding the same pointer keeps its own copy.
+	child := InheritedLinks(Meta{Links: m.Links}, now)
+	later := time.Date(2026, 11, 27, 10, 1, 0, 0, time.UTC).Format(time.RFC3339)
+	RecordPRRead(&m, "github", "o/r#2", "draft", &PRFacts{Checks: "failure", ObservedAt: later})
+	if child[0].Facts == nil || child[0].Facts.Checks != "success" {
+		t.Fatalf("inherited facts=%+v, want the parent's later observation not to reach the child", child[0].Facts)
+	}
+}
+
+// State and facts are one observation: a late answer from an older call writes neither, and a
+// read that moves the state renews the facts even inside PRFactsRefresh.
+func TestRecordPRReadKeepsStateAndFactsFromOneRead(t *testing.T) {
+	at := func(ms int) string {
+		return time.Date(2026, 11, 27, 10, 0, 0, ms*int(time.Millisecond), time.UTC).Format(time.RFC3339Nano)
+	}
+	m := Meta{Links: []WorkItemLink{{Provider: "github", Key: "o/r#2", Role: LinkCreated}}}
+	// Reopened and green, read at .700; the read sent at .100, while it was still closed, arrives later.
+	if !RecordPRRead(&m, "github", "o/r#2", "open", &PRFacts{Checks: "success", Ready: true, ObservedAt: at(700)}) {
+		t.Fatal("the first read was not recorded")
+	}
+	if RecordPRRead(&m, "github", "o/r#2", "closed", &PRFacts{Checks: "pending", ObservedAt: at(100)}) ||
+		m.Links[0].State != "open" || m.Links[0].Facts.Checks != "success" || !m.Links[0].Facts.Ready {
+		t.Fatalf("link=%+v facts=%+v, want the older read to change nothing", m.Links[0], m.Links[0].Facts)
+	}
+	// open -> draft with the same four facts, a minute later: the facts carry the draft read's time.
+	if !RecordPRRead(&m, "github", "o/r#2", "draft", &PRFacts{Checks: "success", Ready: true, ObservedAt: at(60_000)}) ||
+		m.Links[0].State != "draft" || m.Links[0].Facts.ObservedAt != at(60_000) {
+		t.Fatalf("link=%+v facts=%+v, want the draft state labelled with its own read", m.Links[0], m.Links[0].Facts)
+	}
+	if !PRReadStale(&PRFacts{ObservedAt: at(700)}, &PRFacts{ObservedAt: at(100)}) || PRReadStale(&PRFacts{ObservedAt: at(100)}, &PRFacts{ObservedAt: at(100)}) ||
+		PRReadStale(nil, &PRFacts{ObservedAt: at(100)}) || PRReadStale(&PRFacts{ObservedAt: at(100)}, nil) {
+		t.Fatal("PRReadStale: want only a strictly older read stale")
+	}
+}
+
+func TestCarryWorkItemsTakesTheItemsWithTheirStatesAndFacts(t *testing.T) {
+	src := Meta{WorkItem: &WorkItemRef{Provider: "github", Key: "o/r#1"}, WorkItemState: "merged",
+		WorkItemFacts: &PRFacts{Checks: "success", ObservedAt: "2026-11-27T10:00:00Z"},
+		Links:         []WorkItemLink{{Provider: "github", Key: "o/r#2", Role: LinkCreated, State: "open", Facts: &PRFacts{Conflict: true, ObservedAt: "2026-11-27T10:00:00Z"}}},
+		Unlinked:      []string{"o/r#9"}}
+	var dst Meta
+	CarryWorkItems(&dst, src)
+	l := LinksOf(dst)
+	if len(l) != 2 || l[0].State != "merged" || l[0].Facts == nil || l[0].Facts.Checks != "success" ||
+		l[1].Facts == nil || !l[1].Facts.Conflict || len(dst.Unlinked) != 1 {
+		t.Fatalf("carried links=%+v unlinked=%v, want the source's items with states and facts", l, dst.Unlinked)
 	}
 }
