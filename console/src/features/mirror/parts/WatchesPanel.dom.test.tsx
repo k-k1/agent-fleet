@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const opened = vi.hoisted(() => ({
   calls: [] as Array<[string, boolean]>,
@@ -27,6 +27,14 @@ import { useSessionsStore } from "../../sessions/store.ts";
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
+// Keep one browser zone for all renders because browserTimeZone caches its result.
+beforeAll(() => {
+  vi.stubEnv("TZ", "Asia/Tokyo");
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+
 afterEach(() => {
   useWorkItemModal.getState().close();
   useWorkItemStore.setState({ payload: null });
@@ -35,7 +43,6 @@ afterEach(() => {
   opened.menu = null;
   act(() => root?.unmount());
   vi.useRealTimers();
-  vi.unstubAllEnvs();
   setFormatPrefs("auto", "auto");
   host?.remove();
   root = null;
@@ -101,10 +108,6 @@ describe("WatchesPanel", () => {
   });
 
   it("shows the due instant across midnight in the browser zone", async () => {
-    vi.stubEnv("TZ", "Asia/Tokyo");
-    // Expire the browser zone cached by any earlier render.
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Date.now() + 2000);
     expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("Asia/Tokyo");
     setFormatPrefs("ja-JP", "UTC");
     const watch = { ...timer, due: "2026-11-26T18:21:00Z" };
