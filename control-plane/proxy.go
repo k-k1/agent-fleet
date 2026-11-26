@@ -167,6 +167,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		return
 	}
 	defer resp.Body.Close()
+	a.mgr.mirrorAfterSessionMove(r.Context(), res, r.Method, suffix)
 
 	var bufferedResponse []byte
 	var fsPutOutcome string

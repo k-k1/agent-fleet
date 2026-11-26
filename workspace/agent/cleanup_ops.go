@@ -152,6 +152,10 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 		case sessionx.SessionAlive(cur) || transcriptGrew(m, before):
 			abort, code, why = true, sessionx.TrashErrResumed, "the session was resumed while it was being moved to the trash; nothing was deleted"
 		default:
+			if err := sessionx.PreserveQueueMoveBeforeTrash(cur); err != nil {
+				abort, code, why = true, sessionx.TrashErrArchive, err.Error()
+				return
+			}
 			session.RemoveMetaAndLineage(m.Name) // a person's delete (ADR 0096 decision 6)
 		}
 	})

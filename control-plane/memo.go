@@ -78,6 +78,7 @@ type memoDTO struct {
 	// Agent stamped from the session's meta. Every other face ignores them, and no answer carries them.
 	Continuation  bool   `json:"continuation,omitempty"`
 	QueueDelivery string `json:"queueDelivery,omitempty"`
+	QueueLaunch   string `json:"queueLaunch,omitempty"`
 	// ChainID and ChainSeq mark a continuation: the root message of its chain and its place in it.
 	ChainID  string `json:"chainId,omitempty"`
 	ChainSeq int    `json:"chainSeq,omitempty"`
@@ -503,7 +504,7 @@ func (a memoAPI) create(via memoVia) func(http.ResponseWriter, *http.Request, st
 		v := via
 		if v.face == memoFaceToken {
 			v.producer, v.producerOrigin = in.Producer, in.ProducerOrigin
-			v.continuation, v.queueDelivery = in.Continuation, in.QueueDelivery
+			v.continuation, v.queueDelivery, v.queueLaunch = in.Continuation, in.QueueDelivery, in.QueueLaunch
 		}
 		dto, created, aerr := memoCreateVia(r.Context(), a.store, mv, in, v)
 		if aerr != nil {

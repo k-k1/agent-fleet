@@ -48,7 +48,11 @@ const (
 type MemoDelivery struct {
 	ID, MembershipID, QueueID string
 	State, Outcome, Session   string
-	MessageIDs                []string
+	// RunSession is the replacement reported for the launch session, if it moved.
+	RunSession string
+	// RunMoveKey identifies the replacements in the last report, including moved children.
+	RunMoveKey string
+	MessageIDs []string
 	// IdleTicks counts the consecutive scheduler ticks that saw nothing hold the delivery.
 	IdleTicks                                        int
 	CreatedAt, SentAt, OpenedAt, ClosedAt, UpdatedAt string
@@ -133,6 +137,14 @@ const (
 	HeldUnknown = "unknown"
 )
 
+// CurrentSession names the observed owner, with the launch session as the legacy default.
+func (d MemoDelivery) CurrentSession() string {
+	if d.RunSession != "" {
+		return d.RunSession
+	}
+	return d.Session
+}
+
 // DeliveryObservation is one read of the Agent for an open delivery. Gen is the number the
 // database handed out for the read before it began (ReserveDeliveryReads): of two reads of one
 // delivery the higher number is the later, whatever the clocks of the Control Planes say. At is
@@ -156,6 +168,8 @@ type DeliveryObservation struct {
 	ActIncarnation string
 	// RootTurnEndAt is the root session's lastTurnEndAt in this read, "" when it had none.
 	RootTurnEndAt string
+	RunSession    string
+	RunMoveKey    string
 }
 
 // DeliveryTS formats a delivery timestamp. Fixed width, so that the text order of two stamps
@@ -210,7 +224,7 @@ type MemoDeliveryStore interface {
 	ListDeferredToSettle(ctx context.Context) ([]MemoDelivery, error)
 	// FinishDeliveryRetire clears the pending retire of a closed delivery and keeps result
 	// (confirmed, released, done, gone, fault). retired_at is set only for a confirmed one.
-	FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error)
+	FinishDeliveryRetire(ctx context.Context, id, at, result, owner string) (bool, error)
 }
 
 // MemoDeliveryTxOps are the delivery reads and writes a MemoTx may make, scoped to its
@@ -284,7 +298,7 @@ const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, se
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
 	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain, act_mark, retire_act_mark, retire_gen, act_incarnation, retire_act_incarnation, held_detail,
 	pr_snapshot, pr_state, pr_read_at, pr_tried_at, pr_changed_at, answer_head, answer_class, answer_tried_at, close_turn_end_at, close_turn_gen,
-	defer_reason, defer_not_before, defer_at, defer_result, return_blocked, returned_at FROM memo_delivery`
+	defer_reason, defer_not_before, defer_at, defer_result, return_blocked, returned_at, run_session, run_move_key FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 	var d MemoDelivery
@@ -295,7 +309,7 @@ func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
 		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain, &d.ActMark, &d.RetireActMark, &d.RetireGen, &d.ActIncarnation, &d.RetireActIncarnation, &d.HeldDetail,
 		&d.PRSnapshot, &d.PRState, &d.PRReadAt, &d.PRTriedAt, &d.PRChangedAt, &d.AnswerHead, &d.AnswerClass, &d.AnswerTriedAt, &d.CloseTurnEndAt, &d.CloseTurnGen,
-		&d.DeferReason, &d.DeferNotBefore, &d.DeferAt, &d.DeferResult, &d.ReturnBlocked, &d.ReturnedAt)
+		&d.DeferReason, &d.DeferNotBefore, &d.DeferAt, &d.DeferResult, &d.ReturnBlocked, &d.ReturnedAt, &d.RunSession, &d.RunMoveKey)
 	d.Reported, d.RetirePending, d.Auto, d.Drain = reported != 0, retire != 0, auto != 0, drain != 0
 	d.MessageIDs = []string{}
 	if err == nil && ids != "" {
@@ -476,18 +490,20 @@ func (t memoTx) ObserveDelivery(id string, o DeliveryObservation) (int, bool, er
 	}
 	kept, err := affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET held_by=?, held_session=?, held_detail=?, held_seen_at=?, held_gen=?, limit_kinds=?, act_mark=?, act_incarnation=?,
 		  reported=1, updated_at=?, close_turn_end_at=?, close_turn_gen=?,
-		  idle_ticks=CASE WHEN ?=1 THEN 0 WHEN reported=1 AND held_by='' AND idle_ticks>=1 THEN 2 ELSE 1 END,
+		  idle_ticks=CASE WHEN ?=1 THEN 0 WHEN run_session=? AND run_move_key=? AND reported=1 AND held_by='' AND idle_ticks>=1 THEN 2 ELSE 1 END,
+		  run_session=?, run_move_key=?,
 		  progress_seen_at=CASE WHEN ?=1 THEN ? ELSE progress_seen_at END,
-		  retired_at=CASE WHEN ?=1 THEN '' ELSE retired_at END,
-		  retire_act_mark=CASE WHEN ?=1 THEN 0 ELSE retire_act_mark END,
-		  retire_act_incarnation=CASE WHEN ?=1 THEN '' ELSE retire_act_incarnation END,
-		  retire_gen=CASE WHEN ?=1 THEN 0 ELSE retire_gen END,
+		  retired_at=CASE WHEN ?=1 OR run_move_key<>? THEN '' ELSE retired_at END,
+		  retire_act_mark=CASE WHEN ?=1 OR run_move_key<>? THEN 0 ELSE retire_act_mark END,
+		  retire_act_incarnation=CASE WHEN ?=1 OR run_move_key<>? THEN '' ELSE retire_act_incarnation END,
+		  retire_gen=CASE WHEN ?=1 OR run_move_key<>? THEN 0 ELSE retire_gen END,
 		  turn_outcome=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_outcome END,
 		  turn_ms=CASE WHEN turn_ended_at='' AND ?<>'' THEN ? ELSE turn_ms END,
 		  turn_ended_at=CASE WHEN turn_ended_at='' THEN ? ELSE turn_ended_at END
 		WHERE id=? AND membership_id=? AND state=? AND held_gen<=?`,
 		o.HeldBy, o.HeldSession, o.HeldDetail, o.At, o.Gen, o.LimitKinds, o.ActMark, o.ActIncarnation, DeliveryTS(time.Now()), o.RootTurnEndAt, o.Gen,
-		held, progress, o.ProgressAt, progress, progress, progress, progress,
+		held, o.RunSession, o.RunMoveKey, o.RunSession, o.RunMoveKey, progress, o.ProgressAt,
+		progress, o.RunMoveKey, progress, o.RunMoveKey, progress, o.RunMoveKey, progress, o.RunMoveKey,
 		o.TurnEndedAt, o.TurnOutcome, o.TurnEndedAt, o.TurnMs, o.TurnEndedAt,
 		id, t.mid, DeliveryOpen, o.Gen))
 	if err != nil {
@@ -548,13 +564,16 @@ func (s *SQL) ListRetirePendingDeliveries(ctx context.Context) ([]MemoDelivery, 
 		ORDER BY closed_at, id`, DeliveryClosed, DeliveryClean))
 }
 
-func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at, result string) (bool, error) {
+func (s *SQL) FinishDeliveryRetire(ctx context.Context, id, at, result, owner string) (bool, error) {
 	retired := ""
 	if result == "confirmed" {
 		retired = at
 	}
-	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_pending=0, retired_at=?, retire_result=?, updated_at=?
-		WHERE id=? AND state=? AND retire_result=''`, retired, result, at, id, DeliveryClosed))
+	// A person can end a run straight after moving it, before the next observation. The
+	// forced retire discovers its owner. A clean close keeps the owner of its pinned answer.
+	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET retire_pending=0, retired_at=?, retire_result=?, updated_at=?,
+		run_session=CASE WHEN outcome=? AND ?<>'' THEN CASE WHEN ?=session THEN '' ELSE ? END ELSE run_session END
+		WHERE id=? AND state=? AND retire_result=''`, retired, result, at, DeliveryEnded, owner, owner, owner, id, DeliveryClosed))
 }
 
 func (t memoTx) ForgetDeliveryCloseTurn(id string) error {

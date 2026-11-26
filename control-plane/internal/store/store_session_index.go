@@ -28,6 +28,7 @@ type SessionRow struct {
 	// QueueCategoryID is the message-queue category whose delivery started the session (origin
 	// queue), "" otherwise.
 	QueueCategoryID string
+	Move            SessionMove
 	// Place is where the session runs as the Agent stored it at create (#5219); nil when the
 	// Agent reported none. Without it a stopped Workspace's list files a space session under the
 	// repository that shares its folder name.
@@ -36,6 +37,23 @@ type SessionRow struct {
 	// Written to session_work_link with the row; ListSessions does not fill it (ListSessionLinks
 	// does), so a reader that only counts sessions does not read every link title.
 	Links []SessionLink
+}
+
+// SessionMove keeps the queue lineage and move gate in the stopped workspace mirror.
+type SessionMove struct {
+	Moving         string   `json:"moving,omitempty"`
+	MovedTo        string   `json:"movedTo,omitempty"`
+	QueueReplaces  []string `json:"queueReplaces,omitempty"`
+	QueueSuccessor string   `json:"queueSuccessor,omitempty"`
+	PromptPending  bool     `json:"promptPending,omitempty"`
+}
+
+func (m SessionMove) column() string {
+	if m.Moving == "" && m.MovedTo == "" && m.QueueSuccessor == "" && len(m.QueueReplaces) == 0 && !m.PromptPending {
+		return ""
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
 }
 
 // SessionPlace is a mirrored session's place: Kind is repo, worktree, space, home or other, ID
@@ -112,9 +130,9 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID), dropNUL(r.QueueCategoryID), placeColumn(r.Place)); err != nil {
+			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place, queue_move)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID), dropNUL(r.QueueCategoryID), placeColumn(r.Place), r.Move.column()); err != nil {
 			return err
 		}
 		if err := insertSessionLinks(ctx, tx, workspaceID, r.Name, r.Links); err != nil {
@@ -167,7 +185,7 @@ func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session str
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place
+		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place, queue_move
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -177,10 +195,14 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 	for rows.Next() {
 		r := SessionRow{WorkspaceID: workspaceID}
 		var place sql.NullString
-		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession, &r.ScheduleID, &r.QueueCategoryID, &place); err != nil {
+		var move string
+		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession, &r.ScheduleID, &r.QueueCategoryID, &place, &move); err != nil {
 			return nil, err
 		}
 		r.Place = placeOfColumn(place)
+		if move != "" {
+			_ = json.Unmarshal([]byte(move), &r.Move)
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()

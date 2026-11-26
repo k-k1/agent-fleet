@@ -202,3 +202,34 @@ describe("buildRuns tie-break", () => {
     expect(names([...kids].reverse())).toEqual(["kid-z", "kid-a", "kid-b"]);
   });
 });
+
+it("shows one continuing run and its moved child with the original delivery", () => {
+  const start = "2026-11-01T00:00:00Z";
+  const rows = buildRuns([
+    sess("source", { origin: "queue", createdAt: start, alive: false, carried: "question", movedTo: "middle" }),
+    sess("middle", { origin: "user", alive: false, movedTo: "target" }),
+    sess("target", { origin: "user", kind: "codex", state: "working" }),
+    sess("old-review", { origin: "session", originSession: "source", alive: false, movedTo: "review" }),
+    sess("review", { origin: "user" }),
+    sess("nested", { origin: "session", originSession: "old-review" }),
+    sess("new-child", { origin: "session", originSession: "target" }),
+  ], new Map([["source", dlv("c1", "open", { sentAt: start })]]));
+  expect(rows).toHaveLength(1);
+  const [row] = rows;
+  expect(row.root.name).toBe("target");
+  expect(row.state).toBe("running");
+  expect(row.startedAt).toBe(Date.parse(start));
+  expect(row.deliveryId).toBe("d-c1");
+  expect(row.children.map((s) => s.name)).toEqual(["nested", "new-child", "review"]);
+});
+
+it("joins the original delivery after earlier sessions have left the list", () => {
+  const sessions = [
+    sess("current", { origin: "queue", queueReplaces: ["launch", "middle"], queueCategoryId: "c1" }),
+    sess("limited-child", { origin: "session", originSession: "current", queueReplaces: ["child-launch"] }),
+  ];
+  const [run] = buildRuns(sessions, new Map([["launch", dlv("c1", "open")]]));
+  expect(run.root.name).toBe("current");
+  expect(run.deliveryId).toBe("d-c1");
+  expect(run.children.map((s) => s.name)).toEqual(["limited-child"]);
+});

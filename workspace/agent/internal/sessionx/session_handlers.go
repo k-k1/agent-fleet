@@ -121,9 +121,13 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	// "the act came after this list" is never missed (session_actmark.go).
 	actMark, hasActMark := takeActMark()
 	metas := map[string]session.Meta{}
-	for _, m := range session.ListMetas() {
-		metas[m.Name] = m
-	}
+	// Read the source's commit marker and the target's ancestry from one metadata snapshot.
+	WithSessionMetaLock(func() {
+		for _, m := range session.ListMetas() {
+			metas[m.Name] = m
+		}
+	})
+	queueGraph := session.NewQueueGraph(metas)
 
 	live := tmuxx.LiveSessionNames()
 	// A managed session (docs/log/27 P2) has no tmux — the runtime handle decides liveness.
@@ -259,6 +263,11 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			Name: name, Tmux: session.TmuxName(name), Kind: PaneKind(name), Repo: name,
 			Alive: true, Resumable: true,
 		})
+	}
+	for i := range sessions {
+		if m, ok := metas[sessions[i].Name]; ok {
+			projectQueueMove(&sessions[i], m, metas, queueGraph)
+		}
 	}
 	// Enrich rows from their working copy (worktree flag + branch-drift). One git call
 	// per unique dir.

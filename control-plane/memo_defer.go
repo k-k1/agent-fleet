@@ -207,7 +207,7 @@ func (r *memoQueueRunner) deferCheck(ctx context.Context, v *memoMemberView, d s
 		out.result = store.DeferDroppedTurn
 		return out
 	}
-	status, body, ok := r.askPRSnapshot(ctx, v.res, memoPRSnapshotRequest{Session: d.Session, Since: d.DeferAt})
+	status, body, ok := r.askPRSnapshot(ctx, v.res, memoPRSnapshotRequest{Session: tree[0].Name, Since: d.DeferAt})
 	var reply memoPRSnapshotReply
 	if !ok || status != http.StatusOK || json.Unmarshal(body, &reply) != nil || reply.PRs == nil {
 		out.result = store.DeferDroppedUnread
@@ -325,7 +325,7 @@ func (r *memoQueueRunner) deferRecheck(ctx context.Context, v *memoMemberView, d
 	if err != nil || !env.reportsQueue() {
 		return "wait"
 	}
-	tree := deliveryTree(env.Sessions, d.Session)
+	tree := deliveryTree(env.Sessions, d.CurrentSession())
 	if len(tree) == 0 {
 		return store.DeferDroppedUnread
 	}

@@ -87,15 +87,70 @@ const OPEN = new Set(["claimed", "sending", "open"]);
 /** A session waiting for the member: its live state, or the question it was stopped on. */
 export const waitsForMember = (s: Session): boolean => isWaitingSession(s) || (!s.alive && !!s.carried);
 
+// Older Agents expose the committed forward edge. Current Agents also carry the earlier
+// names on the replacement, so an archived source or a missing intermediate does not split a run.
+function runMoveIndex(sessions: Session[]): (name: string) => string {
+  const next = new Map<string, string>();
+  for (const s of sessions) {
+    const target = s.queueSuccessor ?? s.movedTo;
+    if (target) next.set(s.name, target);
+  }
+  for (const s of sessions) {
+    let to = s.name;
+    for (const from of [...(s.queueReplaces ?? [])].reverse()) {
+      next.set(from, to);
+      to = from;
+    }
+  }
+  return (name) => {
+    let current = name;
+    for (let i = 0; i < next.size; i++) {
+      const target = next.get(current);
+      if (!target) return current;
+      current = target;
+    }
+    return next.has(current) ? name : current;
+  };
+}
+
+function continuingSessions(sessions: Session[], current: (name: string) => string): Session[] {
+  const byName = new Map(sessions.map((s) => [s.name, s]));
+  const roles = new Map<string, Session>();
+  for (const s of sessions) {
+    if (s.origin !== "queue" && s.origin !== "session") continue;
+    const name = current(s.name);
+    const role = roles.get(name);
+    if (!role || s.origin === "queue") roles.set(name, s);
+  }
+  return [...roles].flatMap(([name, role]) => {
+    const s = byName.get(name);
+    if (!s) return [];
+    return [{
+      ...s,
+      origin: role.origin,
+      originSession: role.originSession ? current(role.originSession) : undefined,
+      queueCategoryId: role.queueCategoryId,
+      createdAt: role.createdAt ?? s.createdAt,
+    }];
+  });
+}
+
 /** Every run in the session list, newest first. `deliveries` maps a run's session name to what
  *  its queue reported. A run's state is the queue's word when there is one (a delivery stays open
  *  while a session it started still works, and closed once it ended), except that a closed run
  *  whose root session is alive is listed as running (`resumed`); the sessions' own state decides
  *  only when no delivery is known. */
 export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelivery>): RunRow[] {
-  const byName = new Map(sessions.map((s) => [s.name, s]));
+  const current = runMoveIndex(sessions);
+  const active = continuingSessions(sessions, current);
+  const byName = new Map(active.map((s) => [s.name, s]));
+  const byOwner = new Map<string, RunDelivery>();
+  for (const [name, d] of deliveries) {
+    const owner = current(name);
+    if (!byOwner.has(owner) || name === owner) byOwner.set(owner, d);
+  }
   const kids = new Map<string, Session[]>();
-  for (const s of sessions) {
+  for (const s of active) {
     if (s.origin !== "session") continue;
     const root = runRootName(s, byName);
     if (!root) continue;
@@ -103,14 +158,14 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
     list.push(s);
     kids.set(root, list);
   }
-  return sessions
+  return active
     .filter((s) => s.origin === "queue")
     .sort((a, b) => byCreated(b, a))
     .map((root) => {
       const link = startedLink(root.links);
       const children = (kids.get(root.name) ?? []).sort(byCreated);
       const tree = [root, ...children];
-      const d = deliveries.get(root.name);
+      const d = byOwner.get(root.name);
       const waiting = tree.some(waitsForMember) || (!!d && OPEN.has(d.state) && d.heldBy === "person");
       let state: RunState;
       let resumed = false;

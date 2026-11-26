@@ -79,7 +79,11 @@ func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via mem
 	if err != nil {
 		return memoContinuationVerdict{}, err
 	}
-	if !ok || d.MembershipID != membershipID || d.QueueID != q.CategoryID || d.State != store.DeliveryOpen || d.Session == "" || d.Session != via.producer ||
+	launch := via.queueLaunch
+	if launch == "" {
+		launch = via.producer
+	}
+	if !ok || d.MembershipID != membershipID || d.QueueID != q.CategoryID || d.State != store.DeliveryOpen || d.Session == "" || d.Session != launch ||
 		memoDeliveryPastDue(d, q, time.Now()) {
 		return no(memoContHeldDelivery, "")
 	}

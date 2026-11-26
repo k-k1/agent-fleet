@@ -1107,12 +1107,14 @@ type sessionWire struct {
 	// Moving / MovedTo: the session this one is being moved to, or was moved to (ADR 0115
 	// decision 11.7). Dropped here, a moved source's row cannot say where the conversation
 	// went or offer "resume here anyway", and a pending move offers neither retry nor cancel.
-	// No DB-mirror column: every action on them needs the running Agent.
 	Moving  string `json:"moving,omitempty"`
 	MovedTo string `json:"movedTo,omitempty"`
-	// QueueDelivery: the queue delivery whose fire created this session (ADR 0137, the Agent's
-	// meta). Reconciliation looks a delivery's session up by it when the Agent cannot say what
-	// became of the create (memo_delivery.go), and the Console links the row to its delivery.
+	// QueueReplaces preserves the earlier names of a queue node after its move.
+	QueueReplaces  []string `json:"queueReplaces,omitempty"`
+	QueueSuccessor string   `json:"queueSuccessor,omitempty"`
+	// QueueDelivery is the ID of the queue launch this root owns. Reconciliation uses it when
+	// the Agent cannot say what became of a create (memo_delivery.go). QueueReplaces recovers the
+	// launch name if the root moved.
 	// Dropped here, a create whose answer was lost is closed as unknown although its session
 	// exists. No DB-mirror column: that lookup only happens with the Agent answering.
 	QueueDelivery string `json:"queueDelivery,omitempty"`
@@ -1206,6 +1208,8 @@ func sessionRows(list []sessionWire) []store.SessionRow {
 			Label: s.Label, CreatedAt: s.CreatedAt, State: state,
 			Carried: s.Carried, Studio: s.Studio,
 			Origin: s.Origin, OriginSession: s.OriginSession, ScheduleID: s.ScheduleID, QueueCategoryID: s.QueueCategoryID,
+			Move: store.SessionMove{Moving: s.Moving, MovedTo: s.MovedTo, QueueReplaces: s.QueueReplaces, QueueSuccessor: s.QueueSuccessor,
+				PromptPending: s.InitialPromptState == "pending"},
 			Place: storePlace(s.Place),
 			Links: store.SessionLinksFromJSON(s.Links),
 		})
@@ -1265,6 +1269,7 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 			Studio: r0.Studio,
 			// Who raised it: the Console classifies runs (auto-run views vs. Sessions list) by these.
 			Origin: r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID, QueueCategoryID: r0.QueueCategoryID,
+			Moving: r0.Move.Moving, MovedTo: r0.Move.MovedTo, QueueReplaces: r0.Move.QueueReplaces, QueueSuccessor: r0.Move.QueueSuccessor,
 			// Which items it is on: the Console's rows and item details read them while stopped too.
 			Links: store.SessionLinksJSON(links[r0.Name]),
 			// Container is down: we can't check the dir, so assume resumable; the

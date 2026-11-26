@@ -94,6 +94,8 @@ type cpCreate struct {
 	// create claims to be a continuation. Fields has no field for it, so what the model writes
 	// under that name is dropped by the decode.
 	QueueDelivery string `json:"queueDelivery,omitempty"`
+	// QueueLaunch is stamped when Producer is the committed replacement of the launch session.
+	QueueLaunch string `json:"queueLaunch,omitempty"`
 }
 
 // Patch is PATCH /memos/{id}: the fields update_memo may change. Nil leaves a field as it is,
@@ -232,10 +234,15 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 	in.Memo.Repo = bucketFor(caller, in.Memo.Repo)
 	out := cpCreate{Fields: in.Memo, Producer: producer, ProducerOrigin: origin}
 	if in.Memo.Continuation {
-		if out.QueueDelivery = QueueDeliveryOf(in.From); out.QueueDelivery == "" {
+		delivery, launch := queueOwner(in.From)
+		if delivery == "" {
 			httpx.WriteErr(w, http.StatusBadRequest, "continuation_not_a_queue_run",
 				"continuation is only for a session a queue started: this session was not given a queued message")
 			return
+		}
+		out.QueueDelivery, out.ProducerOrigin = delivery, session.OriginQueue
+		if launch != producer {
+			out.QueueLaunch = launch
 		}
 	}
 	body, err := json.Marshal(out)
@@ -270,7 +277,11 @@ func attribution(from string, m *session.Meta) (producer, origin string) {
 	if m == nil {
 		return ProducerOperator, session.OriginOperator
 	}
-	return strings.TrimSpace(from), session.OriginOf(*m)
+	name := strings.TrimSpace(from)
+	if m.QueueMove != nil || m.QueueSuccessor != "" || m.MovedTo != "" || m.QueueDelivery != "" {
+		return name, session.OriginOf(session.ReadQueueGraph().Project(*m))
+	}
+	return name, session.OriginOf(*m)
 }
 
 // HandleUpdate is PATCH /memos/{id}. The query's from is the calling session, filled by the MCP
@@ -332,18 +343,29 @@ type cpDefer struct {
 	At        string `json:"at"`
 }
 
-// QueueDeliveryOf is the queue delivery that started the session named from, "" for none (or a
-// name with no meta).
+// QueueDeliveryOf is the delivery the named session currently owns as the run's root.
 func QueueDeliveryOf(from string) string {
+	delivery, _ := queueOwner(from)
+	return delivery
+}
+
+func queueOwner(from string) (delivery, launch string) {
 	from = strings.TrimSpace(from)
 	if !session.ValidName(from) {
-		return ""
+		return "", ""
 	}
-	m, ok := session.ReadMeta(from)
-	if !ok {
-		return ""
+	if m, ok := session.ReadMeta(from); !ok || m.Archived {
+		return "", ""
 	}
-	return m.QueueDelivery
+	g := session.ReadQueueGraph()
+	role, queue := g.Lineage(from)
+	if !queue || role.Origin != session.OriginQueue || g.Current(from) != from {
+		return "", ""
+	}
+	if len(role.Previous) != 0 {
+		return role.Delivery, role.Previous[0]
+	}
+	return role.Delivery, from
 }
 
 // HandleDefer is POST /memos/defer (ADR 0137, addendum 2026-11-19, part B).
@@ -353,12 +375,12 @@ func HandleDefer(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
-	delivery := QueueDeliveryOf(in.From)
+	delivery, launch := queueOwner(in.From)
 	if delivery == "" {
 		httpx.WriteErr(w, http.StatusConflict, "no_queue_delivery", "this session was not started by a queue run, so it has no message to hand back")
 		return
 	}
-	body, err := json.Marshal(cpDefer{Session: strings.TrimSpace(in.From), Reason: in.Reason, NotBefore: in.NotBefore,
+	body, err := json.Marshal(cpDefer{Session: launch, Reason: in.Reason, NotBefore: in.NotBefore,
 		Cancel: in.Cancel, At: time.Now().Format(time.RFC3339Nano)})
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "encode_failed", err.Error())

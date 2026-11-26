@@ -441,6 +441,7 @@ const errCodeMetaWriteFailed = "meta_write_failed"
 // leaves the move pending: the target exists, so retry commits it.
 func finishMove(mv *sourceMove, rec moveRecord, target []byte) (*sessionMoveWire, error) {
 	if m, ok := session.ReadMeta(mv.source); !ok || m.MovedTo != rec.Target {
+		markQueueMoveTarget(mv.source, rec.Target)
 		if err := mv.commit(); err != nil {
 			rec.State, rec.Error = moveUncertain, err.Error()
 			_ = moveRecords.Write(mv.source, rec)
@@ -470,8 +471,18 @@ func completeMove(source string, rec moveRecord, target []byte) *sessionMoveWire
 			log.Printf("move: %s: moved to %s but could not be stopped: %v", source, rec.Target, err)
 		}
 	}
-	moveRecords.Remove(source)
-	releaseMoveTarget(rec.Target)
+	var lineageErr error
+	WithSessionMetaLock(func() {
+		if m, ok := session.ReadMeta(source); ok {
+			lineageErr = keepQueueMove(m)
+		}
+	})
+	if lineageErr != nil {
+		log.Printf("move: %s: retaining recovery record for queue ownership: %v", source, lineageErr)
+	} else {
+		moveRecords.Remove(source)
+		releaseMoveTarget(rec.Target)
+	}
 	res.Delivery = moveDeliveryState(rec.Target)
 	return res
 }
