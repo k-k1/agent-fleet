@@ -481,6 +481,8 @@ export interface TenantServer {
   // The client the tenant registered at the server's authorization server, if any. A stored
   // secret comes back as MASKED; none at all means a public client.
   oauth_client?: { issuer: string; client_id: string; client_secret?: string };
+  // OAuth only: the scopes the sign-in requests instead of what the server names (ADR 0146).
+  scopes?: string[];
   created_by?: string;
   updated_at?: string;
 }
@@ -516,6 +518,9 @@ export interface TenantForm {
   // stored secret only for the same pair, so changing either needs the secret typed again.
   oauthOrigIssuer: string;
   oauthOrigClientId: string;
+  // OAuth only: the definition's scopes as typed, separated by spaces or newlines. Empty = the
+  // sign-in requests what the server names.
+  oauthScopes: string;
 }
 
 export const emptyTenantForm = (): TenantForm => ({
@@ -541,6 +546,7 @@ export const emptyTenantForm = (): TenantForm => ({
   oauthSecretDrop: false,
   oauthOrigIssuer: "",
   oauthOrigClientId: "",
+  oauthScopes: "",
 });
 
 export const tenantFormOf = (s: TenantServer): TenantForm => ({
@@ -566,6 +572,7 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   oauthSecretDrop: false,
   oauthOrigIssuer: s.oauth_client?.issuer || "",
   oauthOrigClientId: s.oauth_client?.client_id || "",
+  oauthScopes: (s.scopes || []).join("\n"),
 });
 
 // urlMoved mirrors the control plane's urlHostChanged: another host, another effective port
@@ -635,6 +642,26 @@ const tenantOAuthClient = (f: TenantForm) => {
   return { issuer: f.oauthIssuer.trim(), client_id: f.oauthClientId.trim(), client_secret: secret };
 };
 
+// tenantScopes is the scope list a tenant body carries: the typed tokens, OAuth only. Only ASCII
+// whitespace separates (space, tab, LF, VT, FF, CR), so another space character such as NBSP stays
+// inside a token, where tenantScopesValid refuses it the way the control plane would.
+export const tenantScopes = (f: TenantForm): string[] =>
+  f.auth === "oauth" ? f.oauthScopes.split(/[\x09-\x0d\x20]+/).filter((s) => s !== "") : [];
+
+// MAX_SCOPE_LEN is the Agent's bound on an authorization request's scope parameter.
+const MAX_SCOPE_LEN = 1024;
+const OFFLINE_ACCESS = "offline_access";
+
+// tenantScopesValid mirrors validDefScopes (control plane and Agent): each scope is visible ASCII
+// without a quote, a backslash or a comma, and the list fits in MAX_SCOPE_LEN with offline_access
+// appended. The control plane refuses anything else with mcp_oauth_scopes_invalid.
+export const tenantScopesValid = (f: TenantForm): boolean => {
+  const scopes = tenantScopes(f);
+  if (!scopes.every((s) => /^[\x21\x23-\x2b\x2d-\x5b\x5d-\x7e]+$/.test(s))) return false;
+  const joined = scopes.join(" ").length;
+  return (scopes.includes(OFFLINE_ACCESS) ? joined : joined + OFFLINE_ACCESS.length + 1) <= MAX_SCOPE_LEN;
+};
+
 // OAuth distributes no credential, so "each member supplies the value" has nothing to apply to:
 // the form hides the choice and the body never sends it with OAuth (the CP refuses the pair).
 export const tenantUserSecret = (f: TenantForm): boolean => f.userSecret && f.auth !== "oauth";
@@ -658,6 +685,7 @@ export const bodyOfTenant = (f: TenantForm, tenantSlug: string): Record<string, 
   user_secret: tenantUserSecret(f),
   ...(f.auth === "oauth" ? { auth: "oauth" } : {}),
   ...(tenantOAuthClient(f) ? { oauth_client: tenantOAuthClient(f) } : {}),
+  ...(tenantScopes(f).length > 0 ? { scopes: tenantScopes(f) } : {}),
 });
 
 // A tenant client names the authorization server it was registered at: an https issuer.
@@ -670,7 +698,8 @@ export const tenantFormValid = (f: TenantForm): boolean =>
   NAME_RE.test(f.name.trim()) &&
   /^https?:\/\/.+/.test(f.url.trim()) &&
   (tenantUserSecret(f) || bearerReady(f.auth, f.token, f.headers)) &&
-  tenantOAuthClientValid(f);
+  tenantOAuthClientValid(f) &&
+  tenantScopesValid(f);
 
 // NOTE: this file used to export a codexUnsupported() helper, on the premise that
 // codex could carry nothing but a bearer token on a remote MCP server. That premise
