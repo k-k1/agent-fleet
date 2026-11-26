@@ -100,6 +100,51 @@ func TestUpstreamHeaders(t *testing.T) {
 	}
 }
 
+// albHeaders is what an AWS Application Load Balancer adds to a request it forwards, with the
+// TLS and mutual-TLS listener options on.
+var albHeaders = http.Header{
+	"X-Amzn-Trace-Id":                      {"Root=1-67891233-abcdef012345678912345678"},
+	"X-Forwarded-For":                      {"203.0.113.7"},
+	"X-Forwarded-Proto":                    {"https"},
+	"X-Forwarded-Port":                     {"443"},
+	"X-Amzn-Tls-Version":                   {"TLSv1.3"},
+	"X-Amzn-Tls-Cipher-Suite":              {"TLS_AES_128_GCM_SHA256"},
+	"X-Amzn-Mtls-Clientcert-Serial-Number": {"0A"},
+	"X-Amzn-Mtls-Clientcert-Issuer":        {"CN=ca"},
+	"X-Amzn-Mtls-Clientcert-Subject":       {"CN=client"},
+	"X-Amzn-Mtls-Clientcert-Validity":      {"NotBefore=2026-01-01T00:00:00Z;NotAfter=2027-01-01T00:00:00Z"},
+	"X-Amzn-Mtls-Clientcert-Leaf":          {"-----BEGIN%20CERTIFICATE-----"},
+	"X-Amzn-Mtls-Clientcert":               {"-----BEGIN%20CERTIFICATE-----"},
+}
+
+// A call through an ALB is accepted and the load balancer's headers are dropped, not passed to
+// Bedrock; the exemption is the exact names, so the rest of the x-amzn- family is still refused.
+func TestUpstreamHeadersDropsLoadBalancerHeaders(t *testing.T) {
+	in := http.Header{"Content-Type": {"application/json"}, "Accept": {"application/json"}}
+	for k, v := range albHeaders {
+		// The way a server hands them over is not always canonical.
+		in[strings.ToLower(k)] = v
+	}
+	out, ref := UpstreamHeaders(in)
+	if ref != nil {
+		t.Fatal(ref)
+	}
+	if len(out) != 2 || out.Get("Content-Type") != "application/json" || out.Get("Accept") != "application/json" {
+		t.Fatalf("out = %v", out)
+	}
+	for _, h := range []string{"X-Amzn-Trace-Id-Override", "X-Amzn-Trace", "X-Amzn-Oidc-Identity", "X-Amzn-Tls-Region"} {
+		if _, ref := UpstreamHeaders(http.Header{h: {"v"}}); codeOf(ref) != CodeRequestRefused {
+			t.Errorf("%s: %v", h, ref)
+		}
+	}
+	// A load balancer header does not mask a refused header next to it.
+	mixed := albHeaders.Clone()
+	mixed.Set("X-Amz-Security-Token", "v")
+	if _, ref := UpstreamHeaders(mixed); codeOf(ref) != CodeRequestRefused {
+		t.Fatalf("mixed: %v", ref)
+	}
+}
+
 func TestOutputCap(t *testing.T) {
 	for _, c := range []struct {
 		op, body string

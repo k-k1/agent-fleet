@@ -393,9 +393,17 @@ func TestProvidedRouteGatewayCompleteStream(t *testing.T) {
 	if p := e.memberPeriod(); p.SpentMicro != want || p.ReservedMicro != 0 {
 		t.Fatalf("member period = %+v", p)
 	}
-	// The second call takes the cached session.
-	if resp, _ := e.call(tok, streamPath(prTestModel), prStreamBody, nil); resp.StatusCode != 200 || e.assumer.count() != 1 {
-		t.Fatalf("second call: %d, %d AssumeRole calls", resp.StatusCode, e.assumer.count())
+	// The second call takes the cached session. It comes through an AWS ALB, whose own headers are
+	// accepted and never reach Bedrock.
+	alb := map[string]string{"X-Amzn-Trace-Id": "Root=1-67891233-abcdef012345678912345678",
+		"X-Forwarded-For": "203.0.113.7", "X-Forwarded-Proto": "https", "X-Forwarded-Port": "443"}
+	if resp, body := e.call(tok, streamPath(prTestModel), prStreamBody, alb); resp.StatusCode != 200 || e.assumer.count() != 1 {
+		t.Fatalf("second call through an ALB: %d %s, %d AssumeRole calls", resp.StatusCode, body, e.assumer.count())
+	}
+	for h := range alb {
+		if v := e.up.reqs[1].Header.Get(h); v != "" {
+			t.Errorf("load balancer header %s reached Bedrock: %q", h, v)
+		}
 	}
 	// Five minutes before the session's end it is replaced.
 	later := e.clock().Add(56 * time.Minute)
