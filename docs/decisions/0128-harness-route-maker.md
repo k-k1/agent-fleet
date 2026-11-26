@@ -765,7 +765,7 @@ table from becoming a menu of models that fail on the first message, which is wh
   gateway runs; opencode's while the gateway's loopback listener is up (opencode can only speak TCP). opencode's
   billing choice "off" (UsageOff) does not close the route: it is about opencode.ai and stored keys, and the route runs
   on a marked AWS profile chosen for the session (whether "off" should also stop it is #5263). opencode's Bedrock
-  model listing runs behind the request (a cold request waits at most 2 s, a cached menu is answered at once), only
+  model listing runs behind the request (a cold request waits at most 4 s, a cached menu is answered at once, and the kind catalog starts it ahead of the launch dialog), only
   while the gateway holds a marked profile, and a failed listing is not retried for a minute. A restricted credential
   policy that allows `bedrock` keeps opencode's Bedrock models in the launch menu (`agents.ExplicitRouteModels`), and the
   Console offers opencode on a marked profile alone, with no launch on "no route" and no session move to it

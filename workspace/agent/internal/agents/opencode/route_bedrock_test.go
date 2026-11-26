@@ -388,7 +388,11 @@ func TestBedrockRouteModelsFollowTheRoutesAvailability(t *testing.T) {
 	}
 	// An expired menu is returned as it is while a refresh runs behind the request; a failed
 	// listing keeps the last good one, and is not retried inside the backoff.
-	expire := func() { routeModels.mu.Lock(); routeModels.at = routeModels.at.AddDate(0, 0, -1); routeModels.mu.Unlock() }
+	expire := func() {
+		routeModels.mu.Lock()
+		routeModels.at = routeModels.at.AddDate(0, 0, -1)
+		routeModels.mu.Unlock()
+	}
 	failed := 0
 	listBedrockModels = func() ([]string, error) { failed++; return nil, errors.New("boom") }
 	expire()
@@ -506,13 +510,21 @@ func TestBedrockRouteNeedsAGatewayWithALoopback(t *testing.T) {
 	ok := &fakeGateway{}
 	withGateway(t, ok)
 	for _, pref := range []string{UsageOff, UsageOwn} {
-		UsagePref = func() string { return pref }
-		if !slices.Equal(a.OfferedRoutes(), []string{RouteBedrock}) {
-			t.Errorf("billing choice %q: offered %v", pref, a.OfferedRoutes())
-		}
-		if ref := a.CheckRoute(context.Background(), bedrockSel(), bedrockID); ref != nil {
-			t.Errorf("billing choice %q: check = %+v", pref, ref)
-		}
+		t.Run(pref, func(t *testing.T) {
+			stubUsagePref(t, pref)
+			if !slices.Equal(a.OfferedRoutes(), []string{RouteBedrock}) {
+				t.Errorf("offered %v", a.OfferedRoutes())
+			}
+			if ref := a.CheckRoute(context.Background(), bedrockSel(), bedrockID); ref != nil {
+				t.Errorf("check = %+v", ref)
+			}
+			if _, ref := a.BindRoute(bedrockSel()); ref != nil {
+				t.Errorf("bind = %+v", ref)
+			}
+			if _, err := a.ApplyRoute(bedrockMeta(t, "pref-"+pref), bedrockSel()); err != nil {
+				t.Errorf("apply = %v", err)
+			}
+		})
 	}
 	if a.ExplicitRoute(bedrockID) != RouteBedrock || a.ExplicitRoute("opencode/big-pickle") != "" {
 		t.Error("ExplicitRoute does not name the bedrock route for exactly the bedrock models")
@@ -551,31 +563,53 @@ func TestBedrockRouteModelsNeverStallTheList(t *testing.T) {
 	t.Cleanup(func() { resetRouteModels(prev) })
 	withGateway(t, &fakeGateway{})
 
-	release := make(chan struct{})
-	listBedrockModels = func() ([]string, error) { <-release; return []string{bedrockID}, nil }
-	resetRouteModels(listBedrockModels)
-	start := time.Now()
-	if got := BedrockRouteModels(); got != nil {
+	// The hung listing is released by a cleanup that runs before the reset above waits for it, so
+	// a failed assertion cannot leave the test waiting on it.
+	hold := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	// models calls BedrockRouteModels off the test goroutine and fails, instead of hanging, when
+	// it does not answer within d.
+	models := func(d time.Duration) []string {
+		t.Helper()
+		ch := make(chan []string, 1)
+		go func() { ch <- BedrockRouteModels() }()
+		select {
+		case got := <-ch:
+			return got
+		case <-time.After(d):
+			release()
+			t.Fatalf("BedrockRouteModels did not answer within %v", d)
+			return nil
+		}
+	}
+
+	resetRouteModels(func() ([]string, error) { <-hold; return []string{bedrockID}, nil })
+	if got := models(routeModelsWait + 2*time.Second); got != nil {
 		t.Fatalf("cold and hung: %v", got)
 	}
-	if d := time.Since(start); d > routeModelsWait+time.Second {
-		t.Fatalf("a hung listing held the request for %v", d)
-	}
-	close(release)
+	release()
 	settleRouteModels()
-	if got := BedrockRouteModels(); !slices.Equal(got, []string{bedrockID}) {
+	if got := models(time.Second); !slices.Equal(got, []string{bedrockID}) {
 		t.Fatalf("after the listing ended: %v", got)
 	}
 
 	// Expired and hung again: the cached menu is answered at once.
 	hang := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-hang:
+		default:
+			close(hang)
+		}
+	})
 	listBedrockModels = func() ([]string, error) { <-hang; return nil, nil }
 	routeModels.mu.Lock()
 	routeModels.at = routeModels.at.AddDate(0, 0, -1)
 	routeModels.mu.Unlock()
-	start = time.Now()
-	if got := BedrockRouteModels(); !slices.Equal(got, []string{bedrockID}) || time.Since(start) > time.Second {
-		t.Fatalf("expired and hung: %v after %v", got, time.Since(start))
+	if got := models(time.Second); !slices.Equal(got, []string{bedrockID}) {
+		t.Fatalf("expired and hung: %v", got)
 	}
 	close(hang)
 	settleRouteModels()
@@ -583,12 +617,42 @@ func TestBedrockRouteModelsNeverStallTheList(t *testing.T) {
 	// An empty success is cached.
 	calls := 0
 	resetRouteModels(func() ([]string, error) { calls++; return []string{"opencode/big-pickle"}, nil })
-	BedrockRouteModels()
+	models(time.Second)
 	settleRouteModels()
-	BedrockRouteModels()
-	BedrockRouteModels()
+	models(time.Second)
+	models(time.Second)
 	settleRouteModels()
 	if calls != 1 {
 		t.Fatalf("an empty result was listed %d times, want 1", calls)
+	}
+}
+
+// The kind catalog warms the menu: reading the usable routes (which the Console does when it
+// loads) starts the listing, so the launch dialog's one fetch finds it done.
+func TestUsableRoutesWarmTheBedrockMenu(t *testing.T) {
+	isolatedHome(t)
+	calls := 0
+	prev := listBedrockModels
+	t.Cleanup(func() { resetRouteModels(prev) })
+	resetRouteModels(func() ([]string, error) { calls++; return []string{bedrockID}, nil })
+	g := &fakeGateway{holdsNone: true}
+	withGateway(t, g)
+	if u := (agentImpl{}).UsableRoutes(); slices.Contains(u, RouteBedrock) {
+		t.Fatalf("no marked profile, but usable: %v", u)
+	}
+	settleRouteModels()
+	if calls != 0 {
+		t.Fatalf("listed %d times with no marked profile", calls)
+	}
+	g.holdsNone = false
+	if u := (agentImpl{}).UsableRoutes(); !slices.Contains(u, RouteBedrock) {
+		t.Fatalf("marked profile, but not usable: %v", u)
+	}
+	settleRouteModels()
+	if calls != 1 {
+		t.Fatalf("warmed %d times, want 1", calls)
+	}
+	if got := BedrockRouteModels(); !slices.Equal(got, []string{bedrockID}) || calls != 1 {
+		t.Fatalf("menu = %v after %d listings", got, calls)
 	}
 }

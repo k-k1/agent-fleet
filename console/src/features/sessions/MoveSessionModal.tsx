@@ -28,6 +28,7 @@ import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { getSettings, agentLaunchDefault } from "../../lib/settings.ts";
 import { resolveModel } from "../../lib/repoLast.ts";
+import { routelessModel, routeModelFilter } from "../repos/bedrockProfiles.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useSessionsStore } from "./store.ts";
 import { openSessionByName } from "./open.ts";
@@ -219,10 +220,6 @@ export function MoveSessionModal({ session, fromLimit = false, onClose }: MoveSe
 
 // --- the move itself -----------------------------------------------------------------------
 
-// A move carries kind, model and driver and no route, so a model that runs only on a route named at
-// the launch (opencode's amazon-bedrock/… models) cannot be moved to: the Agent would refuse it.
-const moveModelOk = (id: string) => !id.startsWith("amazon-bedrock/");
-
 function MoveForm({
   session,
   preview,
@@ -265,7 +262,7 @@ function MoveForm({
   // copy: the per-repo memory, then the user's per-kind default; managed wherever it exists.
   useEffect(() => {
     if (!kind) return;
-    setModel(resolveModel(kind, session.repo || "", agentLaunchDefault(getSettings(), kind).model));
+    setModel(routelessModel(kind, resolveModel(kind, session.repo || "", agentLaunchDefault(getSettings(), kind).model)));
     setDriverPick(null);
   }, [kind, session.repo]);
 
@@ -284,6 +281,8 @@ function MoveForm({
     return reason || "";
   };
   const a = kind ? agentOf(kind) : null;
+  // A move names no route, so a model that runs only on one (opencode's amazon-bedrock/…) is not offered.
+  const modelFilter = useMemo(() => (kind ? routeModelFilter(kind, "") : undefined), [kind]);
   const children = preview.children ?? [];
   const warnings = preview.warnings ?? [];
 
@@ -347,7 +346,7 @@ function MoveForm({
       {a?.caps.model && kind && (
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.model")}</span>
-          <ModelPicker kind={kind} model={model} onChange={setModel} filter={moveModelOk} />
+          <ModelPicker kind={kind} model={model} onChange={setModel} filter={modelFilter} />
         </div>
       )}
       {a?.managedDriver && a.terminalDriver !== false && (

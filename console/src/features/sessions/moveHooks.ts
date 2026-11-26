@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { api } from "../../core/api/client.ts";
 import { agentOf } from "../../agents/registry.ts";
-import { kindLaunchable } from "../../agents/launchAccess.ts";
+import { kindLaunchable, routelessOk } from "../../agents/launchAccess.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import { getCachedConns, setCachedConns, subscribeConns } from "../repos/connsCache.ts";
@@ -45,7 +45,7 @@ export function useMoveGate(): {
   }, []);
   const connected = useMemo(
     () =>
-      pending ? null : (k: SessionKind) => (conns ? kindLaunchable(k, { conns }, kinds, { routeless: true }) : !!kinds?.has(k)),
+      pending ? null : (k: SessionKind) => (conns ? kindLaunchable(k, { conns }, kinds, { routeless: true }) : routelessOk(k, kinds)),
     [conns, kinds, pending],
   );
   const loggedIn = useCallback((k: SessionKind) => !conns || agentOf(k).available({ conns }), [conns]);

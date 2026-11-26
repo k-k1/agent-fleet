@@ -504,7 +504,7 @@ const routeModelsRetry = time.Minute
 // routeModelsWait is the longest a request waits for a listing when it has no menu at all yet. A
 // request that already has one (a cached list, even an empty one) never waits: the listing runs
 // a CLI under a timeout, and the kind's whole model list must not stall behind a hung process.
-const routeModelsWait = 2 * time.Second
+const routeModelsWait = 4 * time.Second
 
 var routeModels struct {
 	mu      sync.Mutex
@@ -555,20 +555,7 @@ func BedrockRouteModels() []string {
 	if routeUnavailable() != nil || agents.GatewayLacks(RouteBedrock) {
 		return nil
 	}
-	routeModels.mu.Lock()
-	cold := routeModels.at.IsZero()
-	stale := cold || time.Since(routeModels.at) >= routeModelsTTL
-	backoff := !routeModels.failAt.IsZero() && time.Since(routeModels.failAt) < routeModelsRetry
-	var wait chan struct{}
-	if stale && !backoff {
-		if routeModels.running == nil {
-			routeModels.running = make(chan struct{})
-			go refreshRouteModels(routeModels.running)
-		}
-		wait = routeModels.running
-	}
-	list := routeModels.list
-	routeModels.mu.Unlock()
+	wait, cold, list := startRouteModelsRefresh()
 	if wait == nil || !cold {
 		return list
 	}
@@ -579,6 +566,36 @@ func BedrockRouteModels() []string {
 	routeModels.mu.Lock()
 	defer routeModels.mu.Unlock()
 	return routeModels.list
+}
+
+// startRouteModelsRefresh starts a listing behind the caller when the menu is missing or expired
+// and no failure is cooling down, and says what to wait on (nil: nothing running that matters),
+// whether there is no menu at all yet, and the menu as it is.
+func startRouteModelsRefresh() (wait chan struct{}, cold bool, list []string) {
+	routeModels.mu.Lock()
+	defer routeModels.mu.Unlock()
+	cold = routeModels.at.IsZero()
+	stale := cold || time.Since(routeModels.at) >= routeModelsTTL
+	backoff := !routeModels.failAt.IsZero() && time.Since(routeModels.failAt) < routeModelsRetry
+	if stale && !backoff {
+		if routeModels.running == nil {
+			routeModels.running = make(chan struct{})
+			go refreshRouteModels(routeModels.running)
+		}
+		wait = routeModels.running
+	}
+	return wait, cold, routeModels.list
+}
+
+// warmRouteModels starts the listing without waiting for it. The kind catalog calls it while the
+// route is usable, which the Console reads when it loads, so the menu is usually there before the
+// launch dialog asks for it: the dialog fetches the list once and does not repeat it, so a menu
+// that arrives after that fetch would not reach an open dialog.
+func warmRouteModels() {
+	if routeUnavailable() != nil || agents.GatewayLacks(RouteBedrock) {
+		return
+	}
+	startRouteModelsRefresh()
 }
 
 // refreshRouteModels runs one listing and records its outcome; done is closed when it has.

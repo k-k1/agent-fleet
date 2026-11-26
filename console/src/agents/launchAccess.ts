@@ -54,8 +54,8 @@ export function routeUsable(k: LiveKindAccess | undefined, route: string): boole
  * connection check, so nothing is offered that was not before. A kind whose only usable routes are
  * selectable ones (opencode with nothing but a marked Bedrock profile) is offered too, unless its
  * binary is reported unsupported: its own connection check knows nothing of those routes. A caller
- * that cannot carry a route in the request (a session move) passes routeless, and such a kind is
- * not offered to it.
+ * that cannot carry a route in the request (a session move) passes routeless: a kind that cannot
+ * launch with no route chosen (emptyRouteOk) is not offered to it, however it is connected.
  */
 export function kindLaunchable(kind: string, ctx: AvailCtx, live: LiveKinds | null, opts?: { routeless?: boolean }): boolean {
   if (MODEL_FREE.has(kind)) return AGENTS[kind as SessionKind].available(ctx);
@@ -63,6 +63,7 @@ export function kindLaunchable(kind: string, ctx: AvailCtx, live: LiveKinds | nu
   const k = live.get(kind);
   if (!k) return false;
   const own = AGENTS[kind as SessionKind]?.available(ctx) ?? false;
+  if (opts?.routeless && !emptyRouteOk(kind, k)) return false;
   if (!k.usableRoutes) return own;
   if (k.usableRoutes.length === 0) return false;
   return !!noSelectionRoute(kind) || own || (!opts?.routeless && selectableOnly(kind, ctx, k));
@@ -92,6 +93,13 @@ export function emptyRouteOk(kind: string, k: LiveKindAccess | undefined): boole
   // An entry with no route facts at all is a kind that declares none: nothing to choose from.
   if (!r || (k && !k.routes && !k.fixedRoutes)) return true;
   return !!k && allowedOf(k).includes(r) && routeUsable(k, r);
+}
+
+/** routelessOk: kind may be offered to a caller that cannot name a route, from the catalogue alone
+ *  (for when the connection state is not known yet). */
+export function routelessOk(kind: string, live: LiveKinds | null | undefined): boolean {
+  const k = live?.get(kind);
+  return !!k && emptyRouteOk(kind, k);
 }
 
 /**
