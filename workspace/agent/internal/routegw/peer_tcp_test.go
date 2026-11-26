@@ -225,3 +225,33 @@ func TestIssueLoopbackRefusesWithoutALoopbackListener(t *testing.T) {
 		t.Fatal("IssueLoopback with no loopback at all was accepted")
 	}
 }
+
+// On the real /proc the client end of a loopback connection this process opened is this process.
+func TestLoopbackPeerPIDOnTheRealProc(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc")
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	server, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	pid, ok := LoopbackPeerPID(server.LocalAddr().(*net.TCPAddr), server.RemoteAddr().(*net.TCPAddr))
+	if !ok || pid != os.Getpid() {
+		t.Fatalf("pid %d ok %v, want %d", pid, ok, os.Getpid())
+	}
+	// An address with no connection names nobody.
+	if _, ok := LoopbackPeerPID(server.LocalAddr().(*net.TCPAddr), &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}); ok {
+		t.Fatal("an address with no connection was attributed")
+	}
+}

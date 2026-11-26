@@ -109,6 +109,12 @@ func Scan(root string) map[string][]int {
 	return out
 }
 
+// SessionOfPID is the session named in process pid's environment under root (normally
+// "/proc"), "" when it names none or cannot be read.
+func SessionOfPID(root string, pid int) string {
+	return sessionOf(filepath.Join(root, strconv.Itoa(pid)))
+}
+
 // sessionOf returns the AF_SESSION_NAME in a process's environment, "" when it has none or
 // the environment cannot be read (another user's process, or one that has exited).
 func sessionOf(pidDir string) string {

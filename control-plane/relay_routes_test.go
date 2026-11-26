@@ -20,6 +20,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"mime/multipart"
@@ -27,6 +28,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,6 +93,8 @@ type relayProbe struct {
 	resolved bool   // a workspace runtime was built while the route ran
 	hits     []agentHit
 	audits   []string // audit actions written while the route ran
+	rows     []store.AuditLog
+	status   int // the CP's answer; 0 when the request failed
 }
 
 // relayed reports whether the CP forwarded the request as it came: same method, and the path
@@ -171,6 +175,7 @@ func relayProbeRequest(t *testing.T, ctx context.Context, base, method, pattern,
 	}
 	req.Header.Set("Content-Type", ctype)
 	req.Header.Set(memberOriginConsoleHeader, "1")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br") // what a browser sends
 	return req
 }
 
@@ -236,6 +241,23 @@ func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[str
 			answer = `{}`
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// An answer "status=NNN\n<body>" is sent with that status (not gzipped: the Agent
+		// compresses only a 200).
+		if first, rest, ok := strings.Cut(answer, "\n"); ok && strings.HasPrefix(first, "status=") {
+			code, _ := strconv.Atoi(strings.TrimPrefix(first, "status="))
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(rest))
+			return
+		}
+		// As the real Agent does (httpx.Gzip): a 200 JSON answer is gzipped for a caller that
+		// accepts it, and the CP forwards the browser's Accept-Encoding.
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			_, _ = gz.Write([]byte(answer))
+			_ = gz.Close()
+			return
+		}
 		_, _ = w.Write([]byte(answer))
 	}))
 	t.Cleanup(agent.Close)
@@ -254,14 +276,14 @@ func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[str
 	}
 	var built atomic.Int64
 	mgr.rtFactory = countingRuntimeFactory{endpoint: agent.URL, built: &built}
-	auditRows := func() map[string]string {
+	auditRows := func() map[string]store.AuditLog {
 		rows, err := mgr.store.ListAuditByTenant(ctx, mv.TenantID, 100000)
 		if err != nil {
 			t.Fatalf("list audit: %v", err)
 		}
-		out := make(map[string]string, len(rows))
+		out := make(map[string]store.AuditLog, len(rows))
 		for _, r := range rows {
-			out[r.ID] = r.Action
+			out[r.ID] = r
 		}
 		return out
 	}
@@ -291,6 +313,7 @@ func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[str
 		// The bound is for CP-owned streams (GET /api/events), which hold the request open.
 		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		if resp, err := cp.Client().Do(relayProbeRequest(t, rctx, cp.URL, method, pattern, p.concrete)); err == nil {
+			p.status = resp.StatusCode
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 		}
@@ -300,9 +323,10 @@ func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[str
 		p.hits = append([]agentHit(nil), hits...)
 		mu.Unlock()
 		p.resolved = built.Load() > 0
-		for id, action := range auditRows() {
+		for id, row := range auditRows() {
 			if _, seen := before[id]; !seen {
-				p.audits = append(p.audits, action)
+				p.audits = append(p.audits, row.Action)
+				p.rows = append(p.rows, row)
 			}
 		}
 		out = append(out, p)

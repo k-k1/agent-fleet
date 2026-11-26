@@ -215,7 +215,7 @@ func TestMemberOriginRoutesAgreeWithTheControlPlane(t *testing.T) {
 	var agent []string
 	for _, line := range strings.Split(string(golden), "\n") {
 		method, path, ok := strings.Cut(strings.TrimSpace(line), " ")
-		if !ok || method != http.MethodPost || !(strings.HasPrefix(path, "/agents/memory/") || strings.HasPrefix(path, "/agents/memory-review/") || strings.HasPrefix(path, "/agents/memory-consolidation/") || path == "/connections/unusable/remove") {
+		if !ok || method != http.MethodPost || !(strings.HasPrefix(path, "/agents/memory/") || strings.HasPrefix(path, "/agents/memory-review/") || strings.HasPrefix(path, "/agents/memory-consolidation/") || path == "/connections/unusable/remove" || path == "/mcp-elicitations/answer") {
 			continue
 		}
 		req := httptest.NewRequest(method, path, strings.NewReader("not json"))

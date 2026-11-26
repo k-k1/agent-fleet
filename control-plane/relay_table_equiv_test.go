@@ -231,6 +231,8 @@ var frozenMemberOriginRoutes = map[string]bool{
 	// The member's removal of stored credentials the policy forbids (ADR 0138 D14a), added after
 	// the freeze.
 	"POST /api/connections/unusable/remove": true,
+	// ADR 0146 decision 6: the member's answer to a held MCP call's confirmation.
+	"POST /api/mcp-elicitations/answer": true,
 }
 
 var frozenMemberOriginHashedRoutes = map[string]bool{
@@ -410,6 +412,8 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/agents/memory-consolidation/run":               true, // #3702
 	// ADR 0138 D14a: the member's removal of stored credentials the policy forbids.
 	"POST /api/connections/unusable/remove": true,
+	// ADR 0146 decision 6: the member's answer to a held MCP call's confirmation.
+	"POST /api/mcp-elicitations/answer": true,
 	// ADR 0142 decision 1: a new, empty space under ~/spaces.
 	"POST /api/spaces": true,
 	// ADR 0142 decision 3: renaming a space's display name.
