@@ -266,6 +266,11 @@ func TestCreateInABusySpace(t *testing.T) {
 		}
 	}
 
+	// A new shell is no second agent: it opens next to the running one without the opt-in.
+	if rec = p.post(map[string]any{"kind": "shell", "space": map[string]any{"folder": sp.Folder}}, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("a shell in a busy space = %d %s, want 201", rec.Code, rec.Body)
+	}
+
 	// The explicit opt-in starts it anyway.
 	rec = post(map[string]any{"folder": sp.Folder, "allow_busy": true})
 	if rec.Code != http.StatusCreated {
@@ -275,5 +280,81 @@ func TestCreateInABusySpace(t *testing.T) {
 	rec = post(map[string]any{"name": "fresh"})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create in a new space = %d %s, want 201", rec.Code, rec.Body)
+	}
+}
+
+// A retried create whose first attempt already started a session in the space replays that
+// session from the ledger: the session it started must not turn its own retry into space_busy.
+func TestCreateInABusySpaceReplaysTheKeyedCreate(t *testing.T) {
+	p := newCreateProbe(t)
+	launches := 0
+	launchTmuxFn = func(session.Meta, bool) error { launches++; return nil }
+	sp, err := spacex.Create("kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"kind": "claude", "space": map[string]any{"folder": sp.Folder}, "idempotency_key": "space-retry"}
+	rec := p.post(body, "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s, want 201", rec.Code, rec.Body)
+	}
+	var first session.Session
+	_ = json.Unmarshal(rec.Body.Bytes(), &first)
+	sessionAliveFn = func(m session.Meta) bool { return m.Name == first.Name }
+	rec = p.post(body, "")
+	var again session.Session
+	_ = json.Unmarshal(rec.Body.Bytes(), &again)
+	if rec.Code != http.StatusOK || again.Name != first.Name {
+		t.Fatalf("retry = %d %s, want 200 replaying %s", rec.Code, rec.Body, first.Name)
+	}
+	if launches != 1 {
+		t.Fatalf("launches = %d, want 1", launches)
+	}
+}
+
+// The busy test compares where a session really runs. A recorded dir that goes through a symlink
+// and then `..` lands above the link's target, not next to the link: it makes the space busy only
+// when that real place is the space.
+func TestCreateInABusySpaceFollowsTheLinkBeforeDotDot(t *testing.T) {
+	p := newCreateProbe(t)
+	launchTmuxFn = func(session.Meta, bool) error { return nil }
+	sp, err := spacex.Create("notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ~/spaces/link -> ~/elsewhere/child, and ~/elsewhere has a folder named like the space.
+	elsewhere := filepath.Join(p.home, "elsewhere")
+	for _, d := range []string{filepath.Join(elsewhere, "child"), filepath.Join(elsewhere, sp.Folder)} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(elsewhere, "child"), filepath.Join(spacex.Root(), "link")); err != nil {
+		t.Fatal(err)
+	}
+	// Spelt like the space, runs in ~/elsewhere/<folder>: not busy. (Concatenated, not Joined:
+	// Join would clean the `..` away before the code under test sees it.)
+	p.meta(session.Meta{Name: "away", Kind: session.KindClaude, Dir: spacex.Root() + "/link/../" + sp.Folder, Origin: session.OriginUser})
+	// ~/elsewhere/back -> the space.
+	if err := os.Symlink(sp.Dir, filepath.Join(elsewhere, "back")); err != nil {
+		t.Fatal(err)
+	}
+	live := map[string]bool{"away": true}
+	sessionAliveFn = func(m session.Meta) bool { return live[m.Name] }
+	rec := p.post(map[string]any{"kind": "claude", "space": map[string]any{"folder": sp.Folder}}, "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create next to a session in another folder = %d %s, want 201", rec.Code, rec.Body)
+	}
+	var made session.Session
+	_ = json.Unmarshal(rec.Body.Bytes(), &made)
+	if err := os.Remove(session.MetaPath(made.Name)); err != nil {
+		t.Fatal(err)
+	}
+	// Spelt as ~/spaces/back (which does not exist), runs in ~/elsewhere/back, the space: busy.
+	p.meta(session.Meta{Name: "here", Kind: session.KindClaude, Dir: spacex.Root() + "/link/../back", Origin: session.OriginUser})
+	live["here"] = true
+	rec = p.post(map[string]any{"kind": "claude", "space": map[string]any{"folder": sp.Folder}}, "")
+	if rec.Code != http.StatusConflict || spaceErrCode(t, rec.Body.Bytes()) != "space_busy" || !strings.Contains(rec.Body.String(), `"session":"here"`) {
+		t.Fatalf("create next to a session that runs in the space = %d %s, want 409 space_busy naming here", rec.Code, rec.Body)
 	}
 }

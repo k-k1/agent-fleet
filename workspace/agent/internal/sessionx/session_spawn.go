@@ -275,7 +275,17 @@ var sessionAliveFn = SessionAlive
 // EvalSymlinks is the part that matters and the part that can fail (a path that does not exist,
 // a broken link). On failure the cleaned absolute path is still a better key than the raw
 // string, so it degrades rather than giving up — giving up would mean "no session is here".
+//
+// The raw path is resolved before anything cleans it: Clean folds `link/..` lexically, while the
+// directory a process actually enters is the one above the link's TARGET, so a cleaned key can
+// match a copy the session never ran in and miss the one it did.
 func workingCopyKey(dir string) string {
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		if abs, err := filepath.Abs(real); err == nil {
+			return abs
+		}
+		return real
+	}
 	abs, err := filepath.Abs(filepath.Clean(dir))
 	if err != nil {
 		return filepath.Clean(dir)

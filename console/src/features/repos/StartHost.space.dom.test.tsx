@@ -585,5 +585,64 @@ describe("Start hub — an existing space", () => {
       expect(createCalls()).toHaveLength(3);
       expect(createCalls()[2][2]).toMatchObject({ space: { folder: "sp-a", allow_busy: true } });
     });
+
+    it("after the Agent's 409, sends nothing but an explicit answer while the session list is still being read", async () => {
+      apiPost.mockImplementation(async (...a: unknown[]) => {
+        if (a[0] !== "api/sessions") return {};
+        const sp = (a[2] as { space: { allow_busy?: boolean } }).space;
+        return sp.allow_busy ? { name: "space-2" } : { error: { code: "space_busy", message: "busy", session: "s9", title: "Nightly run" } };
+      });
+      await pickNotes();
+      await typeInto(hubBox(), "続き");
+      // The re-read after the 409 never answers: the store still says nobody runs there.
+      apiGet.mockImplementation((path: string) => (path === "api/sessions" ? new Promise(() => {}) : Promise.resolve(path === "api/spaces" ? { spaces: [] } : [])));
+      await click(spaceGo());
+      expect(createCalls()).toHaveLength(1);
+      expect(askButtons()).toHaveLength(2);
+      expect(spaceGo().disabled).toBe(true);
+      await click(spaceGo());
+      await act(async () => {
+        hubBox().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+      });
+      await settle();
+      expect(createCalls()).toHaveLength(1); // neither the button nor the send key re-sent it
+      expect(document.activeElement).toBe(askButtons()[0]); // the send key points at the default answer
+      // Picking the same space again keeps the question.
+      await click(chip());
+      await click(options()[1]);
+      expect(askButtons()).toHaveLength(2);
+      await click(askButtons()[1]);
+      expect(createCalls()).toHaveLength(2);
+      expect(createCalls()[1][2]).toMatchObject({ space: { folder: "sp-a", allow_busy: true } });
+    });
+
+    it("starts the new space under the typed name, and keeps it picked with the draft when that launch fails", async () => {
+      useSessionsStore.setState({ sessions: [{ name: "s1", kind: "claude", space: "sp-a", alive: true }] as never });
+      apiPost.mockImplementation(async (...a: unknown[]) => (a[0] === "api/sessions" ? { error: { code: "runtime_failed", message: "no" } } : {}));
+      await openHub();
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(nameBox()!, "Draft 2");
+        nameBox()!.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await click(chip());
+      await click(options()[1]);
+      await typeInto(hubBox(), "続き");
+      await act(async () => {
+        hubBox().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+      });
+      await settle();
+      expect(createCalls()).toHaveLength(0);
+      await click(askButtons()[0]);
+      expect(createCalls()).toHaveLength(1);
+      expect(createCalls()[0][2]).toMatchObject({ space: { name: "Draft 2" }, initial_prompt: "続き" });
+      // Failed: the form is on New space now, with the name and the draft, and launches again.
+      expect(chip().textContent).toContain(t("start.place_new_space"));
+      expect(nameBox()!.value).toBe("Draft 2");
+      expect(hubBox().value).toBe("続き");
+      expect(askButtons()).toHaveLength(0);
+      await click(spaceGo());
+      expect(createCalls()).toHaveLength(2);
+      expect(createCalls()[1][2]).toMatchObject({ space: { name: "Draft 2" } });
+    });
   });
 });

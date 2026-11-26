@@ -419,6 +419,10 @@ func TestSpawnIntoSpaces(t *testing.T) {
 	if code, raw := env.create(body(map[string]any{"folder": elsewhere.Folder}, map[string]any{"allow_shared_working_copy": true})); !busy(code, raw) {
 		t.Fatalf("a stranger's space with the opt-in = %d %s, want 409 spawn_working_copy_busy", code, raw)
 	}
+	// space.allow_busy is the Console's "here anyway", not the spawn opt-in: a stranger's space stays busy.
+	if code, raw := env.create(body(map[string]any{"folder": elsewhere.Folder, "allow_busy": true}, nil)); !busy(code, raw) {
+		t.Fatalf("a stranger's space with space.allow_busy = %d %s, want 409 spawn_working_copy_busy", code, raw)
+	}
 	if code, raw := env.create(body(map[string]any{"folder": own.Folder}, map[string]any{"allow_shared_working_copy": true})); code != http.StatusCreated {
 		t.Fatalf("the parent's own space with the opt-in = %d %s, want 201", code, raw)
 	}
@@ -431,7 +435,7 @@ func TestSpawnIntoSpaces(t *testing.T) {
 // spaceKeyParts makes one idempotency key per distinct request of TestSpawnIntoSpaces, so a
 // replayed answer never stands in for a fresh check.
 func spaceKeyParts(space, extra map[string]any) []string {
-	parts := []string{fmt.Sprint(space["folder"]), fmt.Sprint(space["name"])}
+	parts := []string{fmt.Sprint(space["folder"]), fmt.Sprint(space["name"]), fmt.Sprint(space["allow_busy"])}
 	for k := range extra {
 		parts = append(parts, k)
 	}

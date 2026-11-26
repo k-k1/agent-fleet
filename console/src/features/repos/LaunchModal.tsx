@@ -523,6 +523,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // A launch aimed at a space an agent is running in waits for the member's answer (#5230): a new
   // space (the default) or here anyway. Tied to the folder it was asked for, so another pick drops it.
   const [busyAsk, setBusyAsk] = useState<{ folder: string; who: string } | null>(null);
+  const busyAskRef = useRef<HTMLDivElement>(null);
+  const asking = !!busyAsk && busyAsk.folder === spaceFolder && !spaceGone;
   const toggleSection = (key: LaunchSectionKey, open: boolean, set: (v: boolean) => void) => {
     set(!open);
     writeLaunchOpen(key, !open);
@@ -992,6 +994,12 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     // The same gate as the button: the send key and the collision retry come in this way too.
     if (busy || seedLoading || filesStuck || launchBlocked || spaceGone || !canLaunch) return;
     const folder = place === "new" ? "" : spaceFolder;
+    // While the question is up only an answer launches: the start button and the send key would
+    // otherwise re-send to the same space before the re-read session list says it is busy.
+    if (space && folder && !place && busyAsk?.folder === folder) {
+      busyAskRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+      return;
+    }
     if (space && folder && !place) {
       const running = runningInSpace(useSessionsStore.getState().sessions, folder);
       if (running) {
@@ -1054,8 +1062,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     if (r?.spaceGone && sentFolder) setRefusedFolder(sentFolder);
     // The list this form read was stale: ask the same question with the Agent's answer.
     if (r?.spaceBusy && sentFolder) {
+      // The Agent's title is the current one; the list may predate a rename.
       const known = useSessionsStore.getState().sessions.find((s) => s.name === r.spaceBusy!.session);
-      setBusyAsk({ folder: sentFolder, who: known ? displayName(known) : r.spaceBusy.title || r.spaceBusy.session });
+      setBusyAsk({ folder: sentFolder, who: r.spaceBusy.title || (known ? displayName(known) : r.spaceBusy.session) });
     }
     if (noAnswer) setLaunchUnknown(true);
     // The policy refused it: what the dialog offers may be out of date, so ask the Agent again.
@@ -1823,8 +1832,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             <SpacePlacePicker
               folder={spaceFolder}
               onChange={(f) => {
+                // Picking the same space again keeps the question; another place drops it.
+                if (f !== spaceFolder) setBusyAsk(null);
                 setSpaceFolder(f);
-                setBusyAsk(null);
               }}
               disabled={busy}
               gone={spaceGone}
@@ -1846,8 +1856,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               {tr("start.space_gone")}
             </span>
           )}
-          {busyAsk && busyAsk.folder === spaceFolder && !spaceGone && (
-            <div className="start-space-busy" role="alert">
+          {asking && (
+            <div className="start-space-busy" role="alert" ref={busyAskRef}>
               <span className="ui-field-hint ui-field-hint--warn">{tr("start.space_busy", { who: busyAsk.who })}</span>
               <div className="start-space-busy-actions">
                 <Button variant="primary" autoFocus disabled={busy} onClick={() => void start(false, "new")}>
@@ -1865,7 +1875,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         {detailsNotes}
         {launchUnknown && unknownNote}
         <div className="start-space-actions">
-          <Button variant="primary" className="launch-go" icon="play" title={fullLabel} onClick={submit} disabled={busy || !canLaunch}>
+          <Button variant="primary" className="launch-go" icon="play" title={fullLabel} onClick={submit} disabled={busy || !canLaunch || asking}>
             {busy
               ? tr("launch.launching")
               : runWith
