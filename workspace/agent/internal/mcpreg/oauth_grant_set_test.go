@@ -14,11 +14,14 @@ package mcpreg
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -945,5 +948,304 @@ func TestSharedGrantRenewsOnceForConcurrentMembers(t *testing.T) {
 	}
 	if n := f.tokenCount(); n != 2 {
 		t.Fatalf("%d token requests, want the sign-in and one renewal", n)
+	}
+}
+
+// A disconnect that starts while a renewal of the same sign-in is out waits for it, and revokes
+// the refresh token the renewal stored; nothing renews the grant after it.
+func TestDisconnectWaitsForTheRenewalItRaces(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a") // rt-0
+	f.revokes = nil
+	release := make(chan struct{})
+	f.mu.Lock()
+	f.tokenReply = func(n int, _ url.Values) (int, string) {
+		<-release
+		return 200, `{"access_token":"at-1","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-1"}`
+	}
+	f.mu.Unlock()
+	renewed := make(chan error, 1)
+	go func() {
+		_, err := RefreshAccessToken(context.Background(), "t-a", "at-0")
+		renewed <- err
+	}()
+	waitFor(t, func() bool { return f.tokenCount() == 2 })
+	disconnected := make(chan error, 1)
+	go func() {
+		_, err := DisconnectOAuth(context.Background(), "t-b")
+		disconnected <- err
+	}()
+	select {
+	case <-disconnected:
+		t.Fatal("the disconnect did not wait for the renewal")
+	case <-time.After(100 * time.Millisecond):
+	}
+	// While the disconnect revokes, another renewal of the same sign-in waits too: it would spend
+	// the refresh token being revoked.
+	revoking, unblock := make(chan struct{}), make(chan struct{})
+	var unblockOnce sync.Once
+	t.Cleanup(func() { unblockOnce.Do(func() { close(unblock) }) }) // before the fake's Close waits on it
+	f.mu.Lock()
+	f.revokeHook = func() { close(revoking); <-unblock }
+	f.mu.Unlock()
+	close(release)
+	if err := <-renewed; err != nil {
+		t.Fatal(err)
+	}
+	<-revoking
+	again := make(chan error, 1)
+	go func() {
+		_, err := RefreshAccessToken(context.Background(), "t-a", "at-1")
+		again <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if n := f.tokenCount(); n != 2 {
+		t.Fatalf("a renewal ran while the disconnect revoked: %d token requests", n)
+	}
+	unblockOnce.Do(func() { close(unblock) })
+	if err := <-disconnected; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-again; err == nil {
+		t.Fatal("a renewal succeeded after the disconnect")
+	}
+	f.mu.Lock()
+	revokes := append([]url.Values(nil), f.revokes...)
+	f.mu.Unlock()
+	if len(revokes) != 1 || revokes[0].Get("token") != "rt-1" {
+		t.Fatalf("revoked %v, want the renewed refresh token", revokes)
+	}
+	if _, err := AccessToken(context.Background(), "t-a"); !errors.Is(err, ErrNotSignedIn) {
+		t.Fatalf("after the disconnect: %v", err)
+	}
+}
+
+// A sign-in whose exchange returns the refresh token a renewal is spending waits for that renewal
+// and stores its successor.
+func TestSignInRacingARenewalStoresTheSuccessor(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a") // rt-0
+	req := startReq(nil)
+	mustStart(t, "t-a", req)
+	release := make(chan struct{})
+	f.mu.Lock()
+	f.tokenReply = func(n int, form url.Values) (int, string) {
+		if form.Get("grant_type") == "refresh_token" {
+			<-release
+			return 200, `{"access_token":"at-r","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-1"}`
+		}
+		return 200, `{"access_token":"at-new","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-0"}`
+	}
+	f.mu.Unlock()
+	renewed := make(chan error, 1)
+	go func() {
+		_, err := RefreshAccessToken(context.Background(), "t-b", "at-0")
+		renewed <- err
+	}()
+	waitFor(t, func() bool { return f.tokenCount() == 2 })
+	completed := make(chan error, 1)
+	go func() {
+		_, err := CompleteOAuth(context.Background(), "t-a", CompleteRequest{State: req.State, Code: "c", Iss: f.url("")})
+		completed <- err
+	}()
+	waitFor(t, func() bool { return f.tokenCount() == 3 })
+	close(release)
+	if err := <-renewed; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-completed; err != nil {
+		t.Fatal(err)
+	}
+	if g := currentGrant("t-b"); g.RefreshToken != "rt-1" || g.AccessToken != "at-new" {
+		t.Fatalf("stored refresh %q access %q", g.RefreshToken, g.AccessToken)
+	}
+}
+
+// A renewal that the AS refuses with invalid_grant ends its own sign-in; another grant that held
+// the same refresh token keeps its bearer until it expires.
+func TestInvalidGrantLeavesAnotherSignInsBearer(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	a := grantSetDef("t-a", f.url("/mcp"), c)
+	b := grantSetDef("t-b", f.url("/b/mcp"), c)
+	distributeSet(t, a, b)
+	own := func(id, u, at string, exp time.Time) secrets.MCPOAuthGrant {
+		res, _ := canonicalResource(u)
+		return secrets.MCPOAuthGrant{
+			ServerID: id, Issuer: f.url(""), Registration: OAuthRegTenant, ClientID: "corp-public", TokenAuth: "none",
+			TokenEndpoint: f.url("/token"), Resource: res, AccessToken: at, RefreshToken: "rt-same",
+			ExpiresAt: exp.Unix(), ConnectedAt: 100, SignInID: id,
+		}
+	}
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.MCPOAuth = []secrets.MCPOAuthGrant{own("t-a", a.URL, "old-a", time.Now().Add(-time.Hour)), own("t-b", b.URL, "old-b", time.Now().Add(time.Hour))}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.tokenReply = func(int, url.Values) (int, string) { return 400, `{"error":"invalid_grant"}` }
+	if _, err := AccessToken(context.Background(), "t-a"); !errors.Is(err, ErrSignInAgain) {
+		t.Fatalf("t-a: %v", err)
+	}
+	if tok, err := AccessToken(context.Background(), "t-b"); err != nil || tok != "old-b" {
+		t.Fatalf("t-b: %q, %v", tok, err)
+	}
+}
+
+// Only a request that went through the CP may be retried on unknown_resource: a public client's
+// AS that answers it is not sent the code or the refresh token again.
+func TestPublicASUnknownResourceIsNotRetried(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a")
+	f.tokenReply = func(n int, form url.Values) (int, string) {
+		if len(form["resource"]) > 1 {
+			return 400, `{"error":"unknown_resource"}`
+		}
+		return 200, `{"access_token":"at-x","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-x"}`
+	}
+	before := f.tokenCount()
+	if _, err := RefreshAccessToken(context.Background(), "t-a", "at-0"); err == nil {
+		t.Fatal("the renewal succeeded")
+	}
+	if f.tokenCount() != before+1 {
+		t.Fatalf("%d renewal requests, want one", f.tokenCount()-before)
+	}
+	req := startReq(nil)
+	mustStart(t, "t-a", req)
+	before = f.tokenCount()
+	_, err := CompleteOAuth(context.Background(), "t-a", CompleteRequest{State: req.State, Code: "c", Iss: f.url("")})
+	wantCode(t, err, OAuthErrTokenExchange)
+	if f.tokenCount() != before+1 {
+		t.Fatalf("%d exchange requests, want one", f.tokenCount()-before)
+	}
+}
+
+// An AS that accepts a shared sign-in but refuses to renew it for several servers ends the grant
+// for a new sign-in, which then asks for one server.
+func TestRenewalRefusedForTheSetStopsSharing(t *testing.T) {
+	resetOAuthState(t)
+	noShareMu.Lock()
+	noShare = map[string]bool{}
+	noShareMu.Unlock()
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a")
+	f.tokenReply = func(n int, form url.Values) (int, string) {
+		if form.Get("grant_type") == "refresh_token" && len(form["resource"]) > 1 {
+			return 400, `{"error":"invalid_target"}`
+		}
+		return 200, `{"access_token":"at-x","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-x"}`
+	}
+	if _, err := RefreshAccessToken(context.Background(), "t-a", "at-0"); !errors.Is(err, ErrSignInAgain) {
+		t.Fatalf("renewal: %v", err)
+	}
+	if st := statusOf(t, "t-b"); st.State != OAuthStateSignInAgain {
+		t.Fatalf("t-b: %+v", st)
+	}
+	_, q := signInVia(t, f, "t-a")
+	if len(q["resource"]) != 1 {
+		t.Fatalf("the next sign-in asked for %v", q["resource"])
+	}
+	if tok, err := AccessToken(context.Background(), "t-a"); err != nil || tok != "at-x" {
+		t.Fatalf("t-a after signing in alone: %q, %v", tok, err)
+	}
+}
+
+// A server that signed in on its own disconnects only that sign-in; its group's grant stays.
+func TestDisconnectOfAnOwnSignInLeavesTheGroup(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a")
+	req := startReq(func(r *StartRequest) { r.Registration = OAuthRegDCR })
+	mustStart(t, "t-a", req)
+	if _, err := CompleteOAuth(context.Background(), "t-a", CompleteRequest{State: req.State, Code: "c", Iss: f.url("")}); err != nil {
+		t.Fatal(err)
+	}
+	if st := statusOf(t, "t-a"); st.SharedWith != nil {
+		t.Errorf("an own sign-in names shared servers: %+v", st)
+	}
+	if _, err := DisconnectOAuth(context.Background(), "t-a"); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := AccessToken(context.Background(), "t-b"); err != nil || tok != "at-0" {
+		t.Fatalf("t-b lost the group's sign-in: %q, %v", tok, err)
+	}
+	if grantCount(t) != 1 {
+		t.Fatalf("%d grants", grantCount(t))
+	}
+}
+
+// Step-up scopes of a shared grant accumulate only while the next sign-in's request (the granted
+// scopes and all of them) fits.
+func TestSharedStepUpCountsTheGrantedScopes(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a")
+	granted := strings.Repeat("g", 800)
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.MCPOAuth[0].Scope = granted
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	x, y := strings.Repeat("x", 150), strings.Repeat("y", 150)
+	if err := NoteInsufficientScope("t-a", x); err != nil {
+		t.Fatal(err)
+	}
+	if err := NoteInsufficientScope("t-b", y); err != nil {
+		t.Fatal(err)
+	}
+	if st := statusOf(t, "t-a"); st.StepUpScope != y {
+		t.Fatalf("step-up of %d bytes, want the latest alone", len(st.StepUpScope))
+	}
+}
+
+// The authorization server the sign-in found must be the group's issuer: one that differs by a
+// path's trailing "/" signs in this server alone.
+func TestSharedSignInNeedsTheGroupsIssuer(t *testing.T) {
+	resetOAuthState(t)
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mcp":
+			w.Header().Add("WWW-Authenticate", `Bearer resource_metadata="`+srv.URL+`/prm", scope="mcp:read"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		case "/prm":
+			writeTestJSON(w, map[string]any{"resource": srv.URL + "/mcp", "authorization_servers": []string{srv.URL + "/realm"}})
+		case "/.well-known/oauth-authorization-server/realm":
+			writeTestJSON(w, map[string]any{
+				"issuer": srv.URL + "/realm", "authorization_endpoint": srv.URL + "/realm/authorize",
+				"token_endpoint": srv.URL + "/realm/token", "code_challenge_methods_supported": []string{"S256"},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	for _, c := range []struct {
+		issuer string
+		shared bool
+	}{{srv.URL + "/realm", true}, {srv.URL + "/realm/", false}} {
+		client := &secrets.MCPTenantClient{Issuer: c.issuer, ClientID: "corp-public"}
+		distributeSet(t, grantSetDef("t-a", srv.URL+"/mcp", client), grantSetDef("t-b", srv.URL+"/b/mcp", client))
+		res, q := mustStart(t, "t-a", startReq(nil))
+		if res.Registration != OAuthRegTenant || (len(q["resource"]) == 2) != c.shared {
+			t.Errorf("issuer %q: registration %q, resources %v", c.issuer, res.Registration, q["resource"])
+		}
 	}
 }

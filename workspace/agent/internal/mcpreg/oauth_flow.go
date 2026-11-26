@@ -554,8 +554,6 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 		revocation = srv.ep.revocation
 	}
 	// A sign-in made with the tenant's client is one for every server of that client (ADR 0146
-	// decision 4): it asks for all their URLs and scopes, and the grant serves all of them.
-	// A sign-in made with the tenant's client is one for every server of that client (ADR 0146
 	// decision 4) when the authorization server it found is the one the group names: it asks for
 	// all their URLs and scopes, and the grant serves all of them. Otherwise, and when the set
 	// does not fit one request, it is this server's alone, as before.
@@ -736,7 +734,7 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 	}
 	group := p.group
 	tok, terr := exchange(resources)
-	if terr != nil && terr.code == cpUnknownResource && len(resources) > 1 {
+	if cpRefusedSet(terr, p.tokenAuth, resources) {
 		// The CP refused the set before calling the AS (the tenant changed a row this workspace has
 		// not fetched yet), so the code is unspent: exchange it for this server alone. The grant is
 		// then this server's own, and the group's grant, if any, stays for the others.
@@ -784,18 +782,14 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		revokeUnstored(ctx, g)
 		return fail(http.StatusConflict, OAuthErrStateMismatch, "the sign-in was disconnected while it was open; sign in again")
 	}
-	if next := successorOf(&g); next != "" {
-		// The AS answered with a refresh token another grant had already renewed while this
-		// exchange was out: that one is spent, its successor is the live one.
-		g.RefreshToken = next
-	}
 	// The other members are kept only while they are still what the sign-in asked for; one that
 	// left the group or moved meanwhile reads as needing more permission.
-	reg, lerr := Load()
+	data, lerr := secrets.Load()
 	if lerr != nil {
 		mu.Unlock()
 		return fail(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be read")
 	}
+	reg := compose(data, loadTenantCache(), loadOptOut())
 	var ids []string
 	for _, m := range members {
 		if m.ServerID != p.serverID && !memberStillValid(reg, m, p.group) {
@@ -803,6 +797,21 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		}
 		g.Members = append(g.Members, m)
 		ids = append(ids, m.ServerID)
+	}
+	// The grants this one replaces are held still while it is stored: no renewal of theirs can
+	// rotate a refresh token between the successor check below and the write.
+	var keys []string
+	for i := range data.MCPOAuth {
+		if replacedBy(&data.MCPOAuth[i], g, ids) {
+			keys = append(keys, grantKey(&data.MCPOAuth[i]))
+		}
+	}
+	unlock := lockAll(keys)
+	defer unlock()
+	if next := successorOf(&g); next != "" {
+		// The AS answered with a refresh token a renewal had already rotated while this exchange
+		// was out: that one is spent, the newest successor is the live one.
+		g.RefreshToken = next
 	}
 	err := updateSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuth[:0]

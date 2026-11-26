@@ -292,13 +292,18 @@ func sameSignIn(a, b *secrets.MCPOAuthGrant) bool {
 	return a.ServerID == b.ServerID && grantGeneration(a) == grantGeneration(b)
 }
 
-// grantKey is the lock of the credentials a renewal spends: the client at its issuer and the
-// refresh token (hashed). Two grants that hold the same refresh token (an AS that returns it again
-// on another sign-in, a group's members) never spend it twice at once, and grants with other
-// refresh tokens never wait for each other.
+// grantKey is the lock of one stored sign-in: the server it was started from and its generation,
+// which a renewal keeps. Renewals and a disconnect of that sign-in hold it, so it stays the same
+// across a rotation and no request of one sign-in overtakes another; members of a shared grant use
+// one sign-in and so one lock, and grants of other sign-ins never wait for each other.
 func grantKey(g *secrets.MCPOAuthGrant) string {
-	sum := sha256.Sum256([]byte(g.RefreshToken))
-	return "cred\n" + g.Issuer + "\n" + g.ClientID + "\n" + hex.EncodeToString(sum[:16])
+	return "grant\n" + g.ServerID + "\n" + grantGeneration(g)
+}
+
+// credKey names a refresh token of one client, hashed: what spent records.
+func credKey(g *secrets.MCPOAuthGrant, refresh string) string {
+	sum := sha256.Sum256([]byte(refresh))
+	return g.Issuer + "\n" + g.ClientID + "\n" + hex.EncodeToString(sum[:16])
 }
 
 // signInLockKey orders a sign-in's completion against a disconnect of what it would store: per

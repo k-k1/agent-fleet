@@ -33,6 +33,13 @@ const tokenAuthCP = "cp"
 // of the kind and is never retried.
 const cpUnknownResource = "unknown_resource"
 
+// cpRefusedSet reports whether terr is the CP's own refusal of a set of resources, given before
+// it called the AS. Only a request that went through the CP can carry it: a public client talks
+// to the AS directly, and whatever code the AS chooses says nothing about what it spent.
+func cpRefusedSet(terr *tokenError, tokenAuth string, resources []string) bool {
+	return terr != nil && tokenAuth == tokenAuthCP && terr.code == cpUnknownResource && len(resources) > 1
+}
+
 // tenantClient is the tenant's client for srv, when the definition carries one for that issuer.
 // A client registered at another AS says nothing about this one, so the order goes on.
 func tenantClient(d ServerDef, srv OAuthServer) (clientIdentity, bool) {
