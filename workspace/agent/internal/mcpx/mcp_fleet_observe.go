@@ -363,7 +363,7 @@ func fleetObserveTools() []toolSpec {
 			operator: func() map[string]any {
 				return map[string]any{
 					"name":        "list_cleanup_archives",
-					"description": "掃除で退避したアーカイブ（削除したセッション・ブランチ・スペースの gz 安全網）の一覧を返す。delete_session / delete_branch は消す前に必ずここへ退避するので、消しすぎた時は restore_cleanup_archive で復元、不要になったら purge_cleanup_archive で完全削除して容量を回収できる。各アーカイブは id・日時・理由・含まれるセッション/ブランチ/スペースを持つ。スペースの項目は利用者自身のファイルを保持しており、purge すると完全に失われる。",
+					"description": "掃除で退避したアーカイブ（削除したセッションやブランチの gz 安全網。スペースは gz に manifest だけが入り、フォルダ本体は隣の <id>.space に移される）の一覧を返す。delete_session / delete_branch は消す前に必ずここへ退避するので、消しすぎた時は restore_cleanup_archive で復元、不要になったら purge_cleanup_archive で完全削除して容量を回収できる。各アーカイブは id・日時・理由・含まれるセッション/ブランチ/スペースを持つ。スペースの項目は利用者自身のファイルを <id>.space に保持しており、gz だけでは保全できず、purge すると一緒に完全に失われる。",
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
