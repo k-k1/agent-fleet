@@ -1063,15 +1063,17 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 }
 
 // largestAnswer is the encoded size of the largest accept a person could send: every field
-// answered with its longest choice. Go escapes more than a browser does, so this is an upper bound.
+// answered with the choice whose encoding is longest (not the longest raw value: escaping can
+// grow a shorter one past it). Go escapes more than a browser does, so this is an upper bound.
 func largestAnswer(inputs []ElicitInput) int {
 	choices := map[string]map[string]string{}
 	for _, in := range inputs {
 		c := map[string]string{}
 		for _, f := range in.Fields {
+			best := -1
 			for _, o := range f.Options {
-				if len(o.Value) >= len(c[f.Name]) {
-					c[f.Name] = o.Value
+				if n := len(mustJSON(o.Value)); n > best {
+					best, c[f.Name] = n, o.Value
 				}
 			}
 		}
@@ -1392,15 +1394,20 @@ type elicitStore struct {
 	bytes   int // the sum of the pending calls' sizes
 }
 
-// heldSize is what a held call keeps for the Console, roughly as it is listed.
+// elicitItemCost is what one input, field or choice costs beyond its strings: the struct and
+// slice entry in each copy, and its JSON punctuation and member names when listed. Without it a
+// form of many short choices would count as nearly nothing.
+const elicitItemCost = 96
+
+// heldSize is what a held call keeps for the Console, roughly as it is copied and listed.
 func (p PendingElicitation) heldSize() int {
 	n := len(p.Arguments) + len(p.Tool) + len(p.ServerName) + len(p.ServerLabel)
 	for _, in := range p.Inputs {
-		n += len(in.Key) + len(in.Message)
+		n += elicitItemCost + len(in.Key) + len(in.Message)
 		for _, f := range in.Fields {
-			n += len(f.Name) + len(f.Title)
+			n += elicitItemCost + len(f.Name) + len(f.Title)
 			for _, o := range f.Options {
-				n += len(o.Value) + len(o.Label)
+				n += elicitItemCost + len(o.Value) + len(o.Label)
 			}
 		}
 	}

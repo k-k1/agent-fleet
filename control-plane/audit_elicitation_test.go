@@ -30,8 +30,8 @@ func TestElicitationAnswerIsAuditedFromTheAgentsAnswer(t *testing.T) {
 				t.Fatalf("probed %d routes", len(probes))
 			}
 			p := probes[0]
-			if !p.relayed() {
-				t.Fatal("not relayed to the Agent")
+			if !p.relayed() || p.status != 200 {
+				t.Fatalf("relayed %v, status %d", p.relayed(), p.status)
 			}
 			if len(p.rows) != 1 || p.rows[0].Action != "mcp.elicitation" {
 				t.Fatalf("audit rows %+v", p.rows)
@@ -52,15 +52,15 @@ func TestElicitationListIsNotAudited(t *testing.T) {
 
 // A refused answer is not audited, whatever its error envelope says.
 func TestElicitationAnswerFailureIsNotAudited(t *testing.T) {
-	for _, answer := range []string{
-		"status=404\n" + `{"error":{"code":"mcp_elicitation_gone","message":"gone"}}`,
-		"status=400\n" + `{"error":{"code":"mcp_elicitation_answer","message":"no"}}`,
+	for status, answer := range map[int]string{
+		404: "status=404\n" + `{"error":{"code":"mcp_elicitation_gone","message":"gone"}}`,
+		400: "status=400\n" + `{"error":{"code":"mcp_elicitation_answer","message":"no"}}`,
 		// The file write's "may have landed" code is the fs PUT route's alone.
-		"status=500\n" + `{"error":{"code":"` + errCodeFSWriteStateUnknown + `","message":"?"}}`,
+		500: "status=500\n" + `{"error":{"code":"` + errCodeFSWriteStateUnknown + `","message":"?"}}`,
 	} {
 		probes := probeRelaysWith(t, func(r string) bool { return r == "POST /api/mcp-elicitations/answer" },
 			map[string]string{"POST /mcp-elicitations/answer": answer})
-		if len(probes) != 1 || !probes[0].relayed() || len(probes[0].audits) != 0 {
+		if len(probes) != 1 || !probes[0].relayed() || len(probes[0].audits) != 0 || probes[0].status != status {
 			t.Fatalf("%q: %+v", answer, probes)
 		}
 	}

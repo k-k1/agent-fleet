@@ -94,6 +94,7 @@ type relayProbe struct {
 	hits     []agentHit
 	audits   []string // audit actions written while the route ran
 	rows     []store.AuditLog
+	status   int // the CP's answer; 0 when the request failed
 }
 
 // relayed reports whether the CP forwarded the request as it came: same method, and the path
@@ -312,6 +313,7 @@ func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[str
 		// The bound is for CP-owned streams (GET /api/events), which hold the request open.
 		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		if resp, err := cp.Client().Do(relayProbeRequest(t, rctx, cp.URL, method, pattern, p.concrete)); err == nil {
+			p.status = resp.StatusCode
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 		}

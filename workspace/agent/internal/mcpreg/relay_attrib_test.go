@@ -123,6 +123,13 @@ func TestElicitFormWhoseAnswerCannotBeSentIsRefused(t *testing.T) {
 	if _, err := parseInputRequired(form(strings.Repeat("<", ElicitAnswerMaxBytes/5))); err == nil {
 		t.Fatal("a choice that grows past the bound when encoded was accepted")
 	}
+	// Two choices whose raw and encoded lengths rank the other way round: the encoding decides.
+	twoWays := json.RawMessage(`{"inputRequests":{"k":{"method":"elicitation/create","params":{"mode":"form","message":"m",` +
+		`"requestedSchema":{"type":"object","required":["c"],"properties":{"c":{"type":"string","enum":[` +
+		string(mustJSON(strings.Repeat("a", 12001))) + `,` + string(mustJSON(strings.Repeat("\x00", 12000))) + `]}}}}}},"requestState":"s"}`)
+	if _, err := parseInputRequired(twoWays); err == nil {
+		t.Fatal("a choice whose encoding is longest but whose raw value is not was missed")
+	}
 	ir, err := parseInputRequired(form(strings.Repeat("x", ElicitAnswerMaxBytes-64)))
 	if err != nil {
 		t.Fatal(err)
@@ -137,13 +144,13 @@ func TestElicitFormWhoseAnswerCannotBeSentIsRefused(t *testing.T) {
 func TestElicitHeldCallsAreBoundedInBytes(t *testing.T) {
 	resetElicitations(t)
 	oldOne, oldAll := elicitMaxHeldOne, elicitMaxHeld
-	elicitMaxHeldOne, elicitMaxHeld = 300, 500
+	elicitMaxHeldOne, elicitMaxHeld = 400, 650
 	t.Cleanup(func() { elicitMaxHeldOne, elicitMaxHeld = oldOne, oldAll })
 	ir := inputRequired{inputs: []ElicitInput{{Key: "a"}}}
 	call := func(n int) elicitCall {
 		return elicitCall{tool: "t", params: map[string]json.RawMessage{"arguments": json.RawMessage(`"` + strings.Repeat("a", n) + `"`)}}
 	}
-	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(400), ir); err == nil || !strings.Contains(err.Error(), "too large") {
+	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(450), ir); err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("a call over the one-call bound was held: %v", err)
 	}
 	p1, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(250), ir)
@@ -171,5 +178,18 @@ func TestElicitHeldCallsAreBoundedInBytes(t *testing.T) {
 	elicitations.mu.Unlock()
 	if left != 0 {
 		t.Fatalf("%d bytes still counted with nothing held", left)
+	}
+}
+
+// A form of many short choices costs its items, not only its few bytes of text.
+func TestElicitManyShortChoicesCountAgainstTheBound(t *testing.T) {
+	resetElicitations(t)
+	var opts []ElicitOption
+	for i := 0; i < 20000; i++ {
+		opts = append(opts, ElicitOption{Value: strconv.Itoa(i), Label: "x"})
+	}
+	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Options: opts}}}}}
+	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("20000 short choices were held: %v", err)
 	}
 }
