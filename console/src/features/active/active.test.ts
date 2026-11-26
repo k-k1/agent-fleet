@@ -168,6 +168,10 @@ describe("activeGroups", () => {
       ["repo", "app", ["legacy", "qa"]],
       ["other", "", ["clone"]],
     ]);
+    // The same with app's working set chosen: the stored parent puts qa in it, and the clone
+    // named app@notes is no copy of app.
+    const scoped = activeGroups(list, lagging, spaces, set({ repos: ["app"] }));
+    expect(scoped.map((g) => [g.kind, g.label, names(g.sessions).sort()])).toEqual([["repo", "app", ["legacy", "qa"]]]);
     const unknown = activeGroups(list, [], spaces, null, new Set(), undefined, false);
     expect(unknown.map((g) => [g.key, names(g.sessions).sort()])).toEqual([
       ["c:app", ["legacy", "qa"]],

@@ -19,7 +19,7 @@
 import { sessionTier } from "../sessions/order.ts";
 import { childrenIndex, familyRows } from "../sessions/family.ts";
 import { sessionFolder } from "../../lib/project.ts";
-import { sessionInSet } from "../../lib/workingSets.ts";
+import { sessionInWorkingSet } from "../../lib/workingSets.ts";
 import { compareText } from "../../lib/intl.ts";
 import type { Repo } from "../repos/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
@@ -173,7 +173,7 @@ export function overviewGroups(
   collapsed: ReadonlySet<string> = new Set(),
 ): OverviewGroup[] {
   const byFolder = new Map(repos.map((r) => [r.name, r]));
-  const scoped = sessions.filter((s) => (showStopped || !!s.alive) && (!set || sessionInSet(set, s)));
+  const scoped = sessions.filter((s) => (showStopped || !!s.alive) && (!set || sessionInWorkingSet(set, s, byFolder)));
   const groups = new Map<string, OverviewGroup>();
   for (const s of scoped) {
     const own = sessionFolder(s);

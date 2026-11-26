@@ -16,9 +16,12 @@ import (
 // can share a basename. A space is told by spacex.FolderOf (its marker under ~/spaces); home
 // by being the home directory itself; a repository or worktree by being a real directory
 // directly under ~/repos under any folder name. A spelling that names no place there (a symlink
-// entry under ~/repos, which GET /repos skips, or a link elsewhere) is judged again by the
-// directory it resolves to, so a session started through a link to ~/repos/app is filed under
-// app, never under the link's name. Anything else is PlaceOther. Never nil.
+// entry under ~/repos, which GET /repos skips, or a link elsewhere) is filed under the repository
+// or worktree it resolves to, so a session started through a link to ~/repos/app is filed under
+// app, never under the link's name. A link into a space or to home stays PlaceOther: the space's
+// names, busy check and deletion go by the spelt path. Anything else is PlaceOther. Never nil.
+// A queue's create, which must not be redirected by a link, judges the spelling alone
+// (strictPlaceOf).
 //
 // The parent is compared physically: a spelling with ".." is resolved before it is judged, so
 // ~/repos/link/../app is filed where it really runs, never as ~/repos/app.
@@ -31,9 +34,29 @@ func PlaceOf(dir string) *session.Place {
 		return p
 	}
 	if real, err := filepath.EvalSymlinks(dir); err == nil && real != filepath.Clean(dir) {
-		return placeOfSpelling(real)
+		if r := placeOfSpelling(real); r.Kind == session.PlaceRepo || r.Kind == session.PlaceWorktree {
+			return r
+		}
 	}
 	return p
+}
+
+// strictPlaceOf is PlaceOf without following a link: what the spelling itself names.
+func strictPlaceOf(dir string) *session.Place {
+	if dir == "" || !filepath.IsAbs(dir) {
+		return &session.Place{Kind: session.PlaceOther}
+	}
+	return placeOfSpelling(dir)
+}
+
+// sessionPlaceOf is the place of a session in dir with subdir, judged on the directory its
+// process enters by the rule Meta.CWD launches with: with a subdir the path is Joined, which
+// cleans `link/..` lexically, so the cleaned dir is the root; without one the raw dir is entered.
+func sessionPlaceOf(dir, subdir string) *session.Place {
+	if subdir != "" && dir != "" {
+		return PlaceOf(filepath.Clean(dir))
+	}
+	return PlaceOf(dir)
 }
 
 // placeOfSpelling classifies dir as it is spelt; PlaceOf retries it resolved.

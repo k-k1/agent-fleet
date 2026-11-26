@@ -616,8 +616,8 @@ const cleanPath = (p: string): string => p.replace(/\/{2,}/g, "/").replace(/\/+$
 
 /** Where a shell was opened: its space, else the listed working copy it runs in, else home.
  *
- *  A row with a stored place names its copy by it (home and other directories name none). On a
- *  row without one, `Session.repo` is the base name of the launch directory, so a shell started in the home
+ *  A row with a stored place names its copy by it (home and other directories name none), the
+ *  working-copy id overruling it. On a row without one, `Session.repo` is the base name of the launch directory, so a shell started in the home
  *  directory carries the home folder's own name (a member called `dev` has repo "dev") and would
  *  pass for a working copy of that name. A repository needs the directory to be that copy, in this
  *  order of evidence: the working-copy id both sides carry (it survives any spelling of the path,
@@ -633,6 +633,12 @@ export function shellPlaceOf(s: Session, repos: PlaceRepos): ShellPlace {
   const byId = s.workingCopyId ? [...repos].filter(([, c]) => c.id === s.workingCopyId) : [];
   if (byId.length === 1) return { kind: "repo", folder: byId[0][0] };
   const f = sessionFolder(s);
+  // A stored place decides by itself (a shell started through a link spells another path), unless
+  // the row carries a working-copy id that the named copy does not.
+  if (s.place) {
+    const named = f ? repos.get(f) : undefined;
+    return named && !(named.id && s.workingCopyId && named.id !== s.workingCopyId) ? { kind: "repo", folder: f } : { kind: "home" };
+  }
   const copy = f ? repos.get(f) : undefined;
   if (f && copy) {
     const dir = cleanPath(s.dir || "");

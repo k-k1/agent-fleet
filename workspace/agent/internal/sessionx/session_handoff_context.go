@@ -108,7 +108,8 @@ func gitHasUpstream(dir string) bool {
 // buildHandoffContext folds dir's state into one answer. When dir is not a git working
 // copy, Vcs is left empty (or set to svn) and no gate is evaluated.
 func buildHandoffContext(dir string) handoffContext {
-	c := handoffContext{Repo: repoName(PlaceOf(dir), dir), Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
+	// Repo is set by the handlers from the session's stored place (handoffRepo).
+	c := handoffContext{Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
 	switch {
 	case gitx.IsGitRepo(dir):
 		c.Vcs = "git"
@@ -178,7 +179,7 @@ func HandleSessionHandoffContext(w http.ResponseWriter, r *http.Request) {
 func handoffRepo(m session.Meta) string {
 	p := m.Place
 	if p == nil {
-		p = PlaceOf(m.Dir)
+		p = sessionPlaceOf(m.Dir, m.Subdir)
 	}
 	return repoName(p, m.Dir)
 }

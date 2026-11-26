@@ -1718,7 +1718,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
 	// "re-copy the fork source". The driver is inherited: a slot created managed is
 	// recreated managed (docs/log/27 P2).
-	place := PlaceOf(m.Dir)
+	place := sessionPlaceOf(m.Dir, m.Subdir)
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
 		Kind: m.Kind, Driver: m.Driver, Route: m.Route.Clone(), SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
@@ -1811,7 +1811,7 @@ func forkSids(src session.Meta) []string {
 // real fork, which needs a real source conversation.
 func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) session.Meta {
 	now := time.Now()
-	place := PlaceOf(src.Dir)
+	place := sessionPlaceOf(src.Dir, src.Subdir)
 	return session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,

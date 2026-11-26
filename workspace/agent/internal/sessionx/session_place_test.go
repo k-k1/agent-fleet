@@ -78,8 +78,9 @@ func TestPlaceOf(t *testing.T) {
 	}
 	// GET /repos lists any folder name, spaces included, so the place does too.
 	gitInit(t, filepath.Join(repos, "team app"))
-	// A symlink entry under ~/repos is skipped by GET /repos, so it is filed under its target,
-	// and so is a link elsewhere; a link to a directory that is no place stays other.
+	// A symlink entry under ~/repos is skipped by GET /repos, so it is filed under the repository
+	// or worktree it points to, and so is a link elsewhere; a link into a space, or to a directory
+	// that is no place, stays other.
 	if err := os.Symlink(filepath.Join(repos, "foo"), filepath.Join(repos, "alias")); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestPlaceOf(t *testing.T) {
 		{filepath.Join(repos, "alias"), session.Place{Kind: session.PlaceRepo, ID: "foo"}},
 		{filepath.Join(repos, "alias") + "/", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
 		{filepath.Join(home, "links", "foo@wt"), session.Place{Kind: session.PlaceWorktree, ID: "foo@wt", Parent: "foo"}},
-		{filepath.Join(home, "links", "space"), session.Place{Kind: session.PlaceSpace, ID: "foo"}},
+		{filepath.Join(home, "links", "space"), session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(home, "links", "plain"), session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo/.", session.Place{Kind: session.PlaceOther}},
@@ -396,17 +397,17 @@ func TestForkAndRecreateStoreThePlace(t *testing.T) {
 func TestHandoffContextNamesNoRepositoryForASpace(t *testing.T) {
 	isolateAgentState(t)
 	spaceDir := placeSpace(t, "app")
-	if got := buildHandoffContext(spaceDir).Repo; got != "" {
+	if got := handoffRepo(session.Meta{Dir: spaceDir}); got != "" {
 		t.Errorf("space handoff context repo = %q", got)
 	}
-	if got := buildHandoffContext(homeDir()).Repo; got != "" {
+	if got := handoffRepo(session.Meta{Dir: homeDir()}); got != "" {
 		t.Errorf("home handoff context repo = %q", got)
 	}
 	other := filepath.Join(homeDir(), "projects", "app")
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := buildHandoffContext(other).Repo; got != "app" {
+	if got := handoffRepo(session.Meta{Dir: other}); got != "app" {
 		t.Errorf("other directory handoff context repo = %q, want its base name", got)
 	}
 
@@ -460,5 +461,31 @@ func TestCleanupGroupsASpaceSessionByItsFolder(t *testing.T) {
 	}
 	if got["plclone"] != "one" || got["plcltwo"] != "two" {
 		t.Errorf("cleanup repo by session = %v", got)
+	}
+}
+
+// With a subdir the process enters the lexically cleaned dir (Meta.CWD Joins), so the place is
+// judged there too: ~/repos/hop/../app with a subdir runs in ~/repos/app, not where hop leads.
+func TestSessionPlaceFollowsTheLaunchRule(t *testing.T) {
+	isolateAgentState(t)
+	home := homeDir()
+	repos := filepath.Join(home, "repos")
+	gitInit(t, filepath.Join(repos, "app"))
+	gitInit(t, filepath.Join(home, "elsewhere", "app"))
+	if err := os.MkdirAll(filepath.Join(home, "elsewhere", "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "elsewhere", "child"), filepath.Join(repos, "hop")); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(repos, "hop") + "/../app"
+	if got := sessionPlaceOf(dir, "src"); *got != (session.Place{Kind: session.PlaceRepo, ID: "app"}) {
+		t.Errorf("with a subdir: %+v", got)
+	}
+	if got := sessionPlaceOf(dir, ""); got.Kind != session.PlaceOther {
+		t.Errorf("without a subdir: %+v", got)
+	}
+	if got := forkMeta(session.Meta{Name: "plsd", Dir: dir, Subdir: "src", Kind: session.KindShell}, "plsdf", "", "plsd", "").Place; got == nil || got.Kind != session.PlaceRepo {
+		t.Errorf("fork with a subdir: %+v", got)
 	}
 }

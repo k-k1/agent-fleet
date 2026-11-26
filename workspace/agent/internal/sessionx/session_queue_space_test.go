@@ -116,6 +116,11 @@ func TestQueueCreateRefusesADirThatIsNotARepository(t *testing.T) {
 	if err := os.Symlink(sp.Dir, alias); err != nil {
 		t.Fatal(err)
 	}
+	// A link to another listed repository is refused too: a queue must not be redirected there.
+	other := filepath.Join(p.home, "repos", "other-link")
+	if err := os.Symlink(p.repo, other); err != nil {
+		t.Fatal(err)
+	}
 	nested := filepath.Join(p.repo, "sub")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
@@ -127,6 +132,7 @@ func TestQueueCreateRefusesADirThatIsNotARepository(t *testing.T) {
 	}{
 		{"repos/" + sp.Folder, false, "queue_dir_not_repository"},
 		{alias, true, "queue_dir_not_repository"},
+		{other, false, "queue_dir_not_repository"},
 		{nested, false, "queue_dir_not_repository"},
 		// A dir that cannot be read when it is judged is refused, never let through to a later
 		// read that a link put in place meanwhile would lead into a space.
@@ -193,6 +199,29 @@ func TestQueueArmMetaRefusesARepositoryReplacedByALink(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(sp.Dir, repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := run.armMeta(); ok || rec.Code != http.StatusBadRequest || spaceErrCode(t, rec.Body.Bytes()) != "queue_dir_not_repository" {
+		t.Fatalf("armMeta after the swap: ok=%v %d %s, want 400 queue_dir_not_repository", ok, rec.Code, rec.Body)
+	}
+}
+
+// The same re-read refuses a repository replaced by a link to ANOTHER listed repository, which the
+// session's displayed place would follow: a queue's create judges the spelling alone.
+func TestQueueArmMetaRefusesARepositoryReplacedByALinkToAnother(t *testing.T) {
+	p := newCreateProbe(t)
+	repo := filepath.Join(p.home, "repos", "target")
+	gitInit(t, repo)
+	rec := httptest.NewRecorder()
+	run := &createRun{w: rec, r: httptest.NewRequest(http.MethodPost, "/sessions", nil), name: "qarm0002",
+		origin: session.OriginQueue, req: &CreateReq{Dir: "repos/target", QueueDelivery: &QueueDelivery{ID: "d1", Queue: "cat-1"}}}
+	if !run.resolveWorkingCopy() {
+		t.Fatalf("the real repository was refused: %d %s", rec.Code, rec.Body)
+	}
+	if err := os.Rename(repo, repo+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(p.repo, repo); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := run.armMeta(); ok || rec.Code != http.StatusBadRequest || spaceErrCode(t, rec.Body.Bytes()) != "queue_dir_not_repository" {

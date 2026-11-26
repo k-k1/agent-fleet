@@ -65,6 +65,11 @@ describe("overviewGroups", () => {
     const list = [s("a", { repo: "app" }), s("qa", { repo: "qa-copy", place: { kind: "worktree", id: "qa-copy", parent: "app" } })];
     const groups = overviewGroups(list, repos, null, false);
     expect(groups.map((g) => [g.label, g.sessions.map((x) => x.name).sort()])).toEqual([["app", ["a", "qa"]]]);
+    // with app's working set chosen, before and after the worktree's row arrives
+    const w = set({ repos: ["app"] });
+    expect(names(overviewGroups(list, repos, w, false)).map((n) => n.sort())).toEqual([["a", "qa"]]);
+    const listed = [...repos, repo("qa-copy", { worktree: true, parent: "app", remote: "github.com", remotePath: "acme/app" })];
+    expect(names(overviewGroups(list, listed, w, false)).map((n) => n.sort())).toEqual([["a", "qa"]]);
   });
 
   it("counts the running cards per heading", () => {

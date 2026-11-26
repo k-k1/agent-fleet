@@ -505,6 +505,12 @@ describe("stored place", () => {
     expect(shellPlaceOf({ ...shell("home"), repo: "dev" }, known)).toEqual({ kind: "home" });
     expect(shellPlaceOf(shell("elsewhere"), known)).toEqual({ kind: "home" });
     expect(shellPlaceOf(shell("repo-live"), known)).toEqual({ kind: "repo", folder: "foo" });
+    // started through a link: another spelling of the path, no working-copy id (a plain folder)
+    expect(shellPlaceOf({ ...shell("repo-live"), dir: "/home/dev/links/foo" }, known)).toEqual({ kind: "repo", folder: "foo" });
+    // a working-copy id the named copy does not carry says it is another copy
+    const withIds = placeRepos([repo("foo", { workingCopyId: "wc_foo" }), repo("bar", { workingCopyId: "wc_bar" })]);
+    expect(shellPlaceOf({ ...shell("repo-live"), workingCopyId: "wc_bar" }, withIds)).toEqual({ kind: "repo", folder: "bar" });
+    expect(shellPlaceOf({ ...shell("repo-live"), workingCopyId: "wc_gone" }, withIds)).toEqual({ kind: "home" });
   });
 });
 

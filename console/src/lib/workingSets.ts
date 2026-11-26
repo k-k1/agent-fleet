@@ -101,12 +101,16 @@ export function repoInSet(set: WorkingSet, r: Pick<Repo, "name" | "worktree" | "
 }
 
 /** A session is in the set directly (repo-less assignment) or by inheriting its
- * working copy's membership — resolved from the folder name alone, so this also
- * works while the repo list is unavailable (stopped WS) or the repo was deleted. */
+ * working copy's membership — resolved without the repo list, so this also works while
+ * the list is unavailable (stopped WS) or the repo was deleted: by the stored place (a
+ * worktree belongs to the parent it names, any other copy to itself, as repoBaseName
+ * judges a listed row), and on a row without one by the folder name. */
 export function sessionInSet(set: WorkingSet, s: Session): boolean {
   if (set.sessions.includes(s.name)) return true;
   const folder = sessionFolder(s);
-  return !!folder && set.repos.includes(folderBase(folder));
+  if (!folder) return false;
+  if (s.place) return set.repos.includes((s.place.kind === "worktree" && s.place.parent) || folder);
+  return set.repos.includes(folderBase(folder));
 }
 
 /** Is a session in the set, judged the way the Sessions tree places its row: a session in a

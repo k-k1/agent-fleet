@@ -726,7 +726,7 @@ func (c *createRun) queueDirIsRepository() bool {
 		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+dir)
 		return false
 	}
-	switch PlaceOf(dir).Kind {
+	switch strictPlaceOf(dir).Kind {
 	case session.PlaceRepo, session.PlaceWorktree:
 		return true
 	}
@@ -799,7 +799,7 @@ func (c *createRun) identify() bool {
 // studio is bound here, as the last step before the launch.
 func (c *createRun) armMeta() (session.Meta, bool) {
 	req := c.req
-	place := PlaceOf(req.Dir)
+	place := sessionPlaceOf(req.Dir, c.subdir)
 	meta := session.Meta{
 		Name: c.name, Dir: req.Dir, Subdir: c.subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: c.kind, Driver: c.driver, Title: c.title, Color: req.Color, Label: c.label,
 		// Validated in validateRoute and checkRoute; nil stays nil, so a create without a
@@ -815,9 +815,9 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
 		MuseContributorMode: contributorModeOn(c.kind),
 	}
-	if c.queueRepo && meta.Place.Kind != session.PlaceRepo && meta.Place.Kind != session.PlaceWorktree {
-		// The place stored here is read again after queueDirIsRepository: a working copy replaced
-		// by a link since is caught where it is seen, not launched into.
+	if strict := strictPlaceOf(req.Dir).Kind; c.queueRepo && strict != session.PlaceRepo && strict != session.PlaceWorktree {
+		// Read again after queueDirIsRepository, by the spelling alone: a working copy replaced
+		// by a link since (even to another listed copy) is caught where it is seen, not launched into.
 		httpx.WriteErr(c.w, http.StatusBadRequest, "queue_dir_not_repository",
 			"a queue runs in a repository directly under ~/repos, and this is not one: "+req.Dir)
 		return session.Meta{}, false
