@@ -690,3 +690,11 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   `AF_WS_OPENCODE_BEDROCK_ROUTE` は何もせず、配備の環境から外してよい（残っていても無視され、エラーにはならない）。古い Agent の
   ワークスペースは更新されるまで閉鎖を保つ。claude の `bedrock-deployment` の行は自前の閉鎖
   （`AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE`、ADR 0129 Q1、#3579）を保つ。上の閉鎖と素通しを述べた注記は経緯で、この注記が置き換える。
+  受け入れで CP のスイッチを入れていた配備は、新しい Control Plane でワークスペースを起動し直す前に Agent イメージを更新すること
+  （古い Agent は、CP がもう送らない変数を必要とする）。
+  閉鎖をなくした後は、何かが受けられるところだけでルートを提示する。メンバーの claude の `bedrock` はゲートウェイが動いている間、
+  opencode のはゲートウェイのループバックの待ち受けが上がっていて（opencode は TCP しか話せない）opencode がオフにされていない間
+  （課金先の選択「off」は opencode をルートごと止める）。opencode の Bedrock モデルの一覧は、ゲートウェイが印付きプロファイルを
+  持つ間だけ走り、失敗した一覧は 1 分は取り直さない。`bedrock` を許す制限付きの認証情報ポリシーでは、opencode の Bedrock モデルを
+  起動メニューに残し（`agents.ExplicitRouteModels`）、Console は印付きプロファイルだけの opencode も提示する（ルートなしの起動は許さない、
+  `launchAccess.ts`）。

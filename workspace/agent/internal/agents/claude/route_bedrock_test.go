@@ -447,3 +447,20 @@ func TestBedrockModelIsRequiredAndPinned(t *testing.T) {
 		t.Errorf("anthropic-api with opus = %v", ref)
 	}
 }
+
+// The member's bedrock route is offered only while the route gateway runs: without it nothing can
+// serve the calls, and the launch dialog would offer an option that can only fail.
+func TestBedrockRouteIsNotOfferedWithoutAGateway(t *testing.T) {
+	isolateSlot(t)
+	isolateClaudeConfig(t)
+	prev := agents.CurrentRouteGateway()
+	agents.SetRouteGateway(nil)
+	t.Cleanup(func() { agents.SetRouteGateway(prev) })
+	if slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) {
+		t.Errorf("offered with no gateway: %v", agentImpl{}.OfferedRoutes())
+	}
+	withGateway(t, &fakeGateway{})
+	if !slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) {
+		t.Errorf("not offered with a gateway: %v", agentImpl{}.OfferedRoutes())
+	}
+}

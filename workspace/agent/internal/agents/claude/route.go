@@ -155,12 +155,16 @@ func routeGate(route string) *agents.RouteRefusal {
 	return nil
 }
 
-// OfferedRoutes implements agents.RouteOfferer: the member's bedrock route always, and the
-// deployment's only while its gate is open and the Control Plane says the member may use it now.
+// OfferedRoutes implements agents.RouteOfferer: the member's bedrock route while the route
+// gateway runs (a route nothing can serve is not offered), and the deployment's only while its
+// gate is open and the Control Plane says the member may use it now.
 func (a agentImpl) OfferedRoutes() []string {
 	var out []string
 	for _, r := range a.Routes() {
 		if routeGate(r) != nil {
+			continue
+		}
+		if r == RouteBedrock && agents.CurrentRouteGateway() == nil {
 			continue
 		}
 		if r == RouteBedrockDeployment {

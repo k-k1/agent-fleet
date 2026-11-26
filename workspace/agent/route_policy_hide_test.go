@@ -937,3 +937,18 @@ func TestModelMenusHideASwitchedOffHarness(t *testing.T) {
 		t.Error("control: switched back on, opencode offers nothing")
 	}
 }
+
+// An opencode Bedrock model resolves to no route with no selection (the AWS chain would decide),
+// so the launch menu's policy filter used to drop every one of them, bedrock allowed or not. It
+// keeps them when the policy allows the bedrock route, and only then.
+func TestPolicyKeepsBedrockModelsOnlyWhenTheRouteIsAllowed(t *testing.T) {
+	list := []agents.ModelChoice{{ID: "amazon-bedrock/anthropic.claude-sonnet-4-6"}}
+	allowed := routepolicy.Policy{Revision: 1, Restricted: true, Allowed: []string{"bedrock", "opencode-zen"}}
+	if got := policyVisibleModels("opencode", allowed, list); len(got) != 1 {
+		t.Errorf("bedrock allowed: the Bedrock model was dropped: %v", got)
+	}
+	denied := routepolicy.Policy{Revision: 1, Restricted: true, Allowed: []string{"opencode-zen"}}
+	if got := policyVisibleModels("opencode", denied, list); len(got) != 0 {
+		t.Errorf("bedrock not allowed: the Bedrock model was kept: %v", got)
+	}
+}

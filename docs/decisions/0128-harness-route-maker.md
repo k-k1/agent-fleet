@@ -757,5 +757,14 @@ table from becoming a menu of models that fail on the first message, which is wh
   the live kind catalog. The Control Plane no longer adds either variable at a workspace start, so
   `AF_WS_CLAUDE_BEDROCK_ROUTE` and `AF_WS_OPENCODE_BEDROCK_ROUTE` do nothing and can be removed from a deployment's
   environment; a leftover value is ignored, not an error. A workspace running an older Agent keeps its gate until it is
-  updated. The claude `bedrock-deployment` row keeps its own gate (`AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE`, ADR 0129 Q1, #3579).
+  updated, and a deployment that ran the acceptance with the CP switches on must update the Agent image before it
+  restarts workspaces on the new Control Plane (an older Agent still needs the variable the CP no longer sends). The
+  claude `bedrock-deployment` row keeps its own gate (`AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE`, ADR 0129 Q1, #3579).
   The two notes above that describe the gate and the pass-through are history; this one supersedes them.
+  With the gate gone the route is offered only where something can serve it: the member's claude `bedrock` row while the
+  gateway runs; opencode's while the gateway's loopback listener is up (opencode can only speak TCP) and opencode is not
+  switched off (the billing choice "off" disables opencode outright, the route included); opencode's Bedrock model
+  listing runs only while the gateway holds a marked profile, and a failed listing is not retried for a minute. A
+  restricted credential policy that allows `bedrock` keeps opencode's Bedrock models in the launch menu
+  (`agents.ExplicitRouteModels`), and the Console offers opencode on a marked profile alone, with no launch on "no
+  route" (`launchAccess.ts`).

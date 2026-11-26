@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -33,7 +34,14 @@ type fakeGateway struct {
 	refuse   *agents.RouteRefusal
 	mu       sync.Mutex
 	revoked  []string
+	// noLoopback and holdsNone make the gateway say it has no loopback listener, or no marked
+	// profile (agents.RouteLoopback, agents.RouteHolding).
+	noLoopback, holdsNone bool
 }
+
+func (f *fakeGateway) LoopbackReady() bool { return !f.noLoopback }
+
+func (f *fakeGateway) Holds(string) bool { return !f.holdsNone }
 
 func (f *fakeGateway) RevokeToken(token string) {
 	f.mu.Lock()
@@ -79,9 +87,12 @@ func (f *fakeGateway) CheckRoute(context.Context, agents.RouteSelection, string)
 	return f.refuse
 }
 
-// withGateway registers g for the test.
+// withGateway registers g for the test, with opencode switched on (any billing choice but off).
 func withGateway(t *testing.T, g agents.RouteGateway) {
 	t.Helper()
+	prevPref := UsagePref
+	UsagePref = func() string { return UsageOwn }
+	t.Cleanup(func() { UsagePref = prevPref })
 	prev := agents.CurrentRouteGateway()
 	agents.SetRouteGateway(g)
 	t.Cleanup(func() { agents.SetRouteGateway(prev) })
@@ -367,7 +378,7 @@ func TestBedrockRouteModelsFollowTheRoutesAvailability(t *testing.T) {
 	t.Cleanup(func() {
 		listBedrockModels = prev
 		routeModels.mu.Lock()
-		routeModels.list, routeModels.at = nil, routeModels.at.AddDate(-1, 0, 0)
+		routeModels.list, routeModels.at, routeModels.failAt = nil, routeModels.at.AddDate(-1, 0, 0), time.Time{}
 		routeModels.mu.Unlock()
 	})
 	routeModels.list = nil
@@ -388,6 +399,20 @@ func TestBedrockRouteModelsFollowTheRoutesAvailability(t *testing.T) {
 	listBedrockModels = func() ([]string, error) { return nil, errors.New("boom") }
 	if got := BedrockRouteModels(); len(got) != 2 {
 		t.Fatalf("after a failed listing = %v", got)
+	}
+	// A failed listing is not retried at once: the next request does not wait for the CLI again.
+	failed := 0
+	listBedrockModels = func() ([]string, error) { failed++; return nil, errors.New("boom") }
+	routeModels.at = routeModels.at.AddDate(0, 0, -1)
+	BedrockRouteModels()
+	BedrockRouteModels()
+	if failed != 0 {
+		t.Fatalf("a failed listing was retried %d times inside the backoff", failed)
+	}
+	routeModels.failAt = time.Now().Add(-2 * routeModelsRetry)
+	BedrockRouteModels()
+	if failed != 1 {
+		t.Fatalf("after the backoff the listing ran %d times, want 1", failed)
 	}
 
 	env := bedrockListEnv([]string{"AWS_PROFILE=leak", "AWS_ACCESS_KEY_ID=AKIA", "PATH=/bin"})
@@ -434,5 +459,73 @@ func TestBedrockRouteRefusesConfigThatOutranksThePin(t *testing.T) {
 		if ref := configConflict([]string{f}); ref != nil {
 			t.Errorf("%s: refused: %+v", name, ref)
 		}
+	}
+}
+
+// The route is offered, listed and accepted only where it can work: opencode is not switched off
+// (the billing choice "off" disables opencode whatever else is configured), the gateway runs, and
+// its loopback listener is up, since opencode can only speak TCP. A workspace with no marked
+// profile never runs the listing.
+func TestBedrockRouteNeedsAUsableOpencodeAndGateway(t *testing.T) {
+	isolatedHome(t)
+	prevPref := UsagePref
+	UsagePref = func() string { return UsageOwn }
+	t.Cleanup(func() { UsagePref = prevPref })
+	a := agentImpl{}
+	listed := 0
+	prev := listBedrockModels
+	listBedrockModels = func() ([]string, error) { listed++; return []string{bedrockID}, nil }
+	t.Cleanup(func() {
+		listBedrockModels = prev
+		routeModels.mu.Lock()
+		routeModels.list, routeModels.at, routeModels.failAt = nil, time.Time{}, time.Time{}
+		routeModels.mu.Unlock()
+	})
+	refused := func(what string, want int) {
+		t.Helper()
+		if len(a.OfferedRoutes()) != 0 {
+			t.Errorf("%s: offered %v", what, a.OfferedRoutes())
+		}
+		if ref := a.CheckRoute(context.Background(), bedrockSel(), bedrockID); ref == nil || ref.Status != want {
+			t.Errorf("%s: check = %+v, want status %d", what, ref, want)
+		}
+		if _, ref := a.BindRoute(bedrockSel()); ref == nil {
+			t.Errorf("%s: bind accepted", what)
+		}
+		if _, err := a.ApplyRoute(bedrockMeta(t, "x"), bedrockSel()); err == nil {
+			t.Errorf("%s: ApplyRoute accepted", what)
+		}
+		if got := BedrockRouteModels(); got != nil || listed != 0 {
+			t.Errorf("%s: models %v, %d listings", what, got, listed)
+		}
+	}
+
+	refused("no gateway", http.StatusServiceUnavailable)
+
+	g := &fakeGateway{noLoopback: true}
+	withGateway(t, g)
+	refused("no loopback listener", http.StatusServiceUnavailable)
+	if len(g.loopback) != 0 {
+		t.Error("a token was issued without a loopback listener")
+	}
+
+	g.noLoopback, g.holdsNone = false, true
+	if got := BedrockRouteModels(); got != nil || listed != 0 {
+		t.Errorf("no marked profile: models %v, %d listings", got, listed)
+	}
+
+	off := &fakeGateway{}
+	withGateway(t, off)
+	UsagePref = func() string { return UsageOff }
+	refused("opencode switched off", http.StatusConflict)
+	if len(off.loopback) != 0 {
+		t.Error("a token was issued while opencode is switched off")
+	}
+	UsagePref = func() string { return UsageOwn }
+	if !slices.Equal(a.OfferedRoutes(), []string{RouteBedrock}) {
+		t.Errorf("usable: offered %v", a.OfferedRoutes())
+	}
+	if a.ExplicitRoute(bedrockID) != RouteBedrock || a.ExplicitRoute("opencode/big-pickle") != "" {
+		t.Error("ExplicitRoute does not name the bedrock route for exactly the bedrock models")
 	}
 }

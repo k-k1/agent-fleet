@@ -51,7 +51,9 @@ export function routeUsable(k: LiveKindAccess | undefined, route: string): boole
  * are usable, a kind with none is not offered. A kind whose own check is its no-selection login
  * alone (claude) is judged on the usable routes alone, since an Anthropic key or a marked AWS
  * profile launches it as well as the subscription login; every other kind also keeps its own
- * connection check, so nothing is offered that was not before.
+ * connection check, so nothing is offered that was not before. A kind whose only usable routes are
+ * selectable ones (opencode with nothing but a marked Bedrock profile) is offered too, unless its
+ * binary is reported unsupported: its own connection check knows nothing of those routes.
  */
 export function kindLaunchable(kind: string, ctx: AvailCtx, live: LiveKinds | null): boolean {
   if (MODEL_FREE.has(kind)) return AGENTS[kind as SessionKind].available(ctx);
@@ -61,17 +63,30 @@ export function kindLaunchable(kind: string, ctx: AvailCtx, live: LiveKinds | nu
   const own = AGENTS[kind as SessionKind]?.available(ctx) ?? false;
   if (!k.usableRoutes) return own;
   if (k.usableRoutes.length === 0) return false;
-  return !!noSelectionRoute(kind) || own;
+  return !!noSelectionRoute(kind) || own || selectableOnly(kind, ctx, k);
+}
+
+// The kind runs only on a route chosen at the launch: it holds a credential for some selectable
+// route, and the kind itself can run here.
+function selectableOnly(kind: string, ctx: AvailCtx, k: LiveKindAccess): boolean {
+  const conn = (ctx.conns as Record<string, { supported?: boolean } | undefined> | null | undefined)?.[kind];
+  return conn?.supported !== false && (k.usableRoutes ?? []).some((r) => (k.routes ?? []).includes(r));
 }
 
 /**
  * emptyRouteOk: a launch of kind may leave its route unselected. Not when the kind is known to
  * run on one route with no selection (claude: the subscription login) and that route is not
  * allowed or its credential is not held: the launch would be refused, or start a CLI with no
- * login. The member then chooses a route; the Console never picks one for them (D11b).
+ * login. The member then chooses a route; the Console never picks one for them (D11b). The same
+ * for a kind with no no-selection route whose usable routes are all selectable ones: with nothing
+ * else held, a launch with no route has nothing to run on.
  */
 export function emptyRouteOk(kind: string, k: LiveKindAccess | undefined): boolean {
   const r = noSelectionRoute(kind);
+  if (!r && k?.routes?.length && k.usableRoutes?.length) {
+    const fixed = k.fixedRoutes ?? [];
+    if (k.usableRoutes.every((u) => k.routes!.includes(u) && !fixed.includes(u))) return false;
+  }
   // An entry with no route facts at all is a kind that declares none: nothing to choose from.
   if (!r || (k && !k.routes && !k.fixedRoutes)) return true;
   return !!k && allowedOf(k).includes(r) && routeUsable(k, r);

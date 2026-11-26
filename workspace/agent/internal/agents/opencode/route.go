@@ -79,8 +79,39 @@ func (agentImpl) FixedRoutes() []string {
 		routes.RouteOpencodeZen, routes.RouteSakanaAPI}
 }
 
-// OfferedRoutes implements agents.RouteOfferer.
-func (agentImpl) OfferedRoutes() []string { return []string{RouteBedrock} }
+// OfferedRoutes implements agents.RouteOfferer: bedrock while opencode is not switched off and
+// the gateway's loopback listener is up (opencode can only speak TCP), so a route nothing can
+// serve is not offered.
+func (agentImpl) OfferedRoutes() []string {
+	if routeUnavailable() != nil {
+		return nil
+	}
+	return []string{RouteBedrock}
+}
+
+// routeUnavailable is why the bedrock route cannot be used now, nil when it can. The billing
+// choice "off" (Settings > Agents > opencode) disables opencode outright, whatever else is
+// configured (UsageOff), and that holds for the route too; without the gateway's loopback
+// listener there is nothing to send the calls to.
+func routeUnavailable() *agents.RouteRefusal {
+	if UsagePref() == UsageOff {
+		return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
+			Message: "opencode is switched off (Settings > Agents > opencode), so the bedrock route cannot be used; choose another billing route there first"}
+	}
+	if !agents.GatewayLoopbackReady() {
+		return noGateway()
+	}
+	return nil
+}
+
+// ExplicitRoute implements agents.ExplicitRouteModels: an amazon-bedrock model runs on the
+// bedrock route only.
+func (agentImpl) ExplicitRoute(model string) string {
+	if bedrockModel(model) {
+		return RouteBedrock
+	}
+	return ""
+}
 
 // RouteOwnsModels implements agents.RouteModelOwner: a bedrock session's model is checked by
 // CheckRoute against the route, not against the kind's live catalogue (which lists Bedrock models
@@ -96,7 +127,7 @@ func checkSelection(sel agents.RouteSelection) *agents.RouteRefusal {
 		return &agents.RouteRefusal{Status: http.StatusBadRequest, Code: routes.CodeRouteUnavailable,
 			Message: "the bedrock route needs a connection naming one of your Settings AWS profiles marked as a model route, as <profile id>@<region> (the region may be empty for the profile's own)"}
 	}
-	return nil
+	return routeUnavailable()
 }
 
 func noGateway() *agents.RouteRefusal {
@@ -468,10 +499,16 @@ func closesNext(rest []byte) bool {
 // catalogue for the provider, which changes with opencode's models.dev refresh, not per call.
 const routeModelsTTL = 10 * time.Minute
 
+// routeModelsRetry is how long a failed listing is not tried again: the listing runs a CLI under
+// a timeout, and a launch menu that waits for it on every request would stall the kind's whole
+// model list behind a hung process.
+const routeModelsRetry = time.Minute
+
 var routeModels struct {
-	mu   sync.Mutex
-	at   time.Time
-	list []string
+	mu     sync.Mutex
+	at     time.Time
+	failAt time.Time
+	list   []string
 }
 
 // listBedrockModels runs the CLI; a var so tests need no opencode.
@@ -506,12 +543,13 @@ func bedrockListEnv(base []string) []string {
 }
 
 // BedrockRouteModels is the menu of the bedrock route: opencode's amazon-bedrock models, offered
-// only while the route is (the gateway running). This replaces the keepInMenu
+// only while the route is usable (offered, and the gateway holds a marked profile for it, so a
+// workspace with none never runs the listing). This replaces the keepInMenu
 // stopgap for these ids with the route's availability (ADR 0128 decision 11): outside the route
 // they still cannot work and stay out of the default menu. A failed listing keeps the last good
 // one.
 func BedrockRouteModels() []string {
-	if agents.CurrentRouteGateway() == nil {
+	if routeUnavailable() != nil || agents.GatewayLacks(RouteBedrock) {
 		return nil
 	}
 	routeModels.mu.Lock()
@@ -519,11 +557,16 @@ func BedrockRouteModels() []string {
 	if routeModels.list != nil && time.Since(routeModels.at) < routeModelsTTL {
 		return routeModels.list
 	}
+	if !routeModels.failAt.IsZero() && time.Since(routeModels.failAt) < routeModelsRetry {
+		return routeModels.list
+	}
 	ids, err := listBedrockModels()
 	if err != nil {
+		routeModels.failAt = time.Now()
 		log.Printf("opencode: listing the bedrock route's models failed: %v", err)
 		return routeModels.list
 	}
+	routeModels.failAt = time.Time{}
 	var out []string
 	for _, id := range ids {
 		if bedrockModel(id) {

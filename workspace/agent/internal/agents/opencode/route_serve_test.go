@@ -95,11 +95,7 @@ func TestRouteServeIsTheSessionsOwn(t *testing.T) {
 	log := useFakeRouteServe(t)
 	withGateway(t, &fakeGateway{})
 	// A provider key the workspace stores, which must not reach this server even when the Agent's
-	// own environment carries it, and whatever the usage preference (off: the shared server gets
-	// no key at all, so its key list names none to drop).
-	prevPref := UsagePref
-	UsagePref = func() string { return UsageOff }
-	t.Cleanup(func() { UsagePref = prevPref })
+	// own environment carries it (a direct provider key is kept under withGateway's billing choice).
 	if err := secrets.Update(func(d *secrets.Data) error {
 		d.Opencode = map[string]string{"ANTHROPIC_API_KEY": "workspace-key"}
 		return nil
