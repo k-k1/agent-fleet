@@ -126,7 +126,8 @@ func defaultDeferrable(a agents.Agent, m session.Meta, p routepolicy.Policy) boo
 // directory (Dir, Subdir): the running serve is asked about it, and only the route it proves is
 // judged. Anything else (several providers, a stored key, an unanswered serve, a route the policy
 // forbids) is the route_required it was deferred from. The probe blocks for up to the launch
-// budget, so it never runs under a lock, from a resume, or from a Managed input revalidation. The
+// budget, so it never runs from a resume, a Managed input revalidation or a move's target create
+// (a recreate holds its lifecycle lease meanwhile, for that bounded time). The
 // returned launch is the one judged, for the caller to record.
 func deferredDefaultRefusal(kind string, m session.Meta) (*agents.RouteRefusal, *routes.Launch) {
 	if ref := policyGate(); ref != nil {
@@ -143,6 +144,13 @@ func deferredDefaultRefusal(kind string, m session.Meta) (*agents.RouteRefusal, 
 	}
 	start := time.Now()
 	l, _ := withinBudget(kind+" ResolveDefaultLaunch", func() routes.Launch { return dr.ResolveDefaultLaunch(m, start) })
+	// The probe can take the whole budget: the answer is judged on the policy as it is now.
+	if ref := policyGate(); ref != nil {
+		return ref, nil
+	}
+	if p, restricted = restrictingPolicy(); !restricted {
+		return nil, &l
+	}
 	switch {
 	case l.Route == "":
 		return requiredRefusal(kind, p, "the route of its default model is not proven for this folder"), nil
@@ -257,7 +265,19 @@ func storedLaunchPolicyRefusal(m session.Meta) *agents.RouteRefusal {
 // named, false for a kind without one.
 func storedDefaultHolds(a agents.Agent, m session.Meta, rec routes.Launch) bool {
 	h, ok := a.(agents.DefaultLaunchHolder)
-	return ok && strings.TrimSpace(m.Model) == "" && h.HoldsDefaultLaunch(m, rec)
+	if !ok || strings.TrimSpace(m.Model) != "" {
+		return false
+	}
+	// Bounded as a whole: a configuration or credential read that never returns must refuse the
+	// start, not hold the Managed input gate. A late answer is dropped.
+	held := "held"
+	l, _ := withinBudget(m.Kind+" HoldsDefaultLaunch", func() routes.Launch {
+		if h.HoldsDefaultLaunch(m, rec) {
+			return routes.Launch{Route: held}
+		}
+		return routes.Launch{}
+	})
+	return l.Route == held
 }
 
 // sameDestination reports whether two catalogued routes send prompts to the same destination. An

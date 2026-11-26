@@ -3,7 +3,10 @@ package sessionx
 import (
 	"errors"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,20 +29,30 @@ type defaultPerCallAgent struct {
 	def   *routes.Launch
 	dirs  *[]string
 	holds bool
+	// onProbe runs inside ResolveDefaultLaunch, before it answers (a policy arriving meanwhile).
+	onProbe func()
+	// hang, when set, blocks HoldsDefaultLaunch until it is closed.
+	hang chan struct{}
 }
 
 func (a defaultPerCallAgent) ResolveDefaultLaunch(m session.Meta, _ time.Time) routes.Launch {
 	*a.dirs = append(*a.dirs, m.CWD())
+	if a.onProbe != nil {
+		a.onProbe()
+	}
 	return *a.def
 }
 
 // The capabilities the wrapper would otherwise hide from the endpoints under test.
-func (defaultPerCallAgent) MoveTarget() agents.MoveTargetState { return agents.MoveTargetMeasured }
-func (a defaultPerCallAgent) ForkSource(m session.Meta) (string, error) {
-	return a.Agent.(agents.Forker).ForkSource(m)
-}
+func (defaultPerCallAgent) MoveTarget() agents.MoveTargetState        { return agents.MoveTargetMeasured }
+func (a defaultPerCallAgent) ForkSource(session.Meta) (string, error) { return "fork-source", nil }
 
-func (a defaultPerCallAgent) HoldsDefaultLaunch(session.Meta, routes.Launch) bool { return a.holds }
+func (a defaultPerCallAgent) HoldsDefaultLaunch(session.Meta, routes.Launch) bool {
+	if a.hang != nil {
+		<-a.hang
+	}
+	return a.holds
+}
 
 // swapDefaultOpencode installs the stand-in; def is what the "serve" proves, dirs the folders it
 // was asked about.
@@ -194,12 +207,12 @@ func TestRestrictedDefaultModelCreate(t *testing.T) {
 		"a fresh worktree":              {freeLaunch, map[string]any{"worktree": true}, false},
 		"a fresh worktree on a branch":  {freeLaunch, map[string]any{"worktree": true, "new_branch": "topic/x"}, false},
 		"an existing branch's worktree": {freeLaunch, map[string]any{"worktree": true, "use_existing": true, "branch": "feature"}, false},
-		"a clone":                       {freeLaunch, map[string]any{"remote_url": "https://example.invalid/x.git"}, false},
-		"a new space":                   {freeLaunch, map[string]any{"space": map[string]any{"name": "fresh"}}, false},
+		"a clone":                       {freeLaunch, map[string]any{"remote_url": "file://" + p.repo}, false},
+		"a new space":                   {freeLaunch, map[string]any{"space": map[string]any{"name": "fresh"}, "dir": ""}, false},
 	} {
 		*def, *got = tc.def, session.Meta{}
 		asked := len(*dirs)
-		before, refs := p.sideEffects(), gitRefs(t, p.repo)
+		before, refs, spaces := p.sideEffects(), gitRefs(t, p.repo), dirNames(filepath.Join(p.home, "spaces"))
 		rec := p.post(body(tc.extra), "")
 		if rec.Code == http.StatusOK || rec.Code == http.StatusCreated || got.Name != "" {
 			t.Errorf("%s: %d %s, launched %+v", name, rec.Code, rec.Body, *got)
@@ -208,10 +221,14 @@ func TestRestrictedDefaultModelCreate(t *testing.T) {
 		if (len(*dirs) > asked) != tc.probe {
 			t.Errorf("%s: probed=%v, want %v", name, len(*dirs) > asked, tc.probe)
 		}
-		if tc.def.Route == "" && routeCode(t, rec.Body.String()) != routes.CodePolicyRequired {
-			t.Errorf("%s: code %s, want %s", name, routeCode(t, rec.Body.String()), routes.CodePolicyRequired)
+		want := routes.CodePolicyRequired
+		if tc.def.Route == routes.RouteOpenAIAPI {
+			want = routes.CodePolicyForbidden
 		}
-		if d := before.diff(p.sideEffects()); d != "" || refs != gitRefs(t, p.repo) {
+		if routeCode(t, rec.Body.String()) != want {
+			t.Errorf("%s: %d code %s, want %s", name, rec.Code, routeCode(t, rec.Body.String()), want)
+		}
+		if d := before.diff(p.sideEffects()); d != "" || refs != gitRefs(t, p.repo) || spaces != dirNames(filepath.Join(p.home, "spaces")) {
 			t.Errorf("%s: a refused create left %s (refs changed: %v)", name, d, refs != gitRefs(t, p.repo))
 		}
 	}
@@ -231,6 +248,15 @@ func TestRestrictedDefaultModelCreate(t *testing.T) {
 	}
 }
 
+func dirNames(dir string) string {
+	ents, _ := os.ReadDir(dir)
+	var n []string
+	for _, e := range ents {
+		n = append(n, e.Name())
+	}
+	return strings.Join(n, ",")
+}
+
 func gitRefs(t *testing.T, repo string) string {
 	t.Helper()
 	out, err := exec.Command("git", "-C", repo, "for-each-ref").CombinedOutput()
@@ -238,6 +264,78 @@ func gitRefs(t *testing.T, repo string) string {
 		t.Fatalf("git for-each-ref: %v: %s", err, out)
 	}
 	return string(out)
+}
+
+func swapDefaultAgent(t *testing.T, a defaultPerCallAgent) {
+	t.Helper()
+	a.perCallAgent = perCallAgent{Agent: AgentOf(session.KindOpencode), launch: &routes.Launch{}}
+	t.Cleanup(agentreg.SwapForTest(session.KindOpencode, a))
+}
+
+// A policy that arrives while the serve is being asked is the one the answer is judged on, and the
+// recreate it refuses has stopped nothing.
+func TestRecreateJudgesTheProbeOnTheCurrentPolicy(t *testing.T) {
+	usePolicy(t, zenOnly)
+	home := writebackEnv(t)
+	swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &[]string{}, holds: true, onProbe: func() {
+		usePolicy(t, routepolicy.Policy{Revision: 9, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI}})
+	}})
+	useLaunchProbe(t)
+	session.WriteMeta(session.Meta{Name: "dfrec3", Dir: home, Kind: session.KindOpencode, Driver: session.DriverManaged})
+	rec := callHandler(HandleRecreateSession, http.MethodPost, "dfrec3", "")
+	cur, _ := session.ReadMeta("dfrec3")
+	if rec.Code != http.StatusForbidden || cur.Archived || routeCode(t, rec.Body.String()) != routes.CodePolicyForbidden {
+		t.Errorf("recreate = %d archived=%v %s, want policy_forbidden before the slot is archived", rec.Code, cur.Archived, rec.Body)
+	}
+}
+
+// The refusal itself is made before anything is stopped: the answer is judged on the policy as it
+// is when the probe returns, not the one read before it.
+func TestDeferredDefaultRefusalReadsThePolicyAgainAfterTheProbe(t *testing.T) {
+	usePolicy(t, zenOnly)
+	swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &[]string{}, holds: true, onProbe: func() {
+		usePolicy(t, routepolicy.Policy{Revision: 9, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI}})
+	}})
+	ref, l := deferredDefaultRefusal(session.KindOpencode, session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged, Dir: t.TempDir()})
+	wantPolicyRefusal(t, "a policy that dropped Zen during the probe", ref, http.StatusForbidden, routes.CodePolicyForbidden)
+	if l != nil {
+		t.Error("a refusal handed back a launch to record")
+	}
+}
+
+// A holder that never returns refuses the start within the launch budget instead of holding the
+// Managed input gate, and a proven record starts through the real Managed resume with no probe.
+func TestManagedResumeOfTheDefaultRecord(t *testing.T) {
+	isolateAgentState(t)
+	usePolicy(t, zenOnly)
+	prevStart := KindStartRefusal
+	KindStartRefusal = nil
+	t.Cleanup(func() { KindStartRefusal = prevStart })
+	dirs := []string{}
+	rec := freeLaunch
+	m := session.Meta{Name: "dfres1", Kind: session.KindOpencode, Driver: session.DriverManaged, Dir: t.TempDir(), LaunchRoute: &rec}
+	var got session.Meta
+	d := launchProbeDriver{got: &got}
+
+	swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &dirs, holds: true})
+	_, err := resumeManagedAs(d, m, true, false)
+	if got.Name != m.Name || len(dirs) != 0 {
+		t.Errorf("the proven record: reached the driver=%v after %d probes (%v)", got.Name == m.Name, len(dirs), err)
+	}
+
+	old := launchResolveBudget
+	launchResolveBudget = 100 * time.Millisecond
+	t.Cleanup(func() { launchResolveBudget = old })
+	hang := make(chan struct{})
+	t.Cleanup(func() { close(hang) })
+	swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &dirs, holds: true, hang: hang})
+	got = session.Meta{}
+	begin := time.Now()
+	_, err = resumeManagedAs(d, m, true, false)
+	var sre *StartRefusalError
+	if !errors.As(err, &sre) || got.Name != "" || time.Since(begin) > 5*time.Second {
+		t.Errorf("a hung holder: err=%v reached the driver=%v after %v, want a refusal within the budget", err, got.Name != "", time.Since(begin))
+	}
 }
 
 // Fork, recreate and move judge the folder they already have before they change anything: an
@@ -276,6 +374,16 @@ func TestRestrictedDefaultModelFollowOns(t *testing.T) {
 		}
 		if got := moveCreateReq(src, moveRecord{Kind: session.KindOpencode}); !got.noProbe {
 			t.Error("a move's create may probe the serve under the move's lock")
+		}
+	})
+	t.Run("fork on a proven folder", func(t *testing.T) {
+		home := writebackEnv(t)
+		*def = freeLaunch
+		got := useLaunchProbe(t)
+		session.WriteMeta(session.Meta{Name: "dffork2", Dir: home, Kind: session.KindOpencode, Driver: session.DriverManaged})
+		callHandler(HandleForkSession, http.MethodPost, "dffork2", "")
+		if got.LaunchRoute == nil || *got.LaunchRoute != freeLaunch {
+			t.Errorf("the fork launched with %+v, want the free record", got.LaunchRoute)
 		}
 	})
 	t.Run("fork", func(t *testing.T) {
