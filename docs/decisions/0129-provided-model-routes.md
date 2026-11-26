@@ -203,10 +203,10 @@ an order of magnitude, and the budget alone does not say which one the tenant me
       external id from the CP database. A caller-supplied URL, Region, role, external id or tag is refused, not ignored.
       Of the caller's headers only `content-type`, `accept` and a named list of Bedrock request headers pass (the list
       is written per operation when it is built); the caller's `Authorization` never does. The headers an AWS ALB in front
-      of the CP adds are dropped, neither refused nor passed: `X-Amzn-Trace-Id`, `X-Forwarded-For`, `X-Forwarded-Proto`,
-      `X-Forwarded-Port`, and its TLS and mutual-TLS metadata under their standard names, each by exact name. Any other
-      `X-Forwarded-*` or `X-Amzn-*` header is still judged as a caller header, so an ALB's OIDC headers and a renamed TLS
-      header are refused.
+      of the CP may add are dropped, neither refused nor passed: `X-Amzn-Trace-Id`, `X-Forwarded-For`, `X-Forwarded-Proto`,
+      `X-Forwarded-Port`, and its TLS and mutual-TLS metadata under their standard names, each by exact name. Every other
+      header follows the caller-header rules: an ALB's OIDC headers are refused, and a renamed TLS header is judged by its
+      new name.
     - **Operations and models are checked at the CP, not only at the Agent.** Only `POST` on
       `/model/<id>/{invoke,invoke-with-response-stream,converse,converse-stream}` and, from Q7, `/openai/v1/responses`.
       The model id is taken from the path (URL-decoded once) or, for Responses, from the body, and must equal an entry of

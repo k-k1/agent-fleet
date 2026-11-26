@@ -109,14 +109,16 @@ var passHeaders = []string{"Content-Type", "Accept", "X-Amzn-Bedrock-Accept"}
 // (X-Role-Arn, Aws-Region), so a harmless header that merely contains the letters passes.
 var refusedHeaderRe = regexp.MustCompile(`(?i)^(x-amz-|x-amzn-|x-af-)|(^|-)(region|role|role-?arn|external-?id|tags?)($|-)`)
 
-// loadBalancerHeaders are the headers an AWS Application Load Balancer in front of the CP adds,
-// canonical names: on every request the trace id and the three X-Forwarded-* it sets; when the
-// load balancer or its listener enables them, the TLS metadata and the mutual-TLS client
-// certificate ones under their standard names. They are dropped before the refusal check and
-// never reach Bedrock: without this the ALB's own X-Amzn-Trace-Id matches refusedHeaderRe and
-// every call through the CP's public base URL behind an ALB is refused. Exact names only: any
-// other x-amzn- header outside passHeaders is still refused, the ALB's OIDC headers (an
-// authenticate action is identity the CP does not take) and a renamed TLS header included.
+// loadBalancerHeaders are the headers an AWS Application Load Balancer in front of the CP may add,
+// canonical names: the trace id on every request, the three X-Forwarded-* in its default
+// configuration, and, when the load balancer or its listener enables them, the TLS metadata and
+// the mutual-TLS client certificate ones under their standard names. They are dropped before the
+// refusal check and never reach Bedrock: without this the ALB's own X-Amzn-Trace-Id matches
+// refusedHeaderRe and every call through the CP's public base URL behind an ALB is refused.
+// Exact names only: every other header follows the caller-header rules, so any other x-amzn-
+// header outside passHeaders is refused (the ALB's OIDC headers included: an authenticate action
+// is identity the CP does not take), and a renamed TLS header is refused only when its new name
+// matches refusedHeaderRe.
 var loadBalancerHeaders = []string{
 	"X-Amzn-Trace-Id",
 	"X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Port",
@@ -129,8 +131,8 @@ var loadBalancerHeaders = []string{
 // accept and passHeaders, nothing else. Authorization is never among them; the CP signs a fresh
 // one. A header that names identity, credentials, a Region, a role, an external id or a tag is
 // refused, not dropped, so a caller cannot tell from a success that it was ignored. The load
-// balancer's headers are the one exception: an ALB adds them whatever the caller sent, and none
-// of them asks for anything the CP decides.
+// balancer's headers are the one exception: an ALB may add them whatever the caller sent, and
+// none of them asks for anything the CP decides.
 func UpstreamHeaders(in http.Header) (http.Header, *Refusal) {
 	out := http.Header{}
 	for k, v := range in {

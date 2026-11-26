@@ -101,7 +101,7 @@ func TestUpstreamHeaders(t *testing.T) {
 }
 
 // albHeaders is the union of what an AWS Application Load Balancer can add to a request it
-// forwards: the headers it always sets, the TLS metadata it adds when enabled, and both mutual-TLS
+// forwards: the trace id and the X-Forwarded-* of its default configuration, the TLS metadata it adds when enabled, and both mutual-TLS
 // modes (passthrough sends X-Amzn-Mtls-Clientcert, verify the rest of the client certificate
 // ones). No single configuration sends all of them; the union checks every name at once.
 var albHeaders = http.Header{
