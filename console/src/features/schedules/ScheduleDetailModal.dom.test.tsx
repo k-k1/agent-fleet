@@ -217,6 +217,64 @@ describe("ScheduleDetailModal delivery", () => {
     expect(update).toHaveBeenCalledWith("sch_1", { spec_label: "renamed" });
   });
 
+  const setLabel = async (v: string) => {
+    const label = document.querySelector("#sched-label") as HTMLInputElement;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(label, v);
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("disables the Sessions-view setting on a reuse schedule, says why, and does not patch it", async () => {
+    await renderWith({ session_mode: "reuse" });
+    expect(showBox()!.checked).toBe(false);
+    expect(showBox()!.disabled).toBe(true);
+    expect(document.body.textContent).toContain(t("sched.f_show_in_sessions_unfit"));
+    await setLabel("renamed");
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(update).toHaveBeenCalledWith("sch_1", { spec_label: "renamed" });
+  });
+
+  it("enables the Sessions-view setting on new and unknown-mode schedules", async () => {
+    await renderWith({ session_mode: "new" });
+    expect(showBox()!.disabled).toBe(false);
+  });
+
+  it("treats an unknown non-empty mode as startable", async () => {
+    await renderWith({ session_mode: "future_mode" });
+    expect(showBox()!.disabled).toBe(false);
+  });
+
+  it("keeps a stored true on a reuse schedule out of an unrelated save", async () => {
+    await renderWith({ session_mode: "reuse", show_in_sessions: true });
+    expect(showBox()!.checked).toBe(true);
+    expect(showBox()!.disabled).toBe(false);
+    await setLabel("renamed");
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(update).toHaveBeenCalledWith("sch_1", { spec_label: "renamed" });
+  });
+
+  it("lets a stored true on a reuse schedule be unticked but not re-ticked", async () => {
+    await renderWith({ session_mode: "reuse", show_in_sessions: true });
+    await act(async () => {
+      showBox()!.click();
+    });
+    expect(showBox()!.checked).toBe(false);
+    await act(async () => {
+      showBox()!.click();
+    });
+    expect(showBox()!.checked).toBe(false);
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(update).toHaveBeenCalledWith("sch_1", { show_in_sessions: false });
+  });
+
   it("offers no Sessions-view setting for an assistant-mode schedule", async () => {
     await renderWith({ session_mode: "assistant" });
     expect(showBox()).toBeUndefined();

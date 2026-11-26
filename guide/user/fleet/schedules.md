@@ -127,6 +127,7 @@ Sessions a schedule starts stay out of the repository tree and the Sessions list
 - Off by default. Turning it off puts them back in the Schedules view alone
 - Asking the operator, it is `show_in_sessions`
 - It does not apply to a schedule that runs in an assistant conversation
+- It applies only to schedules that start a new session each run. On a schedule that reuses one session the box is disabled with a reason, because no working-copy child is ever started; a value stored earlier is kept, and you can untick it
 
 ## Run only when a work item query has something new
 

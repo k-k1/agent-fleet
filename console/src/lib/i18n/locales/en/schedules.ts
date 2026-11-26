@@ -82,6 +82,7 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.f_stop_after_run_hint": "stop the session once the run finishes — after any report, and resumable (default: off)",
   "sched.f_show_in_sessions": "Also show in the Sessions view",
   "sched.f_show_in_sessions_hint": "list the worktree sessions this schedule's runs start in the repository tree and the Sessions list too (default: off)",
+  "sched.f_show_in_sessions_unfit": "only for schedules that start a new session in its own working copy; this schedule starts none",
   "sched.f_prompt": "Prompt",
   "sched.f_session_mode": "Session mode",
   "sched.f_reuse_target": "Reuse target",
