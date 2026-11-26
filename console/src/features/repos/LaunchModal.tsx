@@ -198,6 +198,9 @@ interface LaunchModalProps {
    *  from a member's space has no repository to start in). The hub's space section is
    *  `SpaceLaunchForm`; this keeps the dialog's prompt box and sends `space: { name: "" }`. */
   newSpace?: boolean;
+  /** Keep Escape and Back here while a create is out, instead of letting them reach the dialog
+   *  this one is stacked on. A new-space dialog always does. */
+  holdKeys?: boolean;
   onClose: () => void;
   /** Present when opened from the Start hub: the back action returns to it. */
   onBack?: () => void;
@@ -281,7 +284,7 @@ export function LaunchModal(props: LaunchModalProps) {
       lockClose={busy}
       // Stacked on the hub or the inbox: while the create is out, Escape and back must not fall to
       // what is underneath (a hub's close would clear the dialog and its outcome with it).
-      holdKeys={!!props.newSpace}
+      holdKeys={!!props.newSpace || !!props.holdKeys}
     >
       <LaunchForm key={target} {...props} busy={busy} setBusy={setBusy} />
     </Modal>

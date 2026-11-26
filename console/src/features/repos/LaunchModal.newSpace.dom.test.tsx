@@ -117,4 +117,41 @@ describe("the new-space dialog", () => {
     expect(onClose).toHaveBeenCalled();
     expect(under).not.toHaveBeenCalled();
   });
+
+  // The reverse stack: a repository dialog opened over the new-space dialog (the clone toast does
+  // it). Its create in flight must keep Escape, or the dialog under it closes and drops the
+  // handoff text the member typed there.
+  it("keeps Escape on a repository dialog stacked over it while its create is out", async () => {
+    let answer!: (r: LaunchResult) => void;
+    const bottomClose = vi.fn();
+    const topClose = vi.fn();
+    const bottom = vi.fn<Launch>(async () => ({ ok: true }));
+    const top = vi.fn<Launch>(() => new Promise<LaunchResult>((r) => (answer = r)));
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <LaunchModal newSpace repo="" kinds={["claude"]} access={access} initialPrompt="carry on" onClose={bottomClose} onLaunch={bottom} />
+            <LaunchModal repo="private" holdKeys kinds={["claude"]} access={access} onClose={topClose} onLaunch={top} />
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await settle();
+    const goButtons = document.querySelectorAll<HTMLButtonElement>("button.launch-go");
+    await act(async () => goButtons[goButtons.length - 1].click());
+    await settle();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(bottomClose).not.toHaveBeenCalled();
+    expect(topClose).not.toHaveBeenCalled();
+    await act(async () => answer({ ok: false }));
+    await settle();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(topClose).toHaveBeenCalled();
+    expect(bottomClose).not.toHaveBeenCalled();
+  });
 });

@@ -16,7 +16,7 @@ import { useLaunchTarget, useLaunchSeed, useSpaceHandoff } from "./store.ts";
 import { markHandoffLaunched } from "../mirror/HandoffProposal.tsx";
 import { launchFromHandoffOffer } from "../sharing/acceptHandoff.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useTenantStore } from "../../core/store/tenant.ts";
+import { identityScope, useTenantStore } from "../../core/store/tenant.ts";
 import { recordWorkItemLaunch } from "../workitems/launch.ts";
 import { workItemLaunchBranch } from "../workitems/read.ts";
 import { stashStoredDraft } from "../memo/launchStash.ts";
@@ -53,7 +53,7 @@ export function StartHost() {
   // A tenant or account switch drops a space handoff at once: it names an offer of the previous
   // scope, and its launch would send that id to the new one. Here, not in the inbox button, so the
   // pop-out shell (which mounts this host without the button) gets it too.
-  const scope = useTenantStore((s) => (s.whoami?.user ?? "") + "|" + s.tenant);
+  const scope = useTenantStore(identityScope);
   const scopeRef = useRef(scope);
   useEffect(() => {
     if (scopeRef.current === scope) return;
@@ -252,6 +252,9 @@ export function StartHost() {
           access={ctx.access}
           claudeExpired={ctx.claudeExpired}
           settling={ctx.connsSettling}
+          // Stacked over a space handoff's dialog: while the create is out, Escape and back must
+          // not fall to it, or its close drops what was typed there.
+          holdKeys={!!spaceHandoff}
           allowWorktree={!launch.worktree && launch.vcs !== "svn" && !launch.unborn}
           isSvn={launch.vcs === "svn"}
           isUnborn={!!launch.unborn}

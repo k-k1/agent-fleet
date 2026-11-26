@@ -277,6 +277,18 @@ describe("the received handoff row", () => {
         useTenantStore.setState({ tenant: "" });
       });
 
+      it("writes nothing when another account signed in to the same tenant meanwhile", async () => {
+        const { useTenantStore } = await import("../../core/store/tenant.ts");
+        useTenantStore.setState({ tenant: "a", whoami: { email: "a@example.com", resolved_user: "a" } as never });
+        await render([], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        await act(async () => useTenantStore.setState({ whoami: { email: "b@example.com", resolved_user: "b" } as never }));
+        await settle(release);
+        expect(useSpaceHandoff.getState().offerId).toBe("");
+        useTenantStore.setState({ tenant: "", whoami: null });
+      });
+
       it("writes nothing when the Start hub was opened meanwhile", async () => {
         await render([], true, fromSpace);
         const release = slowSpaces();

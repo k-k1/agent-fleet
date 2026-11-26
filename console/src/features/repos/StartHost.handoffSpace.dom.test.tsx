@@ -13,7 +13,7 @@ vi.mock("./useRepoRail.ts", () => ({ useRepoRailContext: () => ({ access: { kind
 vi.mock("./StartModal.tsx", () => ({ StartModal: () => <div data-testid="hub" /> }));
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 vi.mock("./LaunchModal.tsx", () => ({
-  LaunchModal: function MockLaunchModal(p: { repo: string; newSpace?: boolean; home?: boolean; initialPrompt?: string; initialTitle?: string; onClose: () => void; onLaunch: (o: LaunchOpts) => Promise<{ ok: boolean }> }) {
+  LaunchModal: function MockLaunchModal(p: { repo: string; newSpace?: boolean; home?: boolean; initialPrompt?: string; initialTitle?: string; holdKeys?: boolean; onClose: () => void; onLaunch: (o: LaunchOpts) => Promise<{ ok: boolean }> }) {
     // How many times the space dialog was mounted: an unmount loses what the member typed in it.
     useEffect(() => {
       if (p.newSpace) (globalThis as { __spaceMounts?: number }).__spaceMounts = ((globalThis as { __spaceMounts?: number }).__spaceMounts ?? 0) + 1;
@@ -29,6 +29,7 @@ vi.mock("./LaunchModal.tsx", () => ({
       data-new-space={String(!!p.newSpace)}
       data-home={String(!!p.home)}
       data-repo={p.repo}
+      data-hold-keys={String(!!p.holdKeys)}
       data-prompt={p.initialPrompt ?? ""}
       data-title={p.initialTitle ?? ""}
       onClick={() =>
@@ -209,7 +210,8 @@ describe("launching from a handoff that came from a space", () => {
     await act(async () => useLaunchTarget.getState().open({ name: "private", path: "/home/dev/repos/private", branch: "main" } as never));
     // The repository dialog is on top; the space dialog stays mounted under it, with what was typed.
     expect(dialogs().map((d) => d.dataset.newSpace)).toEqual(["true", "false"]);
-    expect(dialogs()[1].dataset).toMatchObject({ repo: "private", prompt: "" });
+    // Over the space dialog it holds Escape and Back while its create is out.
+    expect(dialogs()[1].dataset).toMatchObject({ repo: "private", prompt: "", holdKeys: "true" });
     expect((globalThis as { __spaceMounts?: number }).__spaceMounts).toBe(1);
     await act(async () => dialogs()[1].click());
     for (let i = 0; i < 10; i++) await act(async () => await new Promise((r) => setTimeout(r, 0)));
@@ -242,15 +244,16 @@ describe("launching from a handoff that came from a space", () => {
   // The offer names the previous tenant's; its launch would send that id to the new one.
   it("drops the handoff when the tenant or account changes", async () => {
     const { useTenantStore } = await import("../../core/store/tenant.ts");
-    useTenantStore.setState({ tenant: "a", whoami: { user: "u1" } as never });
+    useTenantStore.setState({ tenant: "a", whoami: { email: "a@example.com", resolved_user: "a" } as never });
     useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
     await mount();
     expect(dialog()).not.toBeNull();
     await act(async () => useTenantStore.setState({ tenant: "b" }));
     expect(dialog()).toBeNull();
     expect(useSpaceHandoff.getState().offerId).toBe("");
+    // The same tenant, another account: the real whoami carries the email and no user key.
     useSpaceHandoff.getState().open("offer-2", "x", "y");
-    await act(async () => useTenantStore.setState({ whoami: { user: "u2" } as never }));
+    await act(async () => useTenantStore.setState({ whoami: { email: "b@example.com", resolved_user: "b" } as never }));
     expect(useSpaceHandoff.getState().offerId).toBe("");
     useTenantStore.setState({ tenant: "", whoami: null });
   });
