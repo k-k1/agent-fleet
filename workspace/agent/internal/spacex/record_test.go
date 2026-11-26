@@ -353,6 +353,9 @@ func TestListResyncsTheRecordFromTheMarker(t *testing.T) {
 func TestUnreadableRecordIsNotOverwritten(t *testing.T) {
 	withHome(t)
 	first, _ := Create("First")
+	if _, ok := recorded(first.Folder); !ok { // primes the cache: a chmod keeps size and mtime
+		t.Fatal("not recorded")
+	}
 	if err := os.Chmod(recordPath(), 0); err != nil {
 		t.Fatal(err)
 	}
@@ -361,11 +364,15 @@ func TestUnreadableRecordIsNotOverwritten(t *testing.T) {
 		f.Close()
 		t.Skip("running as a user that reads mode 000 files")
 	}
-	recordMu.Lock()
-	recordCache.ok = false
-	recordMu.Unlock()
+	before, err := os.Lstat(recordPath())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Create("Second"); err != nil {
 		t.Fatal(err)
+	}
+	if after, err := os.Lstat(recordPath()); err != nil || !os.SameFile(before, after) {
+		t.Fatal("an update replaced a record it could not read (answered from the cache)")
 	}
 	_ = os.Chmod(recordPath(), 0o600)
 	if _, ok := recorded(first.Folder); !ok {
@@ -458,5 +465,75 @@ func TestProtectedAfterSpacesMovedBehindALink(t *testing.T) {
 		if !Protected(p) {
 			t.Errorf("Protected(%q) = false after ~/spaces moved behind a link", p)
 		}
+	}
+}
+
+// A rename that runs while a list is syncing the record is not undone by the list's older read.
+func TestRenameDuringSyncKeepsTheNewName(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	renamed := make(chan error, 1)
+	afterSyncRead = func() {
+		afterSyncRead = nil
+		go func() { _, err := Rename(sp.Folder, "Final"); renamed <- err }()
+		time.Sleep(100 * time.Millisecond) // long enough for an unserialised rename to finish
+	}
+	t.Cleanup(func() { afterSyncRead = nil })
+	if _, err := List(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-renamed; err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := recorded(sp.Folder); e.Name != "Final" {
+		t.Fatalf("record name = %q, want the rename's", e.Name)
+	}
+}
+
+// A directory born after the recorded one (an inode the file system reused for a folder made
+// later) is not the recorded space.
+func TestAnotherBirthTimeIsAnotherDirectory(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	e, _ := recorded(sp.Folder)
+	if e.Ino == 0 {
+		t.Fatal("the entry has no inode")
+	}
+	if e.Born == 0 {
+		t.Skip("this file system keeps no birth time")
+	}
+	_ = updateRecord(func(m map[string]recordEntry) bool {
+		x := m[sp.Folder]
+		x.Born--
+		m[sp.Folder] = x
+		return true
+	})
+	_ = os.Remove(filepath.Join(sp.Dir, MarkerFile))
+	if FolderOf(sp.Dir) != "" || Protected(sp.Dir) {
+		t.Fatal("a directory with another birth time was taken for the recorded space")
+	}
+}
+
+// A recorded creation time too long for the full marker (copied from an old one) still gives a
+// marker every reader reads, with its name.
+func TestRepairStaysWithinTheMarkerBound(t *testing.T) {
+	withHome(t)
+	dir := filepath.Join(Root(), "old-abcdef")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"name":"Old","createdAt":"` + strings.Repeat("x", markerMaxBytes-40) + `"}`
+	if err := os.WriteFile(filepath.Join(dir, MarkerFile), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := List(); len(list) != 1 || list[0].Name != "Old" {
+		t.Fatalf("List() = %+v", list)
+	}
+	_ = os.Remove(filepath.Join(dir, MarkerFile))
+	if got, ok := Lookup("old-abcdef"); !ok || got.Name != "Old" {
+		t.Fatalf("Lookup = %+v, %v", got, ok)
+	}
+	if fi, err := os.Stat(filepath.Join(dir, MarkerFile)); err != nil || fi.Size() > markerMaxBytes {
+		t.Fatalf("restored marker: %v %v", fi, err)
 	}
 }

@@ -7,9 +7,11 @@ package spacex
 // and a recorded folder whose marker is missing gets the marker written back instead of being
 // dropped. The marker stays what decides; the record only restores it.
 //
-// An entry names the directory itself (device and inode), not only its folder name: a space moved
-// away by hand and replaced by an ordinary folder of the same name is a different directory, and
-// that folder must neither get the old space's marker nor be protected as the space.
+// An entry names the directory itself (inode and birth time), not only its folder name: a space
+// moved away by hand and replaced by an ordinary folder of the same name is a different directory,
+// and that folder must neither get the old space's marker nor be protected as the space. The
+// device number is left out because the kernel assigns it per mount (a home volume attached again
+// may get another); the birth time is what tells a directory made later in a reused inode.
 //
 // Only a marker that is absent is restored. A directory, FIFO or symlink in its place is left
 // alone and the folder stays no space, as before: something put it there, and replacing it would
@@ -27,6 +29,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
@@ -39,8 +43,9 @@ var recordMu sync.Mutex
 type recordEntry struct {
 	Name      string `json:"name"`
 	CreatedAt string `json:"createdAt,omitempty"`
-	Dev       uint64 `json:"dev"`
 	Ino       uint64 `json:"ino"`
+	// Born is the directory's birth time in Unix nanoseconds, 0 where the file system keeps none.
+	Born int64 `json:"born,omitempty"`
 }
 
 // recordFile is the record's content.
@@ -56,16 +61,21 @@ func recordPath() string { return filepath.Join(paths.AgentStateDir(), "spaces.j
 // never meets a record of its own it cannot read. One entry is about 150 bytes.
 const recordMaxBytes = 4 << 20
 
-// fileKey tells whether the record file changed since it was cached.
+// fileKey tells whether the record file changed since it was cached. The change time and mode are
+// in it so a chmod (which keeps size and mtime) makes the next read find out the file is no longer
+// readable, rather than answer from the cache.
 type fileKey struct {
 	dev, ino uint64
 	size     int64
 	mtime    time.Time
+	ctime    syscall.Timespec
+	mode     os.FileMode
 }
 
 // recordCache keeps the last record read. A session row asks FolderOf on every poll, and a row
 // in a folder made by hand under ~/spaces asks the record each time; an lstat says whether the
-// cached copy is still the file.
+// cached copy is still the file. rec is never changed in place: readers look entries up under
+// recordMu, and updateRecord changes a copy.
 var recordCache struct {
 	key fileKey
 	rec recordFile
@@ -76,7 +86,8 @@ var recordCache struct {
 // replace it with what little it knows.
 var errRecordUnreadable = errors.New("the spaces record could not be read")
 
-// readRecordLocked answers the record (a copy the caller may change). No record is an empty one.
+// readRecordLocked answers the record, which the caller must not change (updateRecord copies it).
+// No record is an empty one.
 // One that is no regular file (a FIFO, a link: never opened, so nothing blocks), is over the size
 // bound or does not parse is treated as empty too, and the next write replaces it: it only ever
 // restores markers, and List records every marked space again. A read that fails (permission,
@@ -95,7 +106,7 @@ func readRecordLocked() (recordFile, error) {
 	}
 	key := keyOf(fi)
 	if recordCache.ok && recordCache.key == key {
-		return recordFile{Spaces: maps.Clone(recordCache.rec.Spaces)}, nil
+		return recordCache.rec, nil
 	}
 	f, err := os.OpenFile(recordPath(), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
@@ -121,13 +132,13 @@ func readRecordLocked() (recordFile, error) {
 		return empty, nil
 	}
 	recordCache.key, recordCache.rec, recordCache.ok = keyOf(ofi), got, true
-	return recordFile{Spaces: maps.Clone(got.Spaces)}, nil
+	return got, nil
 }
 
 func keyOf(fi os.FileInfo) fileKey {
-	k := fileKey{size: fi.Size(), mtime: fi.ModTime()}
+	k := fileKey{size: fi.Size(), mtime: fi.ModTime(), mode: fi.Mode()}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		k.dev, k.ino = uint64(st.Dev), st.Ino
+		k.dev, k.ino, k.ctime = uint64(st.Dev), st.Ino, st.Ctim
 	}
 	return k
 }
@@ -173,29 +184,54 @@ func writeRecordLocked(rec recordFile) error {
 func updateRecord(change func(map[string]recordEntry) bool) error {
 	recordMu.Lock()
 	defer recordMu.Unlock()
-	rec, err := readRecordLocked()
+	cur, err := readRecordLocked()
 	if err != nil {
 		return err
 	}
+	rec := recordFile{Spaces: maps.Clone(cur.Spaces)}
 	if !change(rec.Spaces) {
 		return nil
 	}
 	return writeRecordLocked(rec)
 }
 
-// entryFor is the record entry of the directory dirFi describes, under the given marker fields.
-func entryFor(dirFi os.FileInfo, name, createdAt string) recordEntry {
-	e := recordEntry{Name: name, CreatedAt: createdAt}
-	if st, ok := dirFi.Sys().(*syscall.Stat_t); ok {
-		e.Dev, e.Ino = uint64(st.Dev), st.Ino
+// dirIdentity answers the inode and birth time (0 when the file system keeps none) of the entry at
+// path, without following a link at its end.
+func dirIdentity(path string) (ino uint64, born int64, ok bool) {
+	var st unix.Statx_t
+	if err := unix.Statx(unix.AT_FDCWD, path, unix.AT_SYMLINK_NOFOLLOW, unix.STATX_INO|unix.STATX_BTIME, &st); err != nil {
+		return 0, 0, false
 	}
+	if st.Mask&unix.STATX_BTIME != 0 {
+		born = st.Btime.Sec*1e9 + int64(st.Btime.Nsec)
+	}
+	return st.Ino, born, true
+}
+
+// entryFor is the record entry of the directory at dir, under the given marker fields. Without an
+// identity the entry matches no directory: it is kept for the name until List corrects it.
+func entryFor(dir, name, createdAt string) recordEntry {
+	e := recordEntry{Name: name, CreatedAt: createdAt}
+	e.Ino, e.Born, _ = dirIdentity(dir)
 	return e
 }
 
-// sameDir reports whether dirFi is the directory e was recorded for.
-func sameDir(e recordEntry, dirFi os.FileInfo) bool {
-	st, ok := dirFi.Sys().(*syscall.Stat_t)
-	return ok && e.Ino != 0 && uint64(st.Dev) == e.Dev && st.Ino == e.Ino
+// sameDir reports whether the directory at dir is the one e was recorded for. A birth time is
+// compared only when both sides have one.
+func sameDir(e recordEntry, dir string) bool {
+	ino, born, ok := dirIdentity(dir)
+	if !ok || e.Ino == 0 || ino != e.Ino {
+		return false
+	}
+	return e.Born == 0 || born == 0 || born == e.Born
+}
+
+// inoOf answers fi's inode, 0 when it has none.
+func inoOf(fi os.FileInfo) uint64 {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return st.Ino
+	}
+	return 0
 }
 
 // remember records the space in folder. A failure is not the caller's: the marker is written
@@ -238,11 +274,16 @@ func recorded(folder string) (recordEntry, bool) {
 // whose record write failed, a folder replaced by a restore) is corrected. It holds lifeMu, so a
 // delete that moved a listed folder away since the list was read is seen as gone and not
 // recorded again. A marker that does not parse keeps the recorded name and creation time.
+//
+// It takes renameMu as well, so a rename cannot publish a new name and record it between this
+// reading the old marker and writing the record back.
 func syncRecord(spaces []Space) {
+	renameMu.Lock()
+	defer renameMu.Unlock()
 	lifeMu.RLock()
 	defer lifeMu.RUnlock()
 	type seen struct {
-		dirFi  os.FileInfo
+		dir    string
 		m      marker
 		parsed bool
 	}
@@ -254,16 +295,19 @@ func syncRecord(spaces []Space) {
 			continue
 		}
 		m, parsed := readMarkerParsed(dir)
-		now[sp.Folder] = seen{dirFi: fi, m: m, parsed: parsed}
+		now[sp.Folder] = seen{dir: dir, m: m, parsed: parsed}
 	}
 	if len(now) == 0 {
 		return
+	}
+	if afterSyncRead != nil {
+		afterSyncRead()
 	}
 	_ = updateRecord(func(rec map[string]recordEntry) bool {
 		changed := false
 		for folder, s := range now {
 			old, had := rec[folder]
-			e := entryFor(s.dirFi, s.m.Name, s.m.CreatedAt)
+			e := entryFor(s.dir, s.m.Name, s.m.CreatedAt)
 			if !s.parsed && had {
 				e.Name, e.CreatedAt = old.Name, old.CreatedAt
 			}
@@ -276,6 +320,10 @@ func syncRecord(spaces []Space) {
 		return changed
 	})
 }
+
+// afterSyncRead is a test seam between syncRecord's reading of the markers and its write. Nil in
+// production.
+var afterSyncRead func()
 
 // afterRepair is a test seam that runs once a repair has found the marker missing and written its
 // temporary file, just before the final checks and the publish. Nil in production.
@@ -293,8 +341,13 @@ func repairMarker(folder string) bool {
 	if !ValidFolder(folder) {
 		return false
 	}
-	// A row whose folder is gone (most rows that get here) costs one lstat, and no lock.
-	if fi, err := os.Lstat(filepath.Join(Root(), folder)); err != nil || !fi.IsDir() {
+	// A row whose folder is gone (most rows that get here) costs one lstat, and one in a folder made
+	// by hand a record lookup; neither takes lifeMu or opens anything.
+	dir := filepath.Join(Root(), folder)
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return false
+	}
+	if e, ok := recorded(folder); !ok || !sameDir(e, dir) {
 		return false
 	}
 	// Shared with every other write inside a space: a delete moving the folder away waits for it,
@@ -318,8 +371,9 @@ func repairMarker(folder string) bool {
 	if err != nil || !dirFi.IsDir() {
 		return false
 	}
+	// Again under lifeMu: a delete may have moved the folder away and forgotten it since.
 	e, ok := recorded(folder)
-	if !ok || !sameDir(e, dirFi) {
+	if !ok || !sameDir(e, dir) || inoOf(dirFi) != e.Ino {
 		return false
 	}
 	sp, err := top.OpenRoot(folder)
@@ -338,11 +392,11 @@ func repairMarker(folder string) bool {
 	if createdAt == "" {
 		createdAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	b, err := json.Marshal(newMarker(e.Name, createdAt))
-	if err != nil {
+	b, ok := repairedMarkerBytes(e.Name, createdAt)
+	if !ok {
 		return false
 	}
-	tmp, err := writeTempIn(sp, append(b, '\n'))
+	tmp, err := writeTempIn(sp, b)
 	if err != nil {
 		return false
 	}
@@ -419,5 +473,26 @@ func isSpaceFolder(folder string) bool {
 		return true
 	}
 	e, ok := recorded(folder)
-	return ok && sameDir(e, fi)
+	return ok && sameDir(e, dir)
+}
+
+// repairedMarkerBytes is the marker a repair writes, within the bound every reader applies
+// (markerMaxBytes): a marker past it would be published and then read as nameless for good. A
+// recorded name or creation time too long for the full form (copied from an old marker) drops the
+// note first, then the creation time; a name that does not fit even alone is not written.
+func repairedMarkerBytes(name, createdAt string) ([]byte, bool) {
+	for _, v := range []any{
+		newMarker(name, createdAt),
+		marker{Name: name, CreatedAt: createdAt},
+		marker{Name: name},
+	} {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, false
+		}
+		if b = append(b, '\n'); len(b) <= markerMaxBytes {
+			return b, true
+		}
+	}
+	return nil, false
 }

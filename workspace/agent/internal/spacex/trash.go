@@ -84,9 +84,7 @@ func MoveIn(src, folder string) error {
 	if err := os.Rename(src, dir); err != nil {
 		return err
 	}
-	if fi, err := os.Lstat(dir); err == nil {
-		m, _ := readMarker(dir)
-		remember(folder, entryFor(fi, m.Name, m.CreatedAt))
-	}
+	m, _ := readMarker(dir)
+	remember(folder, entryFor(dir, m.Name, m.CreatedAt))
 	return nil
 }

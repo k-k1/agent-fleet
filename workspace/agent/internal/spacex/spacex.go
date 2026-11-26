@@ -269,7 +269,10 @@ func Create(name string) (Space, error) {
 		base = "space"
 	}
 	// Shared with every other write inside a space, so the folder is recorded before a delete can
-	// move it away (and forget it).
+	// move it away (and forget it); renameMu, so a rename cannot record a new name that this then
+	// records over with the old one.
+	renameMu.Lock()
+	defer renameMu.Unlock()
 	lifeMu.RLock()
 	defer lifeMu.RUnlock()
 	for attempt := 0; attempt < 8; attempt++ {
@@ -289,9 +292,7 @@ func Create(name string) (Space, error) {
 			_ = os.Remove(dir)
 			return Space{}, err
 		}
-		if fi, err := os.Lstat(dir); err == nil {
-			remember(folder, entryFor(fi, m.Name, m.CreatedAt))
-		}
+		remember(folder, entryFor(dir, m.Name, m.CreatedAt))
 		return Space{Folder: folder, Name: m.Name, Dir: dir, CreatedAt: m.CreatedAt}, nil
 	}
 	return Space{}, errors.New("could not find a free space folder name")
@@ -430,7 +431,8 @@ var ErrChanged = errors.New("the space changed while it was being renamed")
 var ErrMarkerTooBig = errors.New("the space's marker file is too big to be rewritten")
 
 // renameMu serialises the renames this Agent makes, so two of them never interleave their
-// read-modify-write of one marker.
+// read-modify-write of one marker. Create and syncRecord take it too, so the name a rename
+// records is never written over by one read before it.
 var renameMu sync.Mutex
 
 // beforePublish runs between the last read of a rename and its final check. A variable so a test
@@ -570,7 +572,7 @@ func Rename(folder, name string) (Space, error) {
 		_ = sp.Remove(tmp)
 		return Space{}, err
 	}
-	remember(folder, entryFor(dirFi, name, createdAt))
+	remember(folder, entryFor(filepath.Join(Root(), folder), name, createdAt))
 	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: createdAt}, nil
 }
 
