@@ -39,6 +39,13 @@ type asFake struct {
 	// from the 401 challenge so the PRM list is what selectScope uses.
 	prmScopes          []string
 	dropChallengeScope bool
+	// authServers replaces the PRM's authorization_servers; asFails answers the n-th (1-based)
+	// request for the RFC 8414 document with a 503; oidcDoc, when set, is served at the OIDC
+	// well-known URL.
+	authServers []string
+	asFails     func(n int) bool
+	asHits      int
+	oidcDoc     map[string]any
 }
 
 func newASFake(t *testing.T, doc map[string]any) *asFake {
@@ -64,11 +71,29 @@ func (f *asFake) serve(w http.ResponseWriter, r *http.Request) {
 		if f.prmScopes != nil {
 			prm = f.prmScopes
 		}
+		servers := []string{f.url("")}
+		if f.authServers != nil {
+			servers = f.authServers
+		}
 		writeTestJSON(w, map[string]any{
-			"resource": f.url("/mcp"), "authorization_servers": []string{f.url("")},
+			"resource": f.url("/mcp"), "authorization_servers": servers,
 			"scopes_supported": prm,
 		})
+	case "/.well-known/openid-configuration":
+		if f.oidcDoc == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeTestJSON(w, f.oidcDoc)
 	case "/.well-known/oauth-authorization-server":
+		f.mu.Lock()
+		f.asHits++
+		fail := f.asFails != nil && f.asFails(f.asHits)
+		f.mu.Unlock()
+		if fail {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		d := map[string]any{
 			"issuer":                           f.url(""),
 			"authorization_endpoint":           f.url("/authorize"),
@@ -285,20 +310,25 @@ func TestStartValidatesTheServerSelectedScope(t *testing.T) {
 func TestSelectScope(t *testing.T) {
 	cases := []struct {
 		name      string
+		def       []string
 		challenge string
 		prm, as   []string
 		want      string
 	}{
-		{"challenge wins over prm", "a b", []string{"x", "y"}, nil, "a b"},
-		{"prm when no challenge", "", []string{"x", "y"}, nil, "x y"},
-		{"offline_access added when the AS lists it", "a", nil, []string{"a", "offline_access"}, "a offline_access"},
-		{"not added when the AS does not", "a", nil, []string{"a"}, "a"},
-		{"not duplicated", "a offline_access", nil, []string{"offline_access"}, "a offline_access"},
-		{"found beyond the report's cap", "a", nil, append(make([]string, 100), "offline_access"), "a offline_access"},
-		{"nothing at all", "", nil, nil, ""},
+		{"challenge wins over prm", nil, "a b", []string{"x", "y"}, nil, "a b"},
+		{"prm when no challenge", nil, "", []string{"x", "y"}, nil, "x y"},
+		{"definition wins over the challenge", []string{"d1", "d2"}, "a b", []string{"x"}, nil, "d1 d2"},
+		{"definition wins over the prm", []string{"d1"}, "", []string{"x", "y"}, nil, "d1"},
+		{"an empty definition list is no list", []string{}, "", []string{"x"}, nil, "x"},
+		{"offline_access added to the definition's when the AS lists it", []string{"d1"}, "", nil, []string{"offline_access"}, "d1 offline_access"},
+		{"offline_access added when the AS lists it", nil, "a", nil, []string{"a", "offline_access"}, "a offline_access"},
+		{"not added when the AS does not", nil, "a", nil, []string{"a"}, "a"},
+		{"not duplicated", nil, "a offline_access", nil, []string{"offline_access"}, "a offline_access"},
+		{"found beyond the report's cap", nil, "a", nil, append(make([]string, 100), "offline_access"), "a offline_access"},
+		{"nothing at all", nil, "", nil, nil, ""},
 	}
 	for _, c := range cases {
-		if got := selectScope(c.challenge, c.prm, c.as); got != c.want {
+		if got := selectScope(c.def, c.challenge, c.prm, c.as); got != c.want {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
 		}
 	}
@@ -1199,5 +1229,25 @@ func TestCompleteClearsThePendingMarkerOfThatServerOnly(t *testing.T) {
 				t.Errorf("another server's marker = %q, want it kept", o.PendingRegistration)
 			}
 		})
+	}
+}
+
+// A PRM naming one root issuer without and with "/" yields two candidates with the metadata's
+// spelling. Sign-in must use the one the report selected, the exact match: here the second
+// fetch of the RFC 8414 document fails and the "/" candidate falls back to an OIDC document
+// without CIMD, which before the allowance was refused as a mismatch.
+func TestStartUsesTheSelectedServerWhenIssuersCoincide(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, map[string]any{"client_id_metadata_document_supported": true, "registration_endpoint": nil})
+	f.authServers = []string{f.url(""), f.url("/")}
+	f.asFails = func(n int) bool { return n%2 == 0 }
+	f.oidcDoc = map[string]any{
+		"issuer": f.url(""), "authorization_endpoint": f.url("/authorize"), "token_endpoint": f.url("/token"),
+		"code_challenge_methods_supported": []string{"S256"},
+	}
+	id := registerServer(t, f)
+	res, q := mustStart(t, id, startReq(nil))
+	if res.Registration != OAuthRegCIMD || q.Get("client_id") != testCIMD {
+		t.Fatalf("registration %q client_id %q, want CIMD from the exactly matching server", res.Registration, q.Get("client_id"))
 	}
 }
