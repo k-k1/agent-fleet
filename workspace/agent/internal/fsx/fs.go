@@ -751,7 +751,9 @@ func HandleRename(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
 		return
 	}
-	if spacex.Protected(srcFull) {
+	// The destination too: renaming a folder onto the marker's place while the marker is missing
+	// would leave a directory there that the repair never replaces.
+	if spacex.Protected(srcFull) || spacex.Protected(dstFull) {
 		httpx.WriteErr(w, http.StatusForbidden, spaceProtectedCode, spaceProtectedMsg)
 		return
 	}

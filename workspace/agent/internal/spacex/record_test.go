@@ -5,16 +5,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
-func readMarkerFile(t *testing.T, dir string) marker {
+func readMarkerFile(t *testing.T, dir string) markerOut {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, MarkerFile))
 	if err != nil {
 		t.Fatalf("marker: %v", err)
 	}
-	var m marker
+	var m markerOut
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("marker %q: %v", b, err)
 	}
@@ -141,13 +143,14 @@ func TestRepairDoesNotReplaceAMarkerWrittenMeanwhile(t *testing.T) {
 	if !repairMarker(sp.Folder) {
 		t.Fatal("repair reported no marker though one was written")
 	}
+	if ents, _ := os.ReadDir(sp.Dir); len(ents) != 1 {
+		t.Fatalf("the repair left its temporary file: %v", ents)
+	}
 	if b, _ := os.ReadFile(marker); string(b) != theirs {
 		t.Fatalf("marker = %q, want theirs kept", b)
 	}
-	afterRepair = func() {
-		_ = os.Remove(marker)
-		_ = os.Mkdir(marker, 0o755)
-	}
+	_ = os.Remove(marker)
+	afterRepair = func() { _ = os.Mkdir(marker, 0o755) }
 	if repairMarker(sp.Folder) {
 		t.Fatal("a directory in the marker's place counted as a marker")
 	}
@@ -241,6 +244,219 @@ func TestProtected(t *testing.T) {
 	} {
 		if got := Protected(p); got != want {
 			t.Errorf("Protected(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// A space moved away by hand and replaced by another entry of the same name is not that space:
+// the new folder gets no marker and is not protected, and a file there can be deleted as before.
+func TestReplacedFolderIsNotTheRecordedSpace(t *testing.T) {
+	home := withHome(t)
+	sp, _ := Create("Draft")
+	_ = os.Remove(filepath.Join(sp.Dir, MarkerFile))
+	if err := os.Rename(sp.Dir, filepath.Join(home, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sp.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if FolderOf(sp.Dir) != "" {
+		t.Fatal("an ordinary folder in the recorded space's place became the space")
+	}
+	if _, err := os.Lstat(filepath.Join(sp.Dir, MarkerFile)); err == nil {
+		t.Fatal("the old space's marker was written into another folder")
+	}
+	if Protected(sp.Dir) {
+		t.Fatal("an ordinary folder in the recorded space's place is protected")
+	}
+	if err := os.Remove(sp.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sp.Dir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if Protected(sp.Dir) || Protected(filepath.Join(sp.Dir, MarkerFile)) {
+		t.Fatal("a regular file in the recorded space's place is protected")
+	}
+}
+
+// A folder moved away while a repair is writing gets nothing written at its new place.
+func TestRepairWritesNothingIntoAFolderMovedMeanwhile(t *testing.T) {
+	home := withHome(t)
+	sp, _ := Create("Draft")
+	_ = os.Remove(filepath.Join(sp.Dir, MarkerFile))
+	moved := filepath.Join(home, "moved")
+	afterRepair = func() { _ = os.Rename(sp.Dir, moved) }
+	t.Cleanup(func() { afterRepair = nil })
+	if repairMarker(sp.Folder) {
+		t.Fatal("repair reported a marker in a folder that moved away")
+	}
+	ents, _ := os.ReadDir(moved)
+	if len(ents) != 0 {
+		t.Fatalf("the repair wrote into the moved folder: %v", ents)
+	}
+	afterRepair = func() { _ = os.Rename(Root(), filepath.Join(home, "spaces-moved")) }
+	if err := os.Rename(moved, sp.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if repairMarker(sp.Folder) {
+		t.Fatal("repair reported a marker after ~/spaces moved away")
+	}
+	if _, err := os.Lstat(filepath.Join(home, "spaces-moved", sp.Folder, MarkerFile)); err == nil {
+		t.Fatal("the repair wrote into the moved ~/spaces")
+	}
+}
+
+// A list read before a delete does not record the deleted space again (syncRecord re-checks the
+// folder under lifeMu).
+func TestSyncAfterADeleteDoesNotRecordTheSpaceAgain(t *testing.T) {
+	home := withHome(t)
+	sp, _ := Create("Draft")
+	rows, _ := List()
+	if err := MoveOut(sp.Folder, filepath.Join(home, "trash-entry")); err != nil {
+		t.Fatal(err)
+	}
+	syncRecord(rows)
+	if _, ok := recorded(sp.Folder); ok {
+		t.Fatal("a stale list recorded the deleted space again")
+	}
+}
+
+// List corrects an entry the marker contradicts (a rename whose record write failed), and keeps
+// the recorded name when the marker does not parse.
+func TestListResyncsTheRecordFromTheMarker(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	if _, err := Rename(sp.Folder, "Final"); err != nil {
+		t.Fatal(err)
+	}
+	_ = updateRecord(func(m map[string]recordEntry) bool {
+		e := m[sp.Folder]
+		e.Name = "Draft"
+		m[sp.Folder] = e
+		return true
+	})
+	_, _ = List()
+	if e, _ := recorded(sp.Folder); e.Name != "Final" {
+		t.Fatalf("record name = %q after List, want the marker's", e.Name)
+	}
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = List()
+	if e, _ := recorded(sp.Folder); e.Name != "Final" {
+		t.Fatalf("an unparsable marker overwrote the recorded name: %q", e.Name)
+	}
+}
+
+// A record that is there but cannot be read is not replaced by an update that knows one space.
+func TestUnreadableRecordIsNotOverwritten(t *testing.T) {
+	withHome(t)
+	first, _ := Create("First")
+	if err := os.Chmod(recordPath(), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(recordPath(), 0o600) })
+	if f, err := os.Open(recordPath()); err == nil {
+		f.Close()
+		t.Skip("running as a user that reads mode 000 files")
+	}
+	recordMu.Lock()
+	recordCache.ok = false
+	recordMu.Unlock()
+	if _, err := Create("Second"); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(recordPath(), 0o600)
+	if _, ok := recorded(first.Folder); !ok {
+		t.Fatal("an update over an unreadable record lost the existing entries")
+	}
+}
+
+// A FIFO in the record's place blocks neither the list nor a create.
+func TestFIFORecordDoesNotBlock(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	_ = os.Remove(recordPath())
+	if err := syscall.Mkfifo(recordPath(), 0o600); err != nil {
+		t.Skip("no mkfifo here:", err)
+	}
+	recordMu.Lock()
+	recordCache.ok = false
+	recordMu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		_, _ = List()
+		_, _ = Create("Other")
+		_ = FolderOf(sp.Dir)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a FIFO record blocked the list or a create")
+	}
+	if _, ok := recorded(sp.Folder); !ok {
+		t.Fatal("the list did not record the space again after replacing the FIFO")
+	}
+}
+
+// A restored space with an old marker that names nothing ({}) is still recorded, so its marker
+// is restored even before the next list.
+func TestMoveInRecordsAMarkerWithoutAName(t *testing.T) {
+	home := withHome(t)
+	sp, _ := Create("Draft")
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(home, "trash-entry")
+	if err := MoveOut(sp.Folder, dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveIn(dest, sp.Folder); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(sp.Dir, MarkerFile))
+	if FolderOf(sp.Dir) != sp.Folder {
+		t.Fatal("a restored space with a nameless marker was not recorded")
+	}
+}
+
+// A note of another type in an existing marker does not cost the name: the reader does not type
+// the note.
+func TestMarkerWithAnOddNoteKeepsItsName(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(`{"name":"Mine","note":[1,2]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := Lookup(sp.Folder); !ok || got.Name != "Mine" {
+		t.Fatalf("Lookup = %+v, %v", got, ok)
+	}
+	if _, err := Rename(sp.Folder, "Renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := Lookup(sp.Folder); !ok || got.Name != "Renamed" {
+		t.Fatalf("Lookup after Rename = %+v, %v", got, ok)
+	}
+}
+
+// ~/spaces moved while the Agent runs (after its resolved path was cached) and replaced by a link
+// to the new place: a space is still protected through either spelling.
+func TestProtectedAfterSpacesMovedBehindALink(t *testing.T) {
+	home := withHome(t)
+	sp, _ := Create("Draft")
+	_ = realRoot() // warm its cache: FolderOf on the plain spelling never asks it
+	store := filepath.Join(home, "store")
+	if err := os.Rename(Root(), store); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(store, Root()); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{sp.Dir, filepath.Join(store, sp.Folder), filepath.Join(sp.Dir, MarkerFile)} {
+		if !Protected(p) {
+			t.Errorf("Protected(%q) = false after ~/spaces moved behind a link", p)
 		}
 	}
 }

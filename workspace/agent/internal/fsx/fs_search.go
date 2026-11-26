@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,8 +66,7 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 	// --files: list files, honouring .gitignore per repo. --sort path: deterministic
 	// order so the capped slice is the alphabetically-first matches. -g '!.git':
 	// never descend into git internals (still shown by --hidden otherwise).
-	// A space's marker is left out as the tree leaves it out (HandleTree).
-	args := []string{"--files", "--hidden", "--sort", "path", "-g", "!.git", "-g", "!" + spacex.MarkerFile}
+	args := []string{"--files", "--hidden", "--sort", "path", "-g", "!.git"}
 	// The start as it RESOLVES (as /fs/tree does): a start reached through a link that points at
 	// the browse root or another folder lists files whose spelled paths no denylist entry
 	// matches. nil means the start is outside the browse root (scratch / docs), where no
@@ -113,6 +113,11 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 			homeRel = path.Join(rel, line)
 		}
 		if IsDenied(homeRel) || (denyBase != nil && IsDenied(path.Join(*denyBase, line))) {
+			continue
+		}
+		// A space's marker is left out as the tree leaves it out (HandleTree); a file of the same
+		// name anywhere else is found as before.
+		if path.Base(line) == spacex.MarkerFile && spacex.Protected(filepath.Join(full, filepath.FromSlash(line))) {
 			continue
 		}
 		results = append(results, homeRel)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -114,5 +115,67 @@ func TestTreeHidesTheSpaceMarker(t *testing.T) {
 	}
 	if _, ok := treeEntries(t, "path=elsewhere")[spacex.MarkerFile]; !ok {
 		t.Fatal("a file of the same name outside ~/spaces was hidden")
+	}
+}
+
+// While a space's marker is missing, nothing can be renamed into its place: a folder there would
+// keep the repair from ever writing the marker back.
+func TestNothingCanBeRenamedOntoAMissingMarker(t *testing.T) {
+	_, sp := withSpace(t)
+	rel := "spaces/" + sp.Folder
+	if err := os.Remove(filepath.Join(sp.Dir, spacex.MarkerFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(sp.Dir, "drafts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := fsCall(HandleRename, "/fs/rename?from="+rel+"/drafts&to="+rel+"/"+spacex.MarkerFile)
+	if rec.Code != http.StatusForbidden || errCode(t, rec.Body.Bytes()) != spaceProtectedCode {
+		t.Fatalf("rename onto the missing marker = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := spacex.Lookup(sp.Folder); !ok {
+		t.Fatal("the space was lost")
+	}
+}
+
+// The name search leaves a space's marker out, and finds a file of the same name anywhere else,
+// including below a folder of that name.
+func TestSearchHidesOnlyTheSpaceMarker(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed")
+	}
+	home, sp := withSpace(t)
+	mustMkdir(t, filepath.Join(sp.Dir, "sub"))
+	mustWrite(t, filepath.Join(sp.Dir, "sub", spacex.MarkerFile), "{}")
+	mustMkdir(t, filepath.Join(home, "notes", spacex.MarkerFile))
+	mustWrite(t, filepath.Join(home, "notes", spacex.MarkerFile, "inside.txt"), "x")
+	mustMkdir(t, filepath.Join(home, "notes", "copy"))
+	mustWrite(t, filepath.Join(home, "notes", "copy", spacex.MarkerFile), "{}")
+	rec := fsCall(HandleSearch, "/fs/search?path=&q=af-space")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Results []string `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, r := range out.Results {
+		got[r] = true
+	}
+	rel := "spaces/" + sp.Folder
+	if got[rel+"/"+spacex.MarkerFile] {
+		t.Errorf("the search lists the space's marker: %v", out.Results)
+	}
+	for _, want := range []string{
+		rel + "/sub/" + spacex.MarkerFile,
+		"notes/" + spacex.MarkerFile + "/inside.txt",
+		"notes/copy/" + spacex.MarkerFile,
+	} {
+		if !got[want] {
+			t.Errorf("the search lost %s: %v", want, out.Results)
+		}
 	}
 }
