@@ -168,8 +168,12 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 	}
 	graph := session.ReadQueueGraph()
 	if _, queue := graph.Lineage(name); queue {
-		if graph.Current(name) != name || m.Moving != "" {
-			httpx.WriteErr(w, http.StatusConflict, "retire_move_changed", "the run's session is moving or has been replaced")
+		if graph.Current(name) != name {
+			httpx.WriteErr(w, http.StatusConflict, "retire_move_changed", "the run's session has been replaced")
+			return
+		}
+		if m.Moving != "" {
+			httpx.WriteErr(w, http.StatusConflict, "retire_move_changed", "the run's session is moving")
 			return
 		}
 		m = graph.Project(m)

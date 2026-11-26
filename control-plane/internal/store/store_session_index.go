@@ -46,10 +46,11 @@ type SessionMove struct {
 	QueueReplaces  []string `json:"queueReplaces,omitempty"`
 	QueueSuccessor string   `json:"queueSuccessor,omitempty"`
 	PromptPending  bool     `json:"promptPending,omitempty"`
+	StoppedLimit   string   `json:"stoppedLimit,omitempty"`
 }
 
 func (m SessionMove) column() string {
-	if m.Moving == "" && m.MovedTo == "" && m.QueueSuccessor == "" && len(m.QueueReplaces) == 0 && !m.PromptPending {
+	if m.Moving == "" && m.MovedTo == "" && m.QueueSuccessor == "" && len(m.QueueReplaces) == 0 && !m.PromptPending && m.StoppedLimit == "" {
 		return ""
 	}
 	b, _ := json.Marshal(m)

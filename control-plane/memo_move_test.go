@@ -188,23 +188,48 @@ func TestMemoMoveKeepsOverdueDeadlineAndRetiresReplacement(t *testing.T) {
 	})
 }
 
-func TestMemoMoveContinuationClaimsOriginalDelivery(t *testing.T) {
-	eachDialect(t, func(t *testing.T, e *inboxEnv) {
-		q := e.contQueue("impl", 4, nil)
-		root := e.contRoot("impl", contRef)
-		d := e.contRun(q, "launch", store.DeliveryOpen, root.ID)
-		body := contMemo("impl", "part two", contRef)
-		body["producer"], body["producerOrigin"] = "replacement", "queue"
-		body["continuation"], body["queueDelivery"], body["queueLaunch"] = true, d, "launch"
-		rec := e.memoTokenDo("a", "POST", "/internal/memos", body)
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("continuation: %d %s", rec.Code, rec.Body.String())
-		}
-		row := e.memoRow(decode[memoDTO](t, rec).ID)
-		if row.State != store.MemoStatePending || row.ChainID != root.ID || row.Producer != "replacement" {
-			t.Fatalf("the launch and the current producer should serve different purposes: %+v", row)
-		}
-	})
+func TestMemoMoveContinuationRequiresCurrentProducer(t *testing.T) {
+	cases := []struct {
+		name, producer, launch string
+		admit                  bool
+	}{
+		{"legacy source", "launch", "", false},
+		{"unrelated session", "other", "launch", false},
+		{"replacement", "replacement", "launch", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			eachDialect(t, func(t *testing.T, e *inboxEnv) {
+				q := e.contQueue("impl", 4, nil)
+				root := e.contRoot("impl", contRef)
+				d := e.contRun(q, "launch", store.DeliveryOpen, root.ID)
+				if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+					_, _, err := tx.ObserveDelivery(d, store.DeliveryObservation{Gen: 1, RunSession: "replacement", RunMoveKey: "replacement"})
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+				body := contMemo("impl", "part two", contRef)
+				body["producer"], body["producerOrigin"] = c.producer, "queue"
+				body["continuation"], body["queueDelivery"] = true, d
+				if c.launch != "" {
+					body["queueLaunch"] = c.launch
+				}
+				rec := e.memoTokenDo("a", "POST", "/internal/memos", body)
+				if rec.Code != http.StatusCreated {
+					t.Fatalf("continuation: %d %s", rec.Code, rec.Body.String())
+				}
+				row := e.memoRow(decode[memoDTO](t, rec).ID)
+				if c.admit {
+					if row.State != store.MemoStatePending || row.ChainID != root.ID || row.Producer != "replacement" {
+						t.Fatalf("the observed replacement should continue the original delivery: %+v", row)
+					}
+				} else if row.State != store.MemoStateHeld || row.ChainID != "" {
+					t.Fatalf("unverified producer inherited the release: %+v", row)
+				}
+			})
+		})
+	}
 }
 
 func TestMemoMoveKeepsMemberAtCapacity(t *testing.T) {
@@ -303,4 +328,134 @@ func TestMemoMoveUnbookedLimitHoldsSlotAndDispatch(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestMemoMoveHandBackCannotCrossReplacement(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		name := "before close"
+		if closed {
+			name = "before recheck"
+		}
+		t.Run(name, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				agent, d, mid := e.openDeferrable(nil)
+				rec := e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "later"})
+				if rec.Code != http.StatusOK {
+					t.Fatalf("defer: %d %s", rec.Code, rec.Body.String())
+				}
+				if closed {
+					agent.mu.Lock()
+					agent.retireFail = 1
+					agent.mu.Unlock()
+					e.settleTwice()
+					if got := e.delivery(d.ID); got.Outcome != store.DeliveryDeferred || !got.RetirePending {
+						t.Fatalf("expected deferred close waiting for retire: %+v", got)
+					}
+				}
+				agent.setRow(d.Session, map[string]any{"alive": false, "movedTo": "replacement"})
+				agent.child("replacement", "", map[string]any{"origin": "queue", "queueReplaces": []string{d.Session}})
+				if !closed {
+					e.settleNow(time.Now())
+					for _, name := range []string{d.Session, "other"} {
+						rec := e.deferCall(d.ID, map[string]any{"session": name, "cancel": true})
+						if rec.Code != http.StatusConflict {
+							t.Errorf("%s cancelled a request for the continuing run: %d", name, rec.Code)
+						}
+					}
+				}
+				e.settleTwice()
+				got := e.delivery(d.ID)
+				if got.Outcome != store.DeliveryClean || got.DeferResult != store.DeferDroppedReleased ||
+					e.memoRow(mid).State != store.MemoStateDelivered {
+					t.Fatalf("replacement inherited a stale return request: %+v", got)
+				}
+			})
+		})
+	}
+}
+
+func TestMemoMoveHandoverNeedsAttentionUntilDeadline(t *testing.T) {
+	for _, state := range []string{"failed", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				agent, d := e.openReported(map[string]any{"maxTaskHours": 1})
+				agent.setRow(d.Session, map[string]any{"alive": false, "movedTo": "replacement"})
+				agent.child("replacement", "", map[string]any{"origin": "queue", "queueReplaces": []string{d.Session},
+					"alive": false, "state": "", "initialPromptState": state})
+				e.settleTwice()
+				if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != store.HeldPerson {
+					t.Fatalf("handover should wait for the member: %+v", got)
+				}
+				later := time.Now().Add(2 * time.Hour)
+				e.settleNow(later)
+				e.settleNow(later)
+				if got := e.delivery(d.ID); got.Outcome != store.DeliveryClean {
+					t.Fatalf("handover held a slot past the delivery deadline: %+v", got)
+				}
+			})
+		})
+	}
+}
+
+func TestMemoMoveCurrentOwnerCanRequestHandBack(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, mid := e.openDeferrable(nil)
+		agent.setRow(d.Session, map[string]any{"alive": false, "movedTo": "replacement"})
+		agent.child("replacement", "", map[string]any{"origin": "queue", "queueReplaces": []string{d.Session}, "state": "working"})
+		e.settleNow(time.Now())
+		rec := e.deferCall(d.ID, map[string]any{"session": "replacement", "reason": "later"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("current producer: %d %s", rec.Code, rec.Body.String())
+		}
+		agent.setRow("replacement", map[string]any{"state": "idle"})
+		e.settleTwice()
+		got := e.delivery(d.ID)
+		if got.Outcome != store.DeliveryDeferred || got.DeferResult != store.DeferApplied ||
+			e.memoRow(mid).State != store.MemoStatePending {
+			t.Fatalf("the current owner's request did not settle: %+v", got)
+		}
+	})
+}
+
+func TestMemoMoveHandBackIsTiedToChildOwnership(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, mid := e.openDeferrable(nil)
+		agent.child("review", d.Session, nil)
+		rec := e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "later"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("defer: %d %s", rec.Code, rec.Body.String())
+		}
+		agent.setRow("review", map[string]any{"alive": false, "movedTo": "review-next"})
+		agent.child("review-next", d.Session, map[string]any{"queueReplaces": []string{"review"}})
+		e.settleTwice()
+		e.settleNow(time.Now())
+		got := e.delivery(d.ID)
+		if got.Outcome != store.DeliveryClean || got.DeferResult != store.DeferDroppedReleased ||
+			e.memoRow(mid).State != store.MemoStateDelivered {
+			t.Fatalf("a changed child inherited a stale return request: %+v", got)
+		}
+	})
+}
+
+func TestMemoMoveMirrorLimitVetoesAStaleClearReport(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"alive": false, "movedTo": "replacement"})
+		agent.child("replacement", "", map[string]any{"origin": "queue", "queueReplaces": []string{d.Session}, "alive": false})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.HeldBy != "" || got.IdleTicks != 1 || got.CurrentSession() != "replacement" {
+			t.Fatalf("expected a clear observation of the replacement: %+v", got)
+		}
+		ctx := context.Background()
+		ws, _, _ := e.st.GetWorkspaceByMembership(ctx, e.members["a"])
+		rows := sessionRows([]sessionWire{{Name: "replacement", Origin: "queue", QueueReplaces: []string{d.Session}, StoppedLimit: stateLimited}})
+		if err := e.st.ReplaceSessions(ctx, ws.ID, rows); err != nil {
+			t.Fatal(err)
+		}
+		e.setRuntime(agent, "stopped")
+		e.settleTwice()
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+			t.Fatalf("a stale clear report freed the limited replacement's slot: %+v", got)
+		}
+	})
 }

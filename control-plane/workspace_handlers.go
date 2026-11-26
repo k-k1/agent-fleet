@@ -948,8 +948,9 @@ type sessionWire struct {
 	// Agent's first observation or its status file). Dropped here, the admin forecast cannot say
 	// how long a session has been holding the Workspace. Not persisted to the DB mirror.
 	StateSince string `json:"stateSince,omitempty"`
-	// RateLimitResumeAt and StoppedLimit pass through the Agent's current limit observation
-	// for display. Neither is persisted to the DB mirror.
+	// RateLimitResumeAt and StoppedLimit pass through the Agent's current limit observation.
+	// Stopped workspace lists omit historical limits. The queue can use a mirrored stopped
+	// limit to veto a stale clear report.
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
 	StoppedLimit      string `json:"stoppedLimit,omitempty"`
 	// ForkAtTerminal passes through whether a Terminal session can fork from a past message.
@@ -1197,6 +1198,12 @@ type sessionQueueTurn struct {
 // out Carried, Studio or Links erases them for the next reader (the stopped-workspace list).
 func sessionRows(list []sessionWire) []store.SessionRow {
 	rows := make([]store.SessionRow, 0, len(list))
+	moveTargets := make(map[string]bool)
+	for _, s := range list {
+		if s.MovedTo != "" {
+			moveTargets[s.MovedTo] = true
+		}
+	}
 	for _, s := range list {
 		state := "stopped"
 		if s.Alive {
@@ -1208,7 +1215,8 @@ func sessionRows(list []sessionWire) []store.SessionRow {
 			Carried: s.Carried, Studio: s.Studio,
 			Origin: s.Origin, OriginSession: s.OriginSession, ScheduleID: s.ScheduleID, QueueCategoryID: s.QueueCategoryID,
 			Move: store.SessionMove{Moving: s.Moving, MovedTo: s.MovedTo, QueueReplaces: s.QueueReplaces, QueueSuccessor: s.QueueSuccessor,
-				PromptPending: s.InitialPromptState == "pending"},
+				PromptPending: s.InitialPromptState == "pending" && (len(s.QueueReplaces) != 0 || moveTargets[s.Name]),
+				StoppedLimit:  s.StoppedLimit},
 			Place: storePlace(s.Place),
 			Links: store.SessionLinksFromJSON(s.Links),
 		})
@@ -1255,7 +1263,7 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 	}
 	out := make([]sessionWire, 0, len(rows))
 	for _, r0 := range rows {
-		out = append(out, sessionWire{
+		row := sessionWire{
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
 			// Where it runs: without it the Console files a space session under a same-named
@@ -1268,15 +1276,24 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 			Studio: r0.Studio,
 			// Who raised it: the Console classifies runs (auto-run views vs. Sessions list) by these.
 			Origin: r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID, QueueCategoryID: r0.QueueCategoryID,
-			Moving: r0.Move.Moving, MovedTo: r0.Move.MovedTo, QueueReplaces: r0.Move.QueueReplaces, QueueSuccessor: r0.Move.QueueSuccessor,
 			// Which items it is on: the Console's rows and item details read them while stopped too.
 			Links: store.SessionLinksJSON(links[r0.Name]),
 			// Container is down: we can't check the dir, so assume resumable; the
 			// Agent re-checks and refuses on actual attach if the dir is gone.
 			Resumable: true,
-		})
+		}
+		row.applyMirrorMove(r0.Move)
+		out = append(out, row)
 	}
 	return out
+}
+
+func (s *sessionWire) applyMirrorMove(m store.SessionMove) {
+	s.Moving, s.MovedTo = m.Moving, m.MovedTo
+	s.QueueReplaces, s.QueueSuccessor = m.QueueReplaces, m.QueueSuccessor
+	if m.PromptPending {
+		s.InitialPromptState = "pending"
+	}
 }
 
 func (a workspaceAPI) sessionsList(w http.ResponseWriter, r *http.Request, res *resolved) {

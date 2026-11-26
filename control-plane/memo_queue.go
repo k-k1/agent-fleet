@@ -77,7 +77,6 @@ type memoVia struct {
 	// Control Plane decides from its own rows.
 	continuation  bool
 	queueDelivery string
-	queueLaunch   string
 }
 
 var memoViaConsole = memoVia{face: memoFaceConsole}

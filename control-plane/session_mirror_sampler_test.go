@@ -270,3 +270,23 @@ func TestQueueCategoryIDSurvivesTheMirrorIntoTheStoppedList(t *testing.T) {
 		t.Fatalf("stopped list category ids = %v, want qrun=cat-1 and plain empty", got)
 	}
 }
+
+func TestMovedPromptPendingSurvivesTheStoppedList(t *testing.T) {
+	ctx := context.Background()
+	_, mgr, _, _, ws := usageHourFixture(t)
+	row := sessionWire{Name: "replacement", Kind: "codex", Origin: "queue",
+		QueueReplaces: []string{"source"}, InitialPromptState: "pending"}
+	if err := mgr.store.ReplaceSessions(ctx, ws.ID, sessionRows([]sessionWire{row, {Name: "plain", InitialPromptState: "pending"}})); err != nil {
+		t.Fatal(err)
+	}
+	api := workspaceAPI{memberAuth: memberAuth{mgr: mgr}}
+	got := api.sessionsShared(ctx, &resolved{rt: stubRuntime{state: "stopped"}, ws: ws})
+	if len(got) != 2 || !treeMovePending(deliveryTree(got, "source")) {
+		t.Fatalf("stopped list lost the pending handover: %+v", got)
+	}
+	for _, s := range got {
+		if s.Name == "plain" && s.InitialPromptState != "" {
+			t.Fatal("ordinary launch pending leaked into the stopped list")
+		}
+	}
+}

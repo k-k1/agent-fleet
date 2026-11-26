@@ -1237,6 +1237,12 @@ cannot close the run. An older Agent sends no `pendingPeers`, which reads as non
 ## Addendum 2026-11-26: limits on a continuing run (#5293)
 
 The queue reads the active sessions of the delivery, including committed move replacements.
+A move keeps the delivery, its launch count, and its original task deadline. Continuations
+and hand-back requests are authorized for the current root recorded by the Control Plane.
+A hand-back is tied to the ownership observed when it was requested. Replacing the root or
+moving a child drops that request if the run reaches settlement with different ownership.
+A failed or uncertain handover gives the member until the task deadline to act, after which
+the usual clear-read rule applies to the continuing tree.
 A window limit occupies the slot even when the stopped session has no resume booked, if the
 Agent confirms it with `stoppedLimit`. A provider spend or balance limit occupies the slot
 as a wait for the member. Either limit also blocks automatic dispatch for the reported agent

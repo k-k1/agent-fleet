@@ -851,10 +851,8 @@ func (r *memoQueueRunner) viewWait(ctx context.Context, views map[string]*memoMe
 		for _, s := range rows {
 			// A row the mirror still records as running says nothing about an end.
 			row := sessionWire{Name: s.Name, Kind: s.Kind, Carried: s.Carried, Alive: s.State == "running",
-				Origin: s.Origin, OriginSession: s.OriginSession, Moving: s.Move.Moving, MovedTo: s.Move.MovedTo, QueueReplaces: s.Move.QueueReplaces, QueueSuccessor: s.Move.QueueSuccessor}
-			if s.Move.PromptPending {
-				row.InitialPromptState = "pending"
-			}
+				Origin: s.Origin, OriginSession: s.OriginSession, StoppedLimit: s.Move.StoppedLimit}
+			row.applyMirrorMove(s.Move)
 			v.mirror = append(v.mirror, row)
 		}
 	}
@@ -1155,10 +1153,6 @@ func sessionHold(s sessionWire, now time.Time) string {
 	if s.Alive && s.CarriedLive != "" && memoHoldRank[why] < memoHoldRank[store.HeldPerson] {
 		why = store.HeldPerson
 	}
-	if len(s.QueueReplaces) != 0 && s.LastTurnStartAt == "" &&
-		(s.InitialPromptState == "failed" || s.InitialPromptState == "unknown") && memoHoldRank[why] < memoHoldRank[store.HeldPerson] {
-		why = store.HeldPerson
-	}
 	if why == "" {
 		switch memoSessionLimit(s) {
 		case stateLimited:
@@ -1227,7 +1221,7 @@ func treeLimitKinds(tree []*sessionWire) string {
 
 // treeHold is the strongest hold in a tree, the session that has it, and whether any session of
 // it shows progress. An archived session of the tree holds nothing.
-func treeHold(tree []*sessionWire, now time.Time) (why, session string, progress bool) {
+func treeHold(tree []*sessionWire, now time.Time, awaitHandover bool) (why, session string, progress bool) {
 	for _, s := range tree {
 		if s.Archived {
 			continue
@@ -1235,11 +1229,21 @@ func treeHold(tree []*sessionWire, now time.Time) (why, session string, progress
 		if sessionProgress(*s) {
 			progress = true
 		}
-		if h := sessionHold(*s, now); memoHoldRank[h] > memoHoldRank[why] {
-			why, session = h, s.Name
+		hold := sessionHold(*s, now)
+		if awaitHandover && memoHoldRank[hold] < memoHoldRank[store.HeldPerson] && handoverNeedsAttention(s) {
+			hold = store.HeldPerson
+		}
+		if memoHoldRank[hold] > memoHoldRank[why] {
+			why, session = hold, s.Name
 		}
 	}
 	return why, session, progress
+}
+
+// handoverNeedsAttention covers a recorded failure or uncertain send before any observed turn.
+func handoverNeedsAttention(s *sessionWire) bool {
+	return len(s.QueueReplaces) != 0 && s.LastTurnStartAt == "" &&
+		(s.InitialPromptState == "failed" || s.InitialPromptState == "unknown")
 }
 
 // Bounds on what a delivery keeps of the watches behind a wakers hold: a run's reason names a
@@ -1439,7 +1443,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		r.closeOpen(ctx, d, store.DeliveryAborted)
 		return
 	}
-	why, who, progress := treeHold(tree, now)
+	why, who, progress := treeHold(tree, now, d.OverdueAt == "")
 	moveKey := treeMoveKey(tree)
 	// Not a hold: no reason is kept, so a stopped workspace and the overdue retire behave as
 	// they do for any idle tree. It only keeps this read from closing the delivery. A child's
@@ -1535,8 +1539,9 @@ func (r *memoQueueRunner) closeIfDoneKept(ctx context.Context, v *memoMemberView
 		// A mirror can predate either the launch or the report on a replacement.
 		return
 	}
+	// A later mirror read can veto closing. Dispatch takes its hold from a kept Agent report.
 	for i, row := range tree {
-		if (i == 0 || len(row.QueueReplaces) != 0) && (row.Alive || row.Carried != "") {
+		if memoSessionLimit(*row) != "" || ((i == 0 || len(row.QueueReplaces) != 0) && (row.Alive || row.Carried != "")) {
 			r.markIdle(ctx, d, 0)
 			return
 		}
