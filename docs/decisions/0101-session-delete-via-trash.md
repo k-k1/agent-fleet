@@ -114,11 +114,13 @@ a worktree whose folder another remove has just deleted. A rename-then-backgroun
 no process or meta the guards can see, and a launch that read its folder before a delete decided does not see
 the mark. Every path that starts a process for a session (create, `/start`, a Managed input, a driver switch,
 fork, recreate) therefore reserves the folder it runs in, its `Meta.Dir` and its `Subdir` as stored
-(`gitx.ReserveLaunch`, matched as spelled and as the kernel resolves it, dangling links included), and releases
-it once its process and meta are published. Reservations and releases take a launch gate of their own, which a
-delete holds for its decision inside the deletion gate, and the delete reads the reservations before the running
-sessions. The launch gate is separate because the deletion gate is also held across `git worktree add` by a
-worktree recreate or restore, whose hooks may start a session through the Agent's API and wait for it. A
+(`gitx.ReserveLaunch`, matched as spelled and by every folder the kernel passes through, dangling links
+included), and releases it once its process and meta are published. Reservations and releases take a launch
+gate of their own. A delete counts the releases, reads the running sessions outside that gate, and then takes
+its mark inside it only if no launch in its folder holds a reservation or has released one since; otherwise it
+reads again (`gitx.MarkAgainstLaunches`). The launch gate is separate because the deletion gate is also held
+across `git worktree add` by a worktree recreate or restore, whose hooks may start a session through the
+Agent's API and wait for it, and the read of the running sessions waits for tmux; no launch waits for either. A
 recreate reserves before it stops the old slot, and `/start?fresh=1` before it sets the old transcript aside. A
 launch into a marked folder is refused with 409 `delete_in_progress`; a delete (of a working copy or of a space)
 that meets a reservation is refused like one that meets a running session. Under the gate a new session's

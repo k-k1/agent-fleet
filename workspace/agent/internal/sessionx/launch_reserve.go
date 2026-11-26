@@ -33,7 +33,7 @@ func reserveLaunch(m session.Meta, src *session.Meta) (release func(), ref *Spaw
 		cwd = filepath.Join(m.Dir, filepath.FromSlash(m.Subdir))
 	}
 	gitx.WithLaunchGate(func() {
-		rel, ok := gitx.ReserveLaunch(m.Name, m.Dir, cwd)
+		rel, ok := gitx.ReserveLaunch(m.Dir, cwd)
 		if !ok {
 			ref = &SpawnRefusal{Status: http.StatusConflict, Code: gitx.ErrCodeDeleteInProgress(),
 				Message: "the folder of this session is being deleted, so it was not started"}

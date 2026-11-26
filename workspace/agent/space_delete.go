@@ -154,10 +154,7 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	// Only the decision runs inside the deletion gate, as for a working copy: a lock request
 	// either lands before the guards read it or meets the mark and is refused.
 	var end func()
-	sessionx.WithDeletionGate(func() {
-		// The launch gate too: launches reserve their folders under it (gitx.ReserveLaunch).
-		gitx.WithLaunchGate(func() { end = decideDeleteSpace(w, folder, dir) })
-	})
+	sessionx.WithDeletionGate(func() { end = decideDeleteSpace(w, folder, dir) })
 	if end == nil {
 		return
 	}
@@ -242,27 +239,34 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 // decideDeleteSpace is the part of a delete that runs inside the gate. It returns the function
 // that clears the "being deleted" mark, or nil after answering the refusal itself.
 func decideDeleteSpace(w http.ResponseWriter, folder, dir string) (end func()) {
-	// A session being started here is one the running-session guard below cannot see yet
-	// (gitx.ReserveLaunch). Read first, for the reason decideDeleteRepo gives.
-	if gitx.LaunchingUnder(dir) {
-		httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
-			"a session is starting in this space; stop it first")
-		return nil
-	}
-	if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
-		httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
-			fmt.Sprintf("%d session(s) are running in this space (%s); stop them first", len(running), strings.Join(running, ", ")))
-		return nil
-	}
-	if locked := sessionx.LockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
-		httpx.WriteErr(w, http.StatusForbidden, errCodeSpaceLockedSessions,
-			fmt.Sprintf("%d locked session(s) live in this space (%s); unlock them first", len(locked), strings.Join(locked, ", ")))
-		return nil
-	}
-	release, ok, why := gitx.BeginDelete(dir, "", gitx.SessionNamesUnder(dir)...)
-	if !ok {
-		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), why)
-		return nil
+	// The running sessions are read outside the launch gate, the mark is taken inside it, and a
+	// session started in between is seen either way (gitx.MarkAgainstLaunches).
+	var release func()
+	for reread := 0; release == nil; reread++ {
+		epoch := gitx.LaunchEpoch()
+		if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
+			httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
+				fmt.Sprintf("%d session(s) are running in this space (%s); stop them first", len(running), strings.Join(running, ", ")))
+			return nil
+		}
+		if locked := sessionx.LockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
+			httpx.WriteErr(w, http.StatusForbidden, errCodeSpaceLockedSessions,
+				fmt.Sprintf("%d locked session(s) live in this space (%s); unlock them first", len(locked), strings.Join(locked, ", ")))
+			return nil
+		}
+		end, out, why := gitx.MarkAgainstLaunches(dir, "", epoch, func() []string { return gitx.SessionNamesUnder(dir) })
+		switch {
+		case out == gitx.MarkReread && reread < gitx.MaxLaunchRereads:
+			continue
+		case out == gitx.MarkLaunching || out == gitx.MarkReread:
+			httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
+				"a session is starting in this space; stop it first")
+			return nil
+		case out == gitx.MarkBusy:
+			httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), why)
+			return nil
+		}
+		release = end
 	}
 	// Existence is read again with the mark held: a delete of this same space that finished
 	// before the mark was taken has taken the folder with it, and this one answers 404.

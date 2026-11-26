@@ -500,3 +500,61 @@ func TestStartJudgesTheMetaItReadFirst(t *testing.T) {
 		t.Fatal("a session shelved during the start was launched")
 	}
 }
+
+// A delete's mark records session names by a lexical clean of Meta.Dir, which names another
+// folder when a link precedes `..`. A start of such a session, which the kernel runs elsewhere, is
+// not refused by that name list.
+func TestStartIsNotRefusedByTheMarksNameList(t *testing.T) {
+	home := writebackEnv(t)
+	repos, other := filepath.Join(home, "repos"), filepath.Join(home, "other")
+	for _, d := range []string{filepath.Join(repos, "app"), filepath.Join(other, "nested"), filepath.Join(other, "app")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(other, "nested"), filepath.Join(repos, "jump")); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(repos, "app")
+	m := session.Meta{Name: "clname1", Dir: filepath.Join(repos, "jump") + "/../app", Kind: session.KindShell}
+	session.WriteMeta(m)
+	names := gitx.SessionNamesUnder(app)
+	if len(names) != 1 {
+		t.Fatalf("the mark's name list = %v; the test needs it to hold the session", names)
+	}
+	end, ok, why := gitx.BeginDelete(app, "", names...)
+	if !ok {
+		t.Fatal(why)
+	}
+	defer end()
+	release, ref := reserveLaunch(m, &m)
+	if ref != nil {
+		t.Fatalf("a session the kernel runs in %s was refused: %+v", filepath.Join(other, "app"), ref)
+	}
+	release()
+}
+
+// A carried answer judges a settlement against the meta the request read first, before it
+// composed the answer, not against the helper's own later read.
+func TestCarriedAnswerJudgesTheMetaItReadFirst(t *testing.T) {
+	home := writebackEnv(t)
+	dir := filepath.Join(home, "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const name = "carry01"
+	first := session.Meta{Name: name, Dir: dir, Kind: session.KindCodex, Driver: session.DriverManaged,
+		StoppedAt: "2026-09-25T10:00:00+09:00"}
+	shelved := first
+	shelved.Archived = true
+	session.WriteMeta(shelved)
+	resumed := false
+	useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { resumed = true }})
+	rec := httptest.NewRecorder()
+	if startForCarriedAnswer(rec, testLease(t, name), name, &first) {
+		t.Fatal("a session shelved after the answer was composed was started")
+	}
+	if rec.Code != http.StatusConflict || spaceErrCode(t, rec.Body.Bytes()) != gitx.ErrCodeDeleteInProgress() || resumed {
+		t.Fatalf("answer = %d %s resumed=%v, want 409 %s and no launch", rec.Code, rec.Body, resumed, gitx.ErrCodeDeleteInProgress())
+	}
+}

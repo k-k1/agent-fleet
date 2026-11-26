@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -22,7 +23,7 @@ func TestDeleteSpaceRefusesWhileASessionIsStarting(t *testing.T) {
 	sp := newSpace(t, "Starting")
 	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
 
-	release, ok := gitx.ReserveLaunch("start01", e.home, filepath.Join(sp.Dir, "sub"))
+	release, ok := gitx.ReserveLaunch(e.home, filepath.Join(sp.Dir, "sub"))
 	if !ok {
 		t.Fatal("reservation refused")
 	}
@@ -52,7 +53,7 @@ func TestRepoDeleteRefusedWhileASessionIsStarting(t *testing.T) {
 	dir := filepath.Join(home, "repos", "app")
 	gitInit(t, dir)
 
-	release, ok := gitx.ReserveLaunch("start02", dir)
+	release, ok := gitx.ReserveLaunch(dir)
 	if !ok {
 		t.Fatal("reservation refused")
 	}
@@ -73,4 +74,50 @@ func TestRepoDeleteRefusedWhileASessionIsStarting(t *testing.T) {
 	if code, raw := roundtrip(t, srv, "DELETE", "/repos/app", nil); code != http.StatusOK {
 		t.Fatalf("delete after the launch = %d (%s), want 200", code, raw)
 	}
+}
+
+// A delete reads the running sessions outside the launch gate: while tmux keeps it waiting, a
+// launch in another folder is reserved at once.
+func TestDeleteWaitingForTmuxDoesNotHoldLaunches(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Slow")
+	bin := t.TempDir()
+	started, proceed := filepath.Join(bin, "started"), filepath.Join(bin, "proceed")
+	script := "#!/bin/sh\ncase \"$1\" in list-sessions) : > " + started + "; while [ ! -e " + proceed + " ]; do sleep 0.05; done;; esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = roundtrip(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil)
+	}()
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the delete never asked tmux")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	reserved := make(chan struct{})
+	go func() {
+		gitx.WithLaunchGate(func() {
+			if r, ok := gitx.ReserveLaunch(filepath.Join(e.home, "elsewhere")); ok {
+				r()
+			}
+		})
+		close(reserved)
+	}()
+	select {
+	case <-reserved:
+	case <-time.After(5 * time.Second):
+		t.Error("a launch waited for the delete's tmux read")
+	}
+	if err := os.WriteFile(proceed, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	<-done
 }

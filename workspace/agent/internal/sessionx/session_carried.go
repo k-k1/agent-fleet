@@ -273,7 +273,7 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 	// A session that is stopped, or running yet still marked (a mark a carried answer could not
 	// clear after its launch, retire_clear_failed), goes through the start, which clears it.
 	if !SessionAlive(m) || isRetired(m) {
-		if !startForCarriedAnswer(w, lease, name) {
+		if !startForCarriedAnswer(w, lease, name, &m) {
 			return
 		}
 	}
@@ -310,7 +310,7 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 // was, so nothing is left marked and running. The gate is released before the caller delivers a
 // Managed answer, because resumeManaged takes the read side itself and a second read on one path
 // can deadlock behind a waiting retire.
-func startForCarriedAnswer(w http.ResponseWriter, lease *lifegate.Lease, name string) bool {
+func startForCarriedAnswer(w http.ResponseWriter, lease *lifegate.Lease, name string, first *session.Meta) bool {
 	g := retireGate(name)
 	g.RLock()
 	defer g.RUnlock()
@@ -326,8 +326,10 @@ func startForCarriedAnswer(w http.ResponseWriter, lease *lifegate.Lease, name st
 			"the answer was not sent, because it could not be recorded as a person's: "+err.Error())
 		return false
 	}
-	var snap *session.Meta
-	if ok {
+	// Judged against the request's first read (first): the reads here may already show a delete's
+	// shelving that landed after the answer was composed (reserveLaunch).
+	snap := first
+	if snap == nil && ok {
 		snap = &cur
 	}
 	if err := ensureSessionTmuxFrom(lease, name, false, snap); err != nil {

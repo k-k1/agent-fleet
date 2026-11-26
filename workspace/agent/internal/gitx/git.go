@@ -2216,8 +2216,7 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 				if linked {
 					parent = WorktreeParent(dir)
 				}
-				// The launch gate too: launches reserve their folders under it (ReserveLaunch).
-				WithLaunchGate(func() { end = decideDeleteRepo(w, r, dir, parent, linked) })
+				end = decideDeleteRepo(w, r, dir, parent, linked)
 			})
 		})
 	})
@@ -2239,45 +2238,8 @@ func decideDeleteRepo(w http.ResponseWriter, r *http.Request, dir, parent string
 			"this working copy is still being imported; cancel the import first")
 		return nil
 	}
-	// A session being started here is one the running-session guard below cannot see yet
-	// (ReserveLaunch). Read first: a launch publishes its session before it releases the
-	// reservation, so whichever of the two a launch is in, one of the reads sees it.
-	if LaunchingUnder(dir) {
-		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
-			"a session is starting in this working copy; deleting it would break it. Stop that session first.")
-		return nil
-	}
-	// Deleting the working copy out from under live sessions is even worse than a
-	// branch switch: their cwd vanishes mid-flight. Refuse while any session runs
-	// there — the user must stop/archive them first (same guard as checkout).
-	if running := liveSessionsInDir(dir); len(running) > 0 {
-		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
-			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
-				len(running), strings.Join(running, ", ")))
-		return nil
-	}
-	// Deletion lock (docs/log/45): the working copy's own lock, and locked sessions living
-	// in it being taken down with it. Neither is passable with force=true — unlocking is the
-	// only way through.
-	if repoLocked(dir) {
-		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
-			"working copy is locked against deletion; unlock it first")
-		return nil
-	}
-	if locked := lockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
-		httpx.WriteErr(w, http.StatusForbidden, errCodeLockedSessions,
-			fmt.Sprintf("%d locked session(s) live in this working copy (%s); deleting it would strand them. Unlock them first.",
-				len(locked), strings.Join(locked, ", ")))
-		return nil
-	}
-	if linked && parent == "" {
-		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
-		return nil
-	}
-	fireDeleteHook("pre-mark", dir)
-	release, ok, why := BeginDelete(dir, parent, sessionNamesUnder(dir)...)
+	release, ok := decideAgainstLaunches(w, dir, parent, linked)
 	if !ok {
-		httpx.WriteErr(w, http.StatusConflict, errCodeDeleteInProgress, why)
 		return nil
 	}
 	handedOver := false
@@ -2296,6 +2258,65 @@ func decideDeleteRepo(w http.ResponseWriter, r *http.Request, dir, parent string
 	}
 	handedOver = true
 	return release
+}
+
+// decideAgainstLaunches is the part of decideDeleteRepo that launches race with: the running
+// sessions, the locks, and the mark. The running sessions are read outside the launch gate (the
+// read waits for tmux); the reservations, the releases since that read and the mark are taken
+// inside it, so a launch either meets the mark or is seen by the delete (ReserveLaunch).
+func decideAgainstLaunches(w http.ResponseWriter, dir, parent string, linked bool) (release func(), ok bool) {
+	for reread := 0; ; reread++ {
+		epoch := LaunchEpoch()
+		if !guardsBeforeMark(w, dir, parent, linked) {
+			return nil, false
+		}
+		end, out, why := MarkAgainstLaunches(dir, parent, epoch, func() []string { return sessionNamesUnder(dir) })
+		switch {
+		case out == MarkReread && reread < MaxLaunchRereads:
+			continue
+		case out == MarkLaunching || out == MarkReread:
+			httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
+				"a session is starting in this working copy; deleting it would break it. Stop that session first.")
+			return nil, false
+		case out == MarkBusy:
+			httpx.WriteErr(w, http.StatusConflict, errCodeDeleteInProgress, why)
+			return nil, false
+		}
+		return end, true
+	}
+}
+
+// guardsBeforeMark refuses, answering itself, while a session runs in dir or a lock protects it.
+func guardsBeforeMark(w http.ResponseWriter, dir, parent string, linked bool) bool {
+	// Deleting the working copy out from under live sessions is even worse than a
+	// branch switch: their cwd vanishes mid-flight. Refuse while any session runs
+	// there — the user must stop/archive them first (same guard as checkout).
+	if running := liveSessionsInDir(dir); len(running) > 0 {
+		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
+			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
+				len(running), strings.Join(running, ", ")))
+		return false
+	}
+	// Deletion lock (docs/log/45): the working copy's own lock, and locked sessions living
+	// in it being taken down with it. Neither is passable with force=true — unlocking is the
+	// only way through.
+	if repoLocked(dir) {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
+			"working copy is locked against deletion; unlock it first")
+		return false
+	}
+	if locked := lockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeLockedSessions,
+			fmt.Sprintf("%d locked session(s) live in this working copy (%s); deleting it would strand them. Unlock them first.",
+				len(locked), strings.Join(locked, ", ")))
+		return false
+	}
+	if linked && parent == "" {
+		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
+		return false
+	}
+	fireDeleteHook("pre-mark", dir)
+	return true
 }
 
 // sessionNamesUnder lists the sessions whose working folder is dir or lies under it, by the same
