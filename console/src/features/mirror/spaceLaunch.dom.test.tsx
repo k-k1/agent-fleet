@@ -204,22 +204,40 @@ describe("handoff proposal launched from a space session", () => {
     });
   });
 
-  it("uses the offer as it is when the list answers: one shared while the list was read is withdrawn first", async () => {
+  it("holds the card while the list is read: sharing, discarding and a second launch wait for the answer", async () => {
     let release!: () => void;
     spacesAnswer = () => new Promise((r) => (release = () => r({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] })));
     await mountCard();
-    await press(); // no offer yet: the press waits for the list
-    const offer = { id: "offer-2", sessionId: "cat-1", sessionName: "src", recipientUserKey: "bob", title: "Carry on", status: "pending" } as never;
-    ownedOffers = [offer];
-    await act(async () => useHandoffStore.setState({ owned: [offer] })); // shared from the same card meanwhile
+    await press();
+    const buttons = () => [...host.querySelectorAll<HTMLButtonElement>(".mirror-handoff-actions button")];
+    expect(buttons().length).toBeGreaterThan(0);
+    expect(buttons().every((b) => b.disabled)).toBe(true); // nothing on the card can change what this press decides on
     await act(async () => release());
     await settle();
-    expect(opened()).toBe(0); // not started under a recipient who can start it too
-    spacesAnswer = async () => ({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] }); // the second read, after the question
-    await answerConfirm(true);
-    await settle();
-    expect(apiJSON).toHaveBeenCalledWith("api/session-handoff-offers/offer-2", "DELETE");
     expect(opened()).toBe(1);
+    expect(buttons().every((b) => !b.disabled)).toBe(true);
+  });
+
+  it("keeps deciding on the offer seen at the press: one accepted while the list was read is refused by the conditional withdraw, and no hub opens", async () => {
+    const pending = { id: "offer-3", sessionId: "cat-1", sessionName: "src", recipientUserKey: "bob", title: "Carry on", status: "pending" } as never;
+    ownedOffers = [pending];
+    useHandoffStore.setState({ owned: [pending] });
+    let release!: () => void;
+    spacesAnswer = () => new Promise((r) => (release = () => r({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] })));
+    apiJSON.mockResolvedValueOnce({ error: { code: "handoff_already_decided", offerStatus: "accepted", status: 409 } });
+    await mountCard();
+    await press();
+    const accepted = { ...(pending as object), status: "accepted" } as never;
+    ownedOffers = [accepted];
+    await act(async () => useHandoffStore.setState({ owned: [accepted] })); // the recipient took it meanwhile
+    await act(async () => release());
+    await settle();
+    spacesAnswer = async () => ({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] }); // the read after the question
+    await answerConfirm(true); // the question the press owed, because the offer was pending then
+    await settle();
+    expect(apiJSON).toHaveBeenCalledWith("api/session-handoff-offers/offer-3", "DELETE");
+    expect(document.body.textContent).toContain(t("handoff.withdraw_lost"));
+    expect(opened()).toBe(0);
   });
 
   it("starts nothing from a card that was replaced while the list was read", async () => {

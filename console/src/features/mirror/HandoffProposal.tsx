@@ -154,10 +154,6 @@ export function HandoffProposal({
   // A handoff to a member (docs/log/77) is a per-session fact, not a per-proposal one (at
   // most one outstanding offer per session), so the card states the session's current state.
   const offer = useHandoffStore((st) => offerForSession(st.owned, session));
-  // The offer as of now, for a launch that waited: sharing the card while the list was read must
-  // not leave the launch deciding on the offer it saw when the button was pressed.
-  const offerNow = useRef(offer);
-  offerNow.current = offer;
   // The left pane's sharing section polls this, but refresh once on open so the card is not
   // blank in a layout where that section is not rendered.
   useEffect(() => { void useHandoffStore.getState().refresh(); }, [session]);
@@ -216,8 +212,19 @@ export function HandoffProposal({
       const now = live.current;
       return now.mounted && now.session === asked.session && now.proposalId === asked.proposalId;
     };
-    if ("space" in target && !(await settleSpace(target.space, same, toast))) return;
-    const offer = offerNow.current;
+    // The card is held (busy) while the list is read: sharing it, discarding it or pressing launch
+    // again meanwhile would change what this press decides on, and `offer` below stays the one
+    // seen at the press, so the conditional withdraw is what settles a recipient who accepted.
+    const spaceOk = async () => {
+      if (!("space" in target)) return true;
+      setBusy(true);
+      try {
+        return await settleSpace(target.space, same, toast);
+      } finally {
+        setBusy(false);
+      }
+    };
+    if (!(await spaceOk())) return;
     // Launching while an offer is still pending would run the same work twice. Withdraw
     // conditionally *before* launching and abandon the launch if that race is lost (the
     // recipient already accepted) — ADR 0057 decision 6.
@@ -231,7 +238,7 @@ export function HandoffProposal({
       if (!ok || !same()) return;
       // The question waited for the member: the space may have been removed meanwhile, and the
       // offer must not be withdrawn for a launch that can no longer start.
-      if ("space" in target && !(await settleSpace(target.space, same, toast))) return;
+      if (!(await spaceOk())) return;
       const d = await apiJSON(`api/session-handoff-offers/${encodeURIComponent(offer.id)}`, "DELETE");
       void useHandoffStore.getState().refresh();
       if (d?.error) {
