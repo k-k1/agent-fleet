@@ -1228,7 +1228,8 @@ it (`pendingPeers: {count, newestAt}`: the pending spool, the message being deli
 child's unread answer, such a message is no hold: no reason is kept, and it only stops a read from closing the run.
 Kept as a hold, it would keep a stopped workspace's run open past its bound, since only a live read moves the kept
 reason, and it would turn the first read after an overdue session's answer into a retire. It is bounded: it counts for
-15 minutes from the later of the newest message's queue time and the session's last turn end (a stopped session's row
-has none), because a message is delivered within seconds of its target ending a turn, and one that waits longer
-cannot be delivered (the Agent's own expiry is 24 hours). An older Agent sends no `pendingPeers`, which reads as none,
-the rule it had before.
+15 minutes from the later of the newest message's queue time and the session's last turn end as the row reports it (an
+explicit stop clears it), because a message is delivered within seconds of its target ending a turn, and one that waits longer
+cannot be delivered (the Agent's own expiry is 24 hours). A read that sees such a message sets the count of clear reads
+back to 0, so one read that misses it (a spool not readable that once, or an idle read just before the message landed)
+cannot close the run. An older Agent sends no `pendingPeers`, which reads as none, the rule it had before.

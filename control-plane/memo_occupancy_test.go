@@ -1177,9 +1177,10 @@ func TestMemoChildAnswerUnreadBounds(t *testing.T) {
 }
 
 // #5270: a run is not closed while a peer message to a member of its tree is on its way. It is no
-// hold: nothing is kept as the reason, so the run closes as soon as the message has landed (the
-// clear reads were already counted), and, for one that never lands, once memoPeerHoldBound has
-// passed since the later of its queue time and the member's last turn end.
+// hold: nothing is kept as the reason. A read that sees one starts the count of clear reads again,
+// so the run closes on the usual two clear reads once the message has landed, and, for one that
+// never lands, once memoPeerHoldBound has passed since the later of its queue time and the
+// member's last turn end.
 func TestMemoOccupancyPeerMessageInTransitKeepsTheRunOpen(t *testing.T) {
 	ts := func(x time.Time) string { return x.UTC().Format(time.RFC3339) }
 	t0 := time.Now().Truncate(time.Second)
@@ -1196,9 +1197,22 @@ func TestMemoOccupancyPeerMessageInTransitKeepsTheRunOpen(t *testing.T) {
 			if got.State != store.DeliveryOpen || got.HeldBy != "" || agent.retireCalls() != 0 {
 				t.Fatalf("closed, or kept a hold, under a message in transit: %+v", got)
 			}
-			// Landed: the row no longer reports it, and the next clear read closes the run.
+			// One read without it: the spool could not be read that once, or the read caught the
+			// session idle just before the message landed. It must not close the run.
 			agent.setRow("rev", map[string]any{"pendingPeers": nil})
-			for i := 7; i <= 8; i++ {
+			r.settle(context.Background(), t0.Add(7*time.Minute))
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.IdleTicks != 1 {
+				t.Fatalf("one read without the message closed the run: %+v", got)
+			}
+			// The message started a turn: a hold.
+			agent.setRow("rev", map[string]any{"state": "working", "progressAgeSec": 5})
+			r.settle(context.Background(), t0.Add(8*time.Minute))
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != store.HeldMachine {
+				t.Fatalf("want held by the turn the message started: %+v", got)
+			}
+			// The turn ended: the usual two clear reads close the run.
+			agent.setRow("rev", map[string]any{"state": "idle", "progressAgeSec": nil})
+			for i := 9; i <= 10; i++ {
 				r.settle(context.Background(), t0.Add(time.Duration(i)*time.Minute))
 			}
 			if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
@@ -1219,7 +1233,9 @@ func TestMemoOccupancyPeerMessageInTransitKeepsTheRunOpen(t *testing.T) {
 			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
 				t.Fatalf("closed inside the bound: %+v", got)
 			}
-			r.settle(context.Background(), t0.Add(memoPeerHoldBound))
+			for i := 0; i < 2; i++ {
+				r.settle(context.Background(), t0.Add(memoPeerHoldBound+time.Duration(i)*time.Second))
+			}
 			if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
 				t.Fatalf("an undeliverable message kept the run open past the bound: %+v", got)
 			}
@@ -1237,7 +1253,9 @@ func TestMemoOccupancyPeerMessageInTransitKeepsTheRunOpen(t *testing.T) {
 			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
 				t.Fatalf("closed inside the bound: %+v", got)
 			}
-			r.settle(context.Background(), t0.Add(memoPeerHoldBound))
+			for i := 0; i < 2; i++ {
+				r.settle(context.Background(), t0.Add(memoPeerHoldBound+time.Duration(i)*time.Second))
+			}
 			if got := e.delivery(d.ID); got.State != store.DeliveryClosed {
 				t.Fatalf("not closed after the bound: %+v", got)
 			}

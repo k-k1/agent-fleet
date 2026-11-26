@@ -3,6 +3,7 @@ package sessionx
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,4 +98,55 @@ func TestRowDoesNotWaitForAPeerSendsPaneCheck(t *testing.T) {
 	}
 	close(release)
 	<-done
+}
+
+// A delivery refused with 409 goes back in the spool: the row reports the same one message, with
+// its queue time, before, during and after, never two (spool and in flight) or none.
+func TestRowCountsARefusedDeliveryOnce(t *testing.T) {
+	pendingTestEnv(t)
+	h := &blockingFakeHandle{inter: &agents.Interaction{ID: "q", Kind: agents.InteractionQuestion}}
+	installManagedFake(t, h)
+	const name, from = "pp_rowback", "pp_sender"
+	queued := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	want := session.PendingPeers{Count: 1, NewestAt: "2026-11-26T10:00:00Z"}
+	var mu sync.Mutex
+	var seen []session.PendingPeers
+	prevReady, prevBack := peerDeliveryReady, pendingWrittenBack
+	peerDeliveryReady = func(session.Meta) (bool, bool) { return true, true } // misses the question
+	pendingWrittenBack = func(n string) {
+		var s session.Session
+		fillPendingPeers(&s, n)
+		mu.Lock()
+		defer mu.Unlock()
+		if s.PendingPeers == nil {
+			seen = append(seen, session.PendingPeers{})
+		} else {
+			seen = append(seen, *s.PendingPeers)
+		}
+	}
+	t.Cleanup(func() {
+		drainPendingLoops()
+		peerDeliveryReady, pendingWrittenBack = prevReady, prevBack
+	})
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+	if err := agents.PutPendingPeer(name, agents.PendingPeer{ID: "af_x", From: from, Intent: "notice",
+		Message: "still here", QueuedAt: queued}); err != nil {
+		t.Fatal(err)
+	}
+	kickPendingPeers(name)
+	waitFor(t, "two refused deliveries", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(seen) >= 2
+	})
+	h.set(nil)
+	waitFor(t, "delivery", func() bool { return len(h.sent()) == 1 })
+	mu.Lock()
+	defer mu.Unlock()
+	for i, got := range seen {
+		if got != want {
+			t.Fatalf("write-back %d: row reports %+v, want %+v", i, got, want)
+		}
+	}
 }

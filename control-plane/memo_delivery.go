@@ -1241,7 +1241,8 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 
 // memoPeerHoldBound is how long a peer message on its way to a member keeps the run from closing
 // (#5270), counted from the later of the newest message's queue time and the member's last turn
-// end as its row reports it (a stopped session's row has none). A message is delivered seconds
+// end as its row reports it (an explicit stop clears the turn record, so such a row counts from the
+// queue time alone). A message is delivered seconds
 // after its target can take it, which is when a turn ends; one still waiting this long after
 // both cannot be delivered (the target is stopped, or refuses it again on every try), and
 // without the bound it would keep the run open until the Agent's own 24-hour expiry.
@@ -1324,7 +1325,12 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	// unread answer and a peer message on its way to a member (#5270) are both such reads: kept
 	// as a hold, a message would keep a stopped workspace's run open past its bound (only a live
 	// read moves it) and turn the first read after an overdue person's answer into a retire.
-	unread := why == "" && (childAnswerUnread(tree, now) || treePeerInTransit(tree, now))
+	// A read that saw a message in transit also starts the count of clear reads again, so the
+	// close needs two reads in a row without one: a single read cannot close the run when the
+	// spool was not readable that once, nor when it caught the session's idle just before the
+	// message landed and the spool just after.
+	inTransit := why == "" && treePeerInTransit(tree, now)
+	unread := why == "" && (childAnswerUnread(tree, now) || inTransit)
 	gen, numbered := v.gens[d.ID]
 	if !numbered {
 		// No number for this read (the delivery opened after the numbers were handed out, or the
@@ -1356,6 +1362,9 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	wctx, cancel := memoWriteCtx(ctx)
 	err := r.mgr.store.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
 		ticks, kept, err := tx.ObserveDelivery(d.ID, o)
+		if err == nil && inTransit {
+			ticks, err = 0, tx.SetDeliveryIdleTicks(d.ID, 0)
+		}
 		if err != nil || !kept {
 			return err // closed meanwhile, or a later read is kept: that one decides
 		}

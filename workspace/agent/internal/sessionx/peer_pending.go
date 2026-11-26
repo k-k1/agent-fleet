@@ -57,6 +57,9 @@ var (
 	// pendingPeerWait is the loop's pause between two looks at the target. Tests replace it
 	// to step the loop one look at a time.
 	pendingPeerWait = time.Sleep
+	// pendingWrittenBack runs after a refused delivery is back in the spool, before the delivery
+	// returns. Tests read the session row there.
+	pendingWrittenBack = func(string) {}
 )
 
 // queueableBlocker reports whether a peer send to a target in state st waits instead of being
@@ -401,19 +404,21 @@ func deliverPendingPeer(name string, p agents.PendingPeer) bool {
 		rec.status == http.StatusInternalServerError && e.Code != "tmux_failed"
 	if keep {
 		t.mu.Lock()
-		defer t.mu.Unlock()
 		if t.gen != gen {
+			t.mu.Unlock()
 			log.Printf("pending peer message: %s: dropped %s from %s (the spool was dropped during its delivery)", name, p.ID, p.From)
 			return false
 		}
 		// Back in the spool and out of inflight in one step for the session list, which would
 		// otherwise count the message twice in between.
 		t.view.Lock()
-		defer t.view.Unlock()
 		if err := agents.PutPendingPeer(name, p); err != nil {
 			log.Printf("pending peer message: %s: lost %s from %s: write back: %v", name, p.ID, p.From, err)
 		}
 		t.inflight = nil
+		t.view.Unlock()
+		t.mu.Unlock()
+		pendingWrittenBack(name)
 		return false
 	}
 	log.Printf("pending peer message: %s: dropped %s from %s (delivery answered %d %s)",

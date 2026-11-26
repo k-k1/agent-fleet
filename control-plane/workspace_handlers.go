@@ -1127,7 +1127,7 @@ type sessionWire struct {
 	WakersUnknown bool           `json:"wakersUnknown,omitempty"`
 	// PendingPeers is the peer messages still on their way to the session, as the Agent reports
 	// it, omitted when none are. A queue run is not closed while one is in transit to a member of
-	// its tree (sessionHold, #5270). An older Agent never sends it, which reads as none: the rule
+	// its tree (treePeerInTransit, #5270). An older Agent never sends it, which reads as none: the rule
 	// such a workspace had before. No DB-mirror column, like Wakers.
 	PendingPeers *sessionPendingPeers `json:"pendingPeers,omitempty"`
 	// QueueTurn is how the first turn of the session's queue delivery ended, on the row of a
