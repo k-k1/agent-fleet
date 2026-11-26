@@ -186,7 +186,7 @@ jobs:
           BODY_FILE: ${{ runner.temp }}/body.md
         run: |
           set -euo pipefail
-          echo "No drifting kind has passed its contract on latest; nothing to bump." >> "$GITHUB_STEP_SUMMARY"
+          echo "No drifting kind can be bumped to its current latest; nothing to bump (why, per kind, is in the table below)." >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$TOKEN" ]; then
             echo "::warning::CLI_PIN_BUMP_TOKEN is not set, so an open bump PR (if any) was not checked."
             exit 0
@@ -199,7 +199,7 @@ jobs:
             sed 's/<!-- cli-pin-bump edit=[^ ]* -->/<!-- cli-pin-bump superseded -->/' > "$RUNNER_TEMP/old.md"
           gh pr edit "$num" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/old.md"
           {
-            echo "Closed by \`cli-pin-bump.yml\`: no kind in this PR still has \`tested == latest\`. A new PR opens once a contract passes on the current latest."
+            echo "Closed by \`cli-pin-bump.yml\`: no kind in this PR can still be bumped to its current latest. The table below gives the reason for each; a new PR opens once one can."
             echo
             cat "$BODY_FILE"
           } > "$RUNNER_TEMP/close.md"

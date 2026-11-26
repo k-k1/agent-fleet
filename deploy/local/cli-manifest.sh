@@ -58,6 +58,19 @@ manifest_load() {
 
 manifest_has_flag() { case ",${M_flags[$1]}," in *",$2,"*) return 0 ;; *) return 1 ;; esac; }
 
+# The only version shape a pr-gated row is bumped to. cli-pin-bump.sh and cli-update-issues.sh
+# both ask this, so a release neither can bump is a hand-bump issue, never a silent gap.
+manifest_plain_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+# The release line a major-manual kind must stay on: the major, or `0.<minor>` while the major
+# is 0, where a minor may break as much as a major (bkt 0.39 changed which host gets the token).
+# A version with no numeric major is line 0.
+manifest_line_of() {
+  local m="${1%%.*}" r
+  case "$m" in ''|*[!0-9]*) echo 0; return ;; esac
+  if [ "$m" = 0 ]; then r="${1#*.}"; echo "0.${r%%.*}"; else echo "$m"; fi
+}
+
 # The three derived name sets, space separated.
 manifest_tested_kinds() { local n o=(); for n in "${M_NAMES[@]}"; do [ "${M_contract[$n]}" = - ] || o+=("$n"); done; echo "${o[*]}"; }
 manifest_auto_kinds()   { local n o=(); for n in "${M_NAMES[@]}"; do [ "${M_dispatch[$n]}" != auto ] || o+=("$n"); done; echo "${o[*]}"; }

@@ -116,8 +116,6 @@ trap 'rm -rf "$WORK"' EXIT
 
 die() { echo "cli-pin-bump: $*" >&2; exit 1; }
 
-# Leading integer of a version, 0 when there is none.
-major_of() { local m="${1%%.*}"; case "$m" in ''|*[!0-9]*) echo 0 ;; *) echo "$m" ;; esac; }
 
 # The single value of `ARG <name>=`, or failure when it is absent or appears twice: a
 # second definition would make "the pin" ambiguous and the rewrite would miss one.
@@ -153,6 +151,29 @@ fetch() { "${CURL[@]}" "$1" -o "$2" 2>/dev/null; }
 sha256_of() { sha256sum "$1" | awk '{ print $1 }'; }
 
 resolve_npm() { NEW[$1]="$2"; }
+
+# assets_ready <pr-gated kind> <version>: every per-architecture download the Dockerfile
+# makes for that version answers, using the Dockerfile's own URLs. A release is often
+# published before all its assets are uploaded, and the PR's CI never fetches arm64. A
+# flagged tool with no recipe here is refused, so flagging one means writing its URLs.
+assets_ready() {
+  local kind="$1" v="$2" url urls=()
+  case "$kind" in
+    awscli)      urls=("https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$v.zip"
+                       "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$v.zip") ;;
+    gh)          urls=("https://github.com/cli/cli/releases/download/v$v/gh_${v}_linux_amd64.tar.gz"
+                       "https://github.com/cli/cli/releases/download/v$v/gh_${v}_linux_arm64.tar.gz") ;;
+    bkt)         urls=("https://github.com/avivsinai/bitbucket-cli/releases/download/v$v/bkt_${v}_linux_x86_64.tar.gz"
+                       "https://github.com/avivsinai/bitbucket-cli/releases/download/v$v/bkt_${v}_linux_arm64.tar.gz") ;;
+    mcp_grafana) urls=("https://github.com/grafana/mcp-grafana/releases/download/v$v/mcp-grafana_Linux_x86_64.tar.gz"
+                       "https://github.com/grafana/mcp-grafana/releases/download/v$v/mcp-grafana_Linux_arm64.tar.gz") ;;
+    confluence)  return 0 ;;  # an npm package: one tarball for every architecture
+    *) echo "no per-architecture asset check for $kind in cli-pin-bump.sh"; return 1 ;;
+  esac
+  for url in "${urls[@]}"; do
+    "${CURL[@]}" -I -o /dev/null "$url" 2>/dev/null || { echo "a release asset is not there yet: $url"; return 1; }
+  done
+}
 
 resolve_agy() { # resolve_agy <version>
   local v="$1" arch dir key url sha512 got build="" b
@@ -290,24 +311,40 @@ for row in "${KINDS[@]}"; do
   latest="$(out_value "latest_$kind")"
   if [ -z "$latest" ] || case ",$FAILED," in *",$kind,"*) true ;; *) false ;; esac; then
     left+=("$kind|$pin|?|its release source could not be read")
-    incomplete=true
+    # A pr-gated tool's source (often a rate-limited GitHub API) must not hold the contract
+    # kinds' bump: it only stays at its pin this run. The cost is that it drops out of an
+    # open PR for one run.
+    manifest_has_flag "$kind" pr-gated || incomplete=true
     continue
   fi
   [ "$pin" != "$latest" ] || continue
   [[ "$latest" =~ $VALUE_RE ]] || { left+=("$kind|$pin|$latest|the published version has an unexpected shape"); continue; }
+  if [ "$workflow" = - ] && ! manifest_plain_version "$latest"; then
+    left+=("$kind|$pin|$latest|not a plain x.y.z, which is all a pr-gated bump takes; bump \`$arg\` by hand")
+    continue
+  fi
 
   check_fragments "$kind" "$pin" "$latest"
 
   # A new major of a major-manual kind is never carried, whatever a contract (or, for a
   # pr-gated row, the PR's CI) says: a new opencode major changes the server API, the plugin
   # API and the TUI flags at once, and a pr-gated tool's major can rename what we call.
-  if manifest_has_flag "$kind" major-manual && [ "$(major_of "$pin")" != "$(major_of "$latest")" ]; then
-    left+=("$kind|$pin|$latest|a new major ($(major_of "$pin") -> $(major_of "$latest")): the cut-over is manual, never an automatic bump")
+  if manifest_has_flag "$kind" major-manual && [ "$(manifest_line_of "$pin")" != "$(manifest_line_of "$latest")" ]; then
+    left+=("$kind|$pin|$latest|a new major ($(manifest_line_of "$pin") -> $(manifest_line_of "$latest")): the cut-over is manual, never an automatic bump")
     continue
   fi
 
   if [ "$workflow" = - ]; then
-    # pr-gated: the version ARG alone, and the bump PR's CI is the gate.
+    # pr-gated: the version ARG alone, and the bump PR's CI is the gate. That CI builds amd64
+    # only, so the release must already carry every architecture the Dockerfile fetches.
+    set +e
+    assets_ready "$kind" "$latest" > "$WORK/reason" 2>&1
+    rrc=$?
+    set -e
+    if [ "$rrc" != 0 ]; then
+      left+=("$kind|$pin|$latest|$(tr '\n' ' ' < "$WORK/reason" | sed 's/ *$//')")
+      continue
+    fi
     NEW[$arg]="$latest"
     bumped+=("$kind")
     evidence+=("| $kind | \`$pin\` → \`$latest\` | no contract; \`pr-gated\`: this PR's CI is the gate | version only |")

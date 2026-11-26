@@ -88,6 +88,10 @@ if [ "${1:-}" = "--inner" ]; then
   check_ver bkt      "$EXPECT_BKT"      /usr/local/libexec/bkt --version
   check_ver gitleaks "$EXPECT_GITLEAKS" gitleaks version
   check_ver jira     "$EXPECT_JIRA"     /usr/local/libexec/jira version
+  # Both are bumped by the pin-bump PR with this check as their gate (pr-gated), so the
+  # binary itself must report the pin, not just versions.json.
+  check_ver awscli      "$EXPECT_AWSCLI"      aws --version
+  check_ver mcp_grafana "$EXPECT_MCP_GRAFANA" mcp-grafana --version
 
   # Chromium is pinned down to the Debian revision, so compare the dpkg version too —
   # `chromium --version` only prints the 4-part upstream version.

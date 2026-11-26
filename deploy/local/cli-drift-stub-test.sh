@@ -929,6 +929,14 @@ sync_ok awscli
 title_is awscli "awscli CLI: merge the pin bump to 2.42.4"
 has awscli 'it is `pr-gated`, so the bump PR'
 hasnt awscli 'by hand'
+has awscli 'opens the PR that bumps the pin'
+# The bump PR's evidence row for a pr-gated kind is found like a contract kind's; one for
+# another version is not.
+echo '[{"number":3001,"body":"| awscli | `2.42.3` → `2.42.2` | no contract | version only |"},{"number":3002,"body":"| awscli | `2.42.3` → `2.42.4` | no contract; `pr-gated`: this PR'"'"'s CI is the gate | version only |"}]' > "$STUB_PRS"
+sync_ok awscli
+has awscli 'merge #3002'
+hasnt awscli '#3001'
+echo '[]' > "$STUB_PRS"
 releases awscli=2.42.4:2.42.4
 sync_ok awscli
 [ "$(cat "$STUB_ISSUES/$aw_num/state")" = closed ] || fail "awscli issue not closed when the pin caught up"
@@ -938,6 +946,17 @@ releases bkt=0.41.0:1.0.0
 sync_ok bkt
 title_is bkt "bkt CLI: bump the pin to 1.0.0"
 has bkt 'BKT_VERSION'
+echo "== case 30g: a 0.x minor of a pr-gated row is a new line too; a 0.x patch goes back to the PR =="
+releases bkt=0.41.0:0.42.0
+sync_ok bkt
+title_is bkt "bkt CLI: bump the pin to 0.42.0"
+releases bkt=0.41.0:0.41.1
+sync_ok bkt
+title_is bkt "bkt CLI: merge the pin bump to 0.41.1"   # the open issue follows; the PR closes it
+echo "== case 30h: a pr-gated release that is not a plain x.y.z is a hand bump, never a silent gap =="
+releases gh=2.105.0:2.106.0-rc1
+sync_ok gh
+title_is gh "gh CLI: bump the pin to 2.106.0-rc1"
 
 echo "== case 31: a red row for latest names the fix, keeps the section, and the dispatch fits the kind =="
 releases muse=1.4.4:1.4.7 codex=0.162.1:0.163.1

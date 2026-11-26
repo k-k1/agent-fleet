@@ -129,6 +129,7 @@ bad_manifest "twelve fields" 'a|A_VERSION|npm|p|-|npm|-|-|-|-|-|x' 'exactly 11'
 bad_manifest "bad ARG" 'a|A_VER|npm|p|-|npm|-|-|-|-|-' 'bad ARG'
 bad_manifest "bad source" 'a|A_VERSION|ftp|p|-|npm|-|-|-|-|-' 'bad source'
 bad_manifest "contract without dispatch" 'a|A_VERSION|npm|p|a.yml|npm|-|-|-|-|-' 'both be set'
+bad_manifest "pr-gated with a contract" 'a|A_VERSION|npm|p|a.yml|npm|auto|-|-|-|pr-gated' 'no contract'
 bad_manifest "npm install, other source" 'a|A_VERSION|github|p|-|npm|-|-|-|-|-' 'install npm needs source npm'
 printf 'a|A_VERSION|npm|p|-|npm|-|-|-|-|-\na|A_VERSION|npm|p|-|npm|-|-|-|-|-\n' > "$WORK/m.psv"
 CLI_MANIFEST="$WORK/m.psv" "$ROOT/deploy/local/cli-manifest.sh" names > "$WORK/out" 2>&1 && fail "duplicate name accepted"

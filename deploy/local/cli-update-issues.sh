@@ -20,7 +20,8 @@
 #   credential  claude / copilot / agy while their CI secret is not configured
 #   manual      a watch-only row (rtk, gh, gitleaks…): no contract exists, it is bumped by hand.
 #               A `pr-gated` row is not one: the bump PR carries it, so it is in `merge`,
-#               except a new major of a `major-manual` one, which the PR never carries
+#               except a release the PR never carries: a new major (or 0.x minor) of a
+#               `major-manual` one, or a version that is not a plain x.y.z
 #   fragments   the latest release no longer contains upstream text Agent Fleet matches on
 #               (a row in `Red contracts`, written by cli-pin-bump.sh via cli-fragment-check.sh)
 #
@@ -114,8 +115,8 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
   if [ -n "$red_ver" ] && [ "$red_ver" = "$latest" ]; then state=red
   elif [ "$streak" = true ]; then state=streak
   elif [ "$pin" = "$latest" ]; then state=current
-  elif [ "${M_contract[$kind]}" = - ] && manifest_has_flag "$kind" pr-gated &&
-       ! { manifest_has_flag "$kind" major-manual && [ "${pin%%.*}" != "${latest%%.*}" ]; }; then state=merge
+  elif [ "${M_contract[$kind]}" = - ] && manifest_has_flag "$kind" pr-gated && manifest_plain_version "$latest" &&
+       ! { manifest_has_flag "$kind" major-manual && [ "$(manifest_line_of "$pin")" != "$(manifest_line_of "$latest")" ]; }; then state=merge
   elif [ "${M_contract[$kind]}" = - ]; then state=manual
   elif [ "$tested" = "$latest" ]; then state=merge
   elif [ "${M_dispatch[$kind]}" = manual ]; then state=dispatch

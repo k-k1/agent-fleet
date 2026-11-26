@@ -536,6 +536,24 @@ cp "$ROOT/workspace/Dockerfile" "$DF"
 # The other kinds are held at their pins, so only the rows under test can move.
 L_AWSCLI="$(major_of_v "$P_AWSCLI").999.0"
 G_MINOR="$(major_of_v "$P_GH").999.0"
+echo asset > "$WORK/asset"
+# serve_assets <kind> <version> <url part to leave out, or "">: the per-architecture
+# downloads assets_ready asks for, at the URLs the Dockerfile fetches.
+serve_assets() {
+  local u skip="$3"
+  case "$1" in
+    awscli) set -- "$@" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$2.zip" ;;
+    gh)     set -- "$@" "https://github.com/cli/cli/releases/download/v$2/gh_$2_linux_amd64.tar.gz" "https://github.com/cli/cli/releases/download/v$2/gh_$2_linux_arm64.tar.gz" ;;
+    bkt)    set -- "$@" "https://github.com/avivsinai/bitbucket-cli/releases/download/v$2/bkt_$2_linux_x86_64.tar.gz" "https://github.com/avivsinai/bitbucket-cli/releases/download/v$2/bkt_$2_linux_arm64.tar.gz" ;;
+  esac
+  shift 3
+  for u in "$@"; do
+    [ -n "$skip" ] && case "$u" in *"$skip"*) continue ;; esac
+    serve "$u" "$WORK/asset"
+  done
+}
+serve_assets awscli "$L_AWSCLI" ""
+serve_assets gh "$G_MINOR" ""
 STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
   STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
   STUB_LATEST_RTK="9.9.9" STUB_LATEST_AWSCLI="$L_AWSCLI" STUB_LATEST_GH="$G_MINOR" run_bump
@@ -558,12 +576,54 @@ cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a new awscli major changed th
 out_has "count=0"
 body_has "| awscli | \`$P_AWSCLI\` | \`3.0.0\` | a new major ($(major_of_v "$P_AWSCLI") -> 3): the cut-over is manual, never an automatic bump |"
 
-echo "== case 16b: an unreadable awscli source holds the run like any other bumpable kind =="
+echo "== case 16b: an unreadable pr-gated source leaves only that row; a tested contract kind still moves =="
 cp "$ROOT/workspace/Dockerfile" "$DF"
-STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_AGY="$P_AGY" STUB_LATEST_CURSOR="$P_CURSOR" \
-  STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_AWSCLI="$L_AWSCLI" STUB_FAIL=awscli run_bump
+STUB_LATEST_AGY="$P_AGY" STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" \
+  STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_MUSE="$P_MUSE" STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" \
+  STUB_LATEST_AWSCLI="$L_AWSCLI" STUB_FAIL=awscli run_bump
 code_is 0
-cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "an unreadable source still changed the Dockerfile"
-out_has "incomplete=true"
+expect_changed "+ARG CLAUDE_CODE_VERSION=$L_CLAUDE"
+out_has "incomplete=false"
+out_has "bumped=claude"
+body_has "| awscli | \`$P_AWSCLI\` | \`?\` | its release source could not be read |"
+
+echo "== case 16c: a release missing its arm64 asset is left at its pin =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+A_NOARM="$(major_of_v "$P_AWSCLI").998.0"
+serve_assets awscli "$A_NOARM" aarch64
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_AWSCLI="$A_NOARM" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a release without its arm64 asset was bumped"
+out_has "count=0"
+body_has "| awscli | \`$P_AWSCLI\` | \`$A_NOARM\` | a release asset is not there yet: https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$A_NOARM.zip |"
+
+echo "== case 16d: a 0.x minor of a pr-gated row is a new line; a 0.x patch is bumped =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+B_LINE="$(printf '%s' "$P_BKT" | cut -d. -f1-2)"
+B_MINOR="0.$(( $(printf '%s' "$P_BKT" | cut -d. -f2) + 1 )).0"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_MINOR" run_bump
+code_is 0
+out_has "count=0"
+body_has "| bkt | \`$P_BKT\` | \`$B_MINOR\` | a new major ($B_LINE -> ${B_MINOR%.*}): the cut-over is manual, never an automatic bump |"
+B_PATCH="$B_LINE.99"
+serve_assets bkt "$B_PATCH" ""
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_PATCH" run_bump
+code_is 0
+expect_changed "+ARG BKT_VERSION=$B_PATCH"
+
+echo "== case 16e: a pr-gated release that is not a plain x.y.z is left, and says so =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$G_MINOR-rc1" run_bump
+code_is 0
+out_has "count=0"
+body_has "| gh | \`$P_GH\` | \`$G_MINOR-rc1\` | not a plain x.y.z, which is all a pr-gated bump takes; bump \`GH_VERSION\` by hand |"
 
 echo "OK: cli-pin-bump.sh bumps only tested kinds, refuses bad checksums, and is idempotent"
