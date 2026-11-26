@@ -349,18 +349,30 @@ func (c *Cache) refresh(due []Key) {
 // it last keeps the other fresh, and a Lookup does not ask GitHub again within its TTL. A branch
 // entry is matched by the PR it last held, so a branch that moved to another PR keeps its old
 // answer for one TTL more at worst. sent is when the call that answered was sent.
+//
+// An answer never replaces one from a call sent later. A background refresh and a Fetch can be in
+// flight for one PR at once and answer out of order; storing the late arrival would put the older
+// read back, and a PR link would then record its facts as a change (session.PRFactsDue) though a
+// newer read had already said otherwise.
 func (c *Cache) storeLocked(k Key, e *entry, pr *PR, sent time.Time) {
 	// Stamped only while unset: the answer is new and unseen until its first store, and a second
 	// key answered by the same PR in one call stores it again, by then visible to Lookup's callers.
 	if pr != nil && pr.ObservedAt.IsZero() {
 		pr.ObservedAt = sent
 	}
+	if sent.Before(e.fetched) {
+		// The key was still asked at sent, so a since bound up to it is met (FetchSince).
+		if sent.After(e.direct) {
+			e.direct = sent
+		}
+		return
+	}
 	e.pr, e.fetched, e.direct = pr, sent, sent
 	if pr == nil || pr.Number <= 0 {
 		return
 	}
 	for ok, oe := range c.entries {
-		if ok == k || oe == e || !strings.EqualFold(ok.Repo, k.Repo) {
+		if ok == k || oe == e || !strings.EqualFold(ok.Repo, k.Repo) || sent.Before(oe.fetched) {
 			continue
 		}
 		same := ok.Number == pr.Number || (ok.Number == 0 && oe.pr != nil && oe.pr.Number == pr.Number)
@@ -465,7 +477,7 @@ func (c *Cache) FetchSince(ctx context.Context, keys []Key, since time.Time) (ma
 		}
 		e.asked = now
 		c.storeLocked(k, e, got[k], started)
-		out[k] = got[k]
+		out[k] = e.pr // got[k], or a newer answer already held (storeLocked)
 	}
 	return out, nil
 }

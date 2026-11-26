@@ -743,3 +743,46 @@ func TestStoredAnswerCarriesWhenItsCallWasSent(t *testing.T) {
 		t.Fatalf("by number ObservedAt=%v, want the same read's time %v", got[num].ObservedAt, pr.ObservedAt)
 	}
 }
+
+// Two calls for one PR answering out of order: the background refresh sent first arrives last,
+// and must not put its older read back over the Fetch that was sent after it.
+func TestAnOlderAnswerArrivingLateDoesNotReplaceANewerOne(t *testing.T) {
+	c := newTestCache("http://unused", "tok")
+	branch, num := Key{Repo: "o/r", Branch: "a"}, Key{Repo: "o/r", Number: 3}
+	inA, releaseA, doneA := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	c.fetch = func(_ string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
+		out := map[Key]*PR{}
+		if calls.Add(1) == 2 { // A: the background refresh, read while CI re-ran
+			close(inA)
+			<-releaseA
+			for _, k := range keys {
+				out[k] = &PR{Number: 3, State: "open", Checks: "pending"}
+			}
+			return out, nil, 0, nil
+		}
+		for _, k := range keys { // the first read, and B: the watch's fetch after the re-run passed
+			out[k] = &PR{Number: 3, State: "open", Checks: "success"}
+		}
+		return out, nil, 0, nil
+	}
+	c.Lookup([]Key{branch}, time.Now()) // the branch holds #3, green
+	c.Async = func(f func()) {
+		go func() { f(); close(doneA) }()
+	}
+	c.Lookup([]Key{branch}, time.Now().Add(openTTL)) // stale: A starts
+	<-inA
+	time.Sleep(2 * time.Millisecond)
+	got, err := c.FetchSince(context.Background(), []Key{num}, time.Time{})
+	if err != nil || got[num] == nil || got[num].Checks != "success" {
+		t.Fatalf("FetchSince = %+v, %v, want B's success", got[num], err)
+	}
+	close(releaseA)
+	<-doneA
+	now := time.Now()
+	for _, k := range []Key{branch, num} {
+		if pr := c.Lookup([]Key{k}, now)[k]; pr == nil || pr.Checks != "success" {
+			t.Fatalf("%+v answers %+v, want B's newer success kept over A's late pending", k, pr)
+		}
+	}
+}
