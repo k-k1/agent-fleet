@@ -739,7 +739,7 @@ func TestForSessionWritesAnOAuthServerOnlyWhileAGrantIsLive(t *testing.T) {
 	}
 
 	// Not while the grant needs a new sign-in, not while it is gone.
-	markSignInAgain(relayTestID, e.as.url(""), "")
+	markSignInAgain(currentGrant(relayTestID), "")
 	if defs, _ := ForSession(session.KindClaude); find(defs, "hosted") != nil {
 		t.Error("a sign-in-again grant is written")
 	}

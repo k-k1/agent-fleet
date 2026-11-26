@@ -63,14 +63,14 @@ func syncMCPTenant(why string) mcpreg.TenantFetchResult {
 	return res
 }
 
-// endTenantGrants disconnects the sign-ins a fetch ended, before the configs are rewritten:
-// the tenant took the server away or pointed it elsewhere, and a grant belongs to the URL it
-// was made for. Revocation at the authorization server is best effort, as on a member's own
-// edit (HandleServerUpdate).
-func endTenantGrants(ctx context.Context, why string, ids []string) {
-	for _, id := range ids {
-		if _, err := mcpreg.DisconnectOAuth(ctx, id); err != nil {
-			log.Printf("mcp tenant sync (%s): %s: ending the sign-in failed: %v", why, id, err)
+// endTenantGrants ends the sign-ins a fetch ended, before the configs are rewritten: the tenant
+// took the server away or pointed it elsewhere, and a grant belongs to the URL it was made for (a
+// shared grant ends with its group, mcpreg.EndTenantSignIn). Revocation at the authorization
+// server is best effort, as on a member's own edit (HandleServerUpdate).
+func endTenantGrants(ctx context.Context, why string, ended []mcpreg.EndedOAuth) {
+	for _, e := range ended {
+		if err := mcpreg.EndTenantSignIn(ctx, e); err != nil {
+			log.Printf("mcp tenant sync (%s): %s: ending the sign-in failed: %v", why, e.ID, err)
 		}
 	}
 }

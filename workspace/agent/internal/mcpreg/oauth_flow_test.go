@@ -706,11 +706,7 @@ func signedIn(t *testing.T, f *asFake) string {
 
 func storedGrant(t *testing.T, id string) secrets.MCPOAuthGrant {
 	t.Helper()
-	data, err := secrets.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	g := findGrant(data, id)
+	g := currentGrant(id)
 	if g == nil {
 		t.Fatal("no grant")
 	}

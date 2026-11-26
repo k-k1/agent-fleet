@@ -460,6 +460,18 @@ type MCPOAuthGrant struct {
 	SignInAgain bool `json:"signInAgain,omitempty"`
 	// StepUpScope is the scope a 403 insufficient_scope asked for and the grant lacks.
 	StepUpScope string `json:"stepUpScope,omitempty"`
+	// Members are the definitions the sign-in was made for, each with the URL and the scopes it
+	// was asked for (ADR 0146 decision 4: one grant per tenant client and issuer). Empty on grants
+	// made before it existed, which cover ServerID at Resource only.
+	Members []MCPOAuthGrantMember `json:"members,omitempty"`
+}
+
+// MCPOAuthGrantMember is one definition a grant was made for.
+type MCPOAuthGrantMember struct {
+	ServerID string `json:"serverId"`
+	// Resource is the definition's URL in canonical form, sent as an RFC 8707 resource.
+	Resource string   `json:"resource"`
+	Scopes   []string `json:"scopes,omitempty"`
 }
 
 // MCPOAuthClient is an OAuth client identity for one authorization server: either entered by

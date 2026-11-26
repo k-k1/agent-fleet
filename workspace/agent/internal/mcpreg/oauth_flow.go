@@ -132,10 +132,16 @@ type pendingAuth struct {
 	tokenEndpoint        string
 	revocationEndpoint   string
 	resource             string
-	scope                string
-	redirectURI          string
-	verifier             string
-	expires              time.Time
+	// group and members are what the grant is for: the signed-in server alone, or every server of
+	// its tenant client's group (oauth_grant_set.go). resources are the members' URLs, each sent
+	// as an RFC 8707 resource.
+	group       string
+	members     []secrets.MCPOAuthGrantMember
+	resources   []string
+	scope       string
+	redirectURI string
+	verifier    string
+	expires     time.Time
 	// tenantClient is the definition's tenant client when the sign-in started, whatever
 	// registration path it took: a tenant fetch that changes it ends every sign-in (endedOAuth).
 	tenantClient *secrets.MCPTenantClient
@@ -546,14 +552,42 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 	if endpointUsable(srv.ep.revocation) {
 		revocation = srv.ep.revocation
 	}
+	// A sign-in made with the tenant's client is one for every server of that client (ADR 0146
+	// decision 4): it asks for all their URLs and scopes, and the grant serves all of them.
+	members := []secrets.MCPOAuthGrantMember{{ServerID: d.ID, Resource: rep.Resource, Scopes: d.Scopes}}
+	group := ""
+	if _, ok := tenantClient(d, srv); ok && (req.Registration == "" || req.Registration == OAuthRegPreregistered) {
+		reg, err := Load()
+		if err != nil {
+			return StartResult{}, oerr(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be read")
+		}
+		group = grantGroup(d)
+		for _, o := range groupPeers(reg, d) {
+			if res, ok := canonicalResource(o.URL); ok {
+				members = append(members, secrets.MCPOAuthGrantMember{ServerID: o.ID, Resource: res, Scopes: o.Scopes})
+			}
+		}
+	}
+	var defScopes, resources []string
+	for _, m := range members {
+		defScopes = append(defScopes, m.Scopes...)
+		resources = append(resources, m.Resource)
+	}
+	defScopes = splitScopes(strings.Join(defScopes, " "))
+	resources = splitScopes(strings.Join(resources, " ")) // canonical URLs hold no space or comma
 	scope := req.Scope
 	if scope == "" {
 		if g := currentGrant(serverID); g != nil && g.StepUpScope != "" {
 			scope = unionScope(g.Scope, g.StepUpScope)
 		}
 	}
-	if scope == "" {
-		scope = selectScope(d.Scopes, rep.ChallengedScope, rep.prmScopes, srv.ep.asScopes)
+	switch {
+	case scope == "":
+		scope = selectScope(defScopes, rep.ChallengedScope, rep.prmScopes, srv.ep.asScopes)
+	case len(defScopes) > 0:
+		// A step-up or a set change still asks for every scope the definitions carry: the new
+		// grant replaces the old one, and a member it lacks a scope for would need more again.
+		scope = unionScope(scope, strings.Join(defScopes, " "))
 	}
 	// A scope the Agent assembled from the server's challenge / PRM / AS metadata is
 	// remote input: refuse it as a caller-sent one would be, before any registration
@@ -581,7 +615,7 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", "S256")
 	q.Set("state", req.State)
-	q.Set("resource", rep.Resource)
+	q["resource"] = resources
 	if scope != "" {
 		q.Set("scope", scope)
 	}
@@ -593,7 +627,7 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 		serverID: d.ID, serverName: d.Name, issuer: srv.Issuer, issParam: srv.IssParam,
 		registration: cl.path, clientID: cl.id, secret: cl.secret, tokenAuth: cl.tokenAuth,
 		tokenEndpoint: srv.ep.token, revocationEndpoint: revocation, resource: rep.Resource,
-		scope: scope, redirectURI: req.RedirectURI, verifier: verifier,
+		group: group, members: members, resources: resources, scope: scope, redirectURI: req.RedirectURI, verifier: verifier,
 		expires: oauthNow().Add(oauthStateTTL), tenantClient: copyTenantClient(d.OAuthClient),
 	}); e != nil {
 		return StartResult{}, e
@@ -659,7 +693,7 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		"code":          {req.Code},
 		"redirect_uri":  {p.redirectURI},
 		"code_verifier": {p.verifier},
-		"resource":      {p.resource},
+		"resource":      p.resources,
 	}
 	tok, terr := postToken(ctx, p.serverID, p.issuer, p.tokenEndpoint, form, p.clientID, p.secret, p.tokenAuth)
 	if terr != nil {
@@ -682,9 +716,9 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 	}
 	// The definition may have changed while the browser was away (a tenant fetch moved the URL
 	// or swapped the client, and disconnected what it found). Checked and stored under the
-	// server's lock, which DisconnectOAuth holds too, so a grant can never be stored after a
-	// disconnect that should have ended it.
-	mu := lockFor(serverLockKey(p.serverID))
+	// server's lock (its group's, for a shared grant), which DisconnectOAuth holds too, so a grant
+	// can never be stored after a disconnect that should have ended it.
+	mu := lockFor(signInLockKey(p.serverID, p.group))
 	mu.Lock()
 	if !pendingStillCovers(p) {
 		// Nothing shared is touched from here on, so a disconnect of this server need not wait
@@ -693,10 +727,35 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		revokeUnstored(ctx, g)
 		return fail(http.StatusConflict, OAuthErrStateMismatch, "the server's definition changed while this sign-in was open; sign in again")
 	}
+	// The other members are kept only while they are still what the sign-in asked for; one that
+	// left the group or moved meanwhile reads as needing more permission.
+	reg, lerr := Load()
+	if lerr != nil {
+		mu.Unlock()
+		return fail(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be read")
+	}
+	var defs []ServerDef
+	for _, m := range p.members {
+		d := defIn(reg, m.ServerID)
+		if m.ServerID != p.serverID {
+			if u, err := url.Parse(d.URL); err != nil || grantGroup(d) != p.group || !relayBound(m.Resource, u) {
+				continue
+			}
+		}
+		g.Members = append(g.Members, m)
+		defs = append(defs, d)
+	}
 	err := updateSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuth[:0]
 		for _, o := range s.MCPOAuth {
-			if o.ServerID != g.ServerID { // one grant per server: another issuer's is replaced
+			// One grant per server: every grant a member of this one used is replaced, another
+			// issuer's included. A shared grant this server's sign-in was started from before it
+			// left that group serves the group's other servers and stays.
+			replaced := false
+			for _, d := range defs {
+				replaced = replaced || grantApplies(&o, d)
+			}
+			if !replaced {
 				kept = append(kept, o)
 			}
 		}
@@ -706,8 +765,9 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 	if err == nil {
 		// An abandoned attempt on another registration path (a CIMD sign-in that never came back,
 		// then a DCR retry) would otherwise outlive the grant and show as a stale pending marker
-		// next to "connected". Per server: another server's attempt is untouched.
-		dropPendingFor(p.serverID)
+		// next to "connected". Per server (per group for a shared grant): another server's
+		// attempt is untouched.
+		dropPendingFor(p.serverID, p.group)
 	}
 	mu.Unlock()
 	if err != nil {

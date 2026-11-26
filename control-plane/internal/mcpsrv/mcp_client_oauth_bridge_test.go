@@ -456,3 +456,68 @@ func TestBridgeRevokeUsesItsOwnAuthMethods(t *testing.T) {
 		t.Errorf("the grant's issuer was forwarded to the AS: %v", as.revokes[0])
 	}
 }
+
+// A shared grant (ADR 0146 decision 4) asks for the URLs of every row with the same confidential
+// client. Each must be one: another client's row, a disabled or public one, another tenant's, or
+// a set without the path's own row refuses the whole request before the AS is called.
+func TestBridgeAcceptsOnlyTheClientsURLSet(t *testing.T) {
+	a, ctx := newMCPServerAPITest(t, true)
+	as := newASStub(t)
+	bridgeRow(t, a, ctx, as.srv.URL, "s3cret")
+	add := func(tenant, id, u, clientID, secret string, enabled bool) string {
+		t.Helper()
+		row := store.MCPServerRow{
+			ID: id, TenantID: tenant, Name: id, Transport: "http", URL: u, Targets: "session",
+			Enabled: enabled, Auth: mcpAuthOAuth, CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
+		}
+		b := mcpServerBody{Auth: mcpAuthOAuth, OAuthClient: &mcpOAuthClientBody{Issuer: as.srv.URL, ClientID: clientID, ClientSecret: secret}}
+		if err := a.resolveOAuthClient(ctx, tenant, b, nil, &row); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.store.CreateMCPServer(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	peer := add("tenant-a", "s2", "https://peer.example.com/mcp", "corp", "s3cret", true)
+	otherClient := add("tenant-a", "s3", "https://other-client.example.com/mcp", "corp-2", "s3cret", true)
+	disabled := add("tenant-a", "s4", "https://disabled.example.com/mcp", "corp", "s3cret", false)
+	public := add("tenant-a", "s5", "https://public.example.com/mcp", "corp", "", true)
+	otherTenant := add("tenant-b", "s6", "https://other-tenant.example.com/mcp", "corp", "s3cret", true)
+
+	set := codeForm()
+	set["resource"] = []string{bridgeResource, peer}
+	if w := bridgeCall(a, "token", "tenant-a", set); w.Code != 200 {
+		t.Fatalf("the client's URL set: %d %s", w.Code, w.Body)
+	}
+	if got := as.forms[0]["resource"]; len(got) != 2 || got[0] != bridgeResource || got[1] != peer {
+		t.Fatalf("AS resources = %v", got)
+	}
+
+	var many []string
+	for i := 0; i <= bridgeMaxResources; i++ {
+		many = append(many, bridgeResource)
+	}
+	for name, res := range map[string][]string{
+		"without the row's own URL": {peer},
+		"another client's row":      {bridgeResource, otherClient},
+		"a disabled row":            {bridgeResource, disabled},
+		"a public client's row":     {bridgeResource, public},
+		"another tenant's row":      {bridgeResource, otherTenant},
+		"an unknown URL":            {bridgeResource, "https://evil.example.com/mcp"},
+		"too many":                  many,
+	} {
+		f := codeForm()
+		f["resource"] = res
+		if w := bridgeCall(a, "token", "tenant-a", f); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"invalid_target"`) {
+			t.Errorf("%s: %d %s, want invalid_target", name, w.Code, w.Body)
+		}
+		r := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"rt"}, "resource": res}
+		if w := bridgeCall(a, "token", "tenant-a", r); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"invalid_target"`) {
+			t.Errorf("%s (refresh): %d %s, want invalid_target", name, w.Code, w.Body)
+		}
+	}
+	if len(as.forms) != 1 {
+		t.Fatalf("the AS was called %d time(s)", len(as.forms))
+	}
+}

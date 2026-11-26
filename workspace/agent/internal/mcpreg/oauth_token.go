@@ -26,6 +26,9 @@ var (
 	// ErrSignInAgain means the grant cannot be renewed (the refresh token was refused, or the
 	// access token expired and there is none). Only the member can fix it, in the Console.
 	ErrSignInAgain = errors.New("mcp oauth: sign in again")
+	// ErrMorePermission means the server has a grant that was not made for it as it is now: a
+	// shared grant the server joined after the sign-in, or one made for another URL.
+	ErrMorePermission = errors.New("mcp oauth: more permission needed")
 )
 
 // refreshSkew renews an access token this long before it expires, so a request that starts
@@ -40,25 +43,13 @@ const (
 	OAuthStateNeedsMoreOAu = "needs_more_permission"
 )
 
+// currentGrant returns a copy of the grant serverID uses (findGrantFor), nil when it has none.
 func currentGrant(serverID string) *secrets.MCPOAuthGrant {
-	data, err := secrets.Load()
+	data, _, d, err := grantLoad(serverID)
 	if err != nil {
 		return nil
 	}
-	return findGrant(data, serverID)
-}
-
-// findGrant returns a copy of the server's grant. Completion keeps one grant per server; the
-// newest wins should an older store hold more.
-func findGrant(data *secrets.Data, serverID string) *secrets.MCPOAuthGrant {
-	var best *secrets.MCPOAuthGrant
-	for i := range data.MCPOAuth {
-		g := data.MCPOAuth[i]
-		if g.ServerID == serverID && (best == nil || g.ConnectedAt > best.ConnectedAt) {
-			best = &g
-		}
-	}
-	return best
+	return findGrantFor(data, d)
 }
 
 var (
@@ -78,7 +69,8 @@ type rotation struct {
 }
 
 // serverLockKey is the lock that orders a sign-in's completion against a disconnect of the same
-// server. It is separate from the grant's key (server id + issuer), which refreshes hold.
+// server (signInLockKey; a shared grant's group has its own). It is separate from the grant's key
+// (grantKey), which refreshes hold.
 func serverLockKey(serverID string) string { return "server\n" + serverID }
 
 func lockFor(key string) *sync.Mutex {
@@ -111,11 +103,11 @@ func applyRotation(g *secrets.MCPOAuthGrant, r rotation) {
 // persistRotation writes a refresh result into the grant it came from. It only applies when
 // the stored refresh token is still the one the request spent: a grant replaced by a new
 // sign-in meanwhile is left alone.
-func persistRotation(serverID, issuer string, r rotation) error {
+func persistRotation(ref *secrets.MCPOAuthGrant, r rotation) error {
 	return updateSecrets(func(s *secrets.Data) error {
 		for i := range s.MCPOAuth {
 			g := &s.MCPOAuth[i]
-			if g.ServerID == serverID && g.Issuer == issuer && g.RefreshToken == r.oldRefresh {
+			if sameSignIn(g, ref) && g.RefreshToken == r.oldRefresh {
 				applyRotation(g, r)
 			}
 		}
@@ -168,31 +160,54 @@ func newSignInID() string {
 }
 
 // refreshGrantGen is refreshGrantRes with the generation of the grant the token belongs to, read
-// from the same snapshot.
+// from the same snapshot. The resource is the one the grant recorded for serverID: a grant that
+// does not serve serverID as it is now (grantResource) hands out no token for it.
 func refreshGrantGen(ctx context.Context, serverID, rejected string) (token, resource, gen string, err error) {
+	// The lock is per stored sign-in, read before it is held; a sign-in that replaced it meanwhile
+	// is retried under its own lock, so two renewals of one grant never run at once.
+	for attempt := 0; ; attempt++ {
+		token, resource, gen, err, retry := refreshGrantOnce(ctx, serverID, rejected)
+		if !retry || attempt == 2 {
+			return token, resource, gen, err
+		}
+	}
+}
+
+func refreshGrantOnce(ctx context.Context, serverID, rejected string) (token, resource, gen string, err error, retry bool) {
 	g0 := currentGrant(serverID)
 	if g0 == nil {
-		return "", "", "", ErrNotSignedIn
+		return "", "", "", ErrNotSignedIn, false
 	}
-	key := serverID + "\n" + g0.Issuer
+	key := grantKey(g0)
 	mu := lockFor(key)
 	mu.Lock()
 	defer mu.Unlock()
 
-	g := currentGrant(serverID)
+	data, reg, d, lerr := grantLoad(serverID)
+	if lerr != nil {
+		return "", "", "", ErrNotSignedIn, false
+	}
+	g := findGrantFor(data, d)
 	if g == nil {
-		return "", "", "", ErrNotSignedIn
+		return "", "", "", ErrNotSignedIn, false
+	}
+	if !sameSignIn(g, g0) {
+		return "", "", "", errors.New("mcp oauth: the sign-in changed while it was being renewed"), true
 	}
 	if g.SignInAgain {
-		return "", "", "", ErrSignInAgain
+		return "", "", "", ErrSignInAgain, false
+	}
+	res, serves := grantResource(g, d)
+	if !serves {
+		return "", "", "", ErrMorePermission, false
 	}
 	rotatedMu.Lock()
 	r, have := rotated[key]
 	rotatedMu.Unlock()
 	if have {
 		if g.RefreshToken == r.oldRefresh {
-			if err := persistRotation(g.ServerID, g.Issuer, r); err != nil {
-				return "", "", "", errors.New("mcp oauth: the renewed grant could not be saved yet")
+			if err := persistRotation(g, r); err != nil {
+				return "", "", "", errors.New("mcp oauth: the renewed grant could not be saved yet"), false
 			}
 			applyRotation(g, r)
 		}
@@ -201,45 +216,49 @@ func refreshGrantGen(ctx context.Context, serverID, rejected string) (token, res
 		rotatedMu.Unlock()
 	}
 	if fresh(g, oauthNow()) && (rejected == "" || g.AccessToken != rejected) {
-		return g.AccessToken, g.Resource, grantGeneration(g), nil
+		return g.AccessToken, res, grantGeneration(g), nil, false
 	}
 	if g.RefreshToken == "" {
-		markSignInAgain(g.ServerID, g.Issuer, "")
-		return "", "", "", ErrSignInAgain
+		markSignInAgain(g, "")
+		return "", "", "", ErrSignInAgain, false
 	}
+	// A shared grant renews for every member it still serves, so the token keeps working for all
+	// of them; a grant of its own asks for its one resource, as before.
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {g.RefreshToken},
-		"resource":      {g.Resource},
+		"resource":      servedResources(g, reg),
 	}
-	tok, terr := postToken(ctx, g.ServerID, g.Issuer, g.TokenEndpoint, form, g.ClientID, g.ClientSecret, g.TokenAuth)
+	// serverID, not the grant's own: the CP bridge resolves the client from the server named in
+	// its path, and the one the sign-in started from may have left the group since.
+	tok, terr := postToken(ctx, serverID, g.Issuer, g.TokenEndpoint, form, g.ClientID, g.ClientSecret, g.TokenAuth)
 	if terr != nil {
 		if terr.code == "invalid_grant" {
-			markSignInAgain(g.ServerID, g.Issuer, g.RefreshToken)
-			return "", "", "", ErrSignInAgain
+			markSignInAgain(g, g.RefreshToken)
+			return "", "", "", ErrSignInAgain, false
 		}
-		return "", "", "", errors.New("mcp oauth: the authorization server did not renew the grant (" + terr.code + ")")
+		return "", "", "", errors.New("mcp oauth: the authorization server did not renew the grant (" + terr.code + ")"), false
 	}
 	rot := rotation{oldRefresh: g.RefreshToken, tok: tok, at: oauthNow().Unix()}
 	// The rotated refresh token is written before the new access token is used: the old one
 	// may already be spent at the AS, so a crash after the response but before this write is
 	// the only window in which it can be lost.
-	if err := persistRotation(g.ServerID, g.Issuer, rot); err != nil {
+	if err := persistRotation(g, rot); err != nil {
 		rotatedMu.Lock()
 		rotated[key] = rot
 		rotatedMu.Unlock()
-		return "", "", "", errors.New("mcp oauth: the renewed grant could not be saved yet")
+		return "", "", "", errors.New("mcp oauth: the renewed grant could not be saved yet"), false
 	}
-	return tok.AccessToken, g.Resource, grantGeneration(g), nil
+	return tok.AccessToken, res, grantGeneration(g), nil, false
 }
 
 // markSignInAgain drops the tokens of a grant that cannot be renewed and flags it. spent, when
 // set, guards against a newer sign-in having replaced the grant while the request ran.
-func markSignInAgain(serverID, issuer, spent string) {
+func markSignInAgain(ref *secrets.MCPOAuthGrant, spent string) {
 	_ = updateSecrets(func(s *secrets.Data) error {
 		for i := range s.MCPOAuth {
 			g := &s.MCPOAuth[i]
-			if g.ServerID == serverID && g.Issuer == issuer && (spent == "" || g.RefreshToken == spent) {
+			if sameSignIn(g, ref) && (spent == "" || g.RefreshToken == spent) {
 				g.AccessToken, g.RefreshToken, g.ExpiresAt = "", "", 0
 				g.SignInAgain = true
 			}
@@ -254,14 +273,20 @@ func markSignInAgain(serverID, issuer, spent string) {
 }
 
 // NoteInsufficientScope records that the server refused the grant's token for lack of scope
-// (403 insufficient_scope), so the Console can offer a sign-in with the scope asked for.
+// (403 insufficient_scope), so the Console can offer a sign-in with the scope asked for. It goes
+// on the grant the server uses, which a shared grant's other members read too: they hold the same
+// token, which lacks it.
 func NoteInsufficientScope(serverID, scope string) error {
 	if !validScope(scope) {
 		return errors.New("invalid scope")
 	}
+	g := currentGrant(serverID)
+	if g == nil {
+		return nil
+	}
 	return updateSecrets(func(s *secrets.Data) error {
 		for i := range s.MCPOAuth {
-			if s.MCPOAuth[i].ServerID == serverID {
+			if sameSignIn(&s.MCPOAuth[i], g) {
 				s.MCPOAuth[i].StepUpScope = scope
 			}
 		}
@@ -288,22 +313,35 @@ type OAuthStatus struct {
 	// PreregisteredIssuers lists the authorization servers a client id was entered for (never
 	// the id or secret themselves).
 	PreregisteredIssuers []string `json:"preregisteredIssuers,omitempty"`
+	// SetChange says why the state is needs_more_permission when it is not a server's challenge:
+	// the grant was not made for this server as it is now (it joined a shared sign-in, moved to
+	// another URL, or was given scopes the sign-in did not ask for). The missing scopes, if any,
+	// are in StepUpScope.
+	SetChange bool `json:"setChange,omitempty"`
+	// SharedWith names the other servers one sign-in covers with this one (ADR 0146 decision 4):
+	// signing in or disconnecting here does it for them too.
+	SharedWith []string `json:"sharedWith,omitempty"`
 }
 
 // OAuthStatusOf reads the status of serverID.
 func OAuthStatusOf(serverID string) (OAuthStatus, error) {
-	data, err := secrets.Load()
+	data, reg, d, err := grantLoad(serverID)
 	if err != nil {
 		return OAuthStatus{}, err
 	}
-	st := OAuthStatus{ServerID: serverID, State: OAuthStateNotSignedIn}
-	if g := findGrant(data, serverID); g != nil {
+	st := OAuthStatus{ServerID: serverID, State: OAuthStateNotSignedIn, SharedWith: groupNames(reg, d)}
+	if g := findGrantFor(data, d); g != nil {
 		st.Issuer, st.Registration = g.Issuer, g.Registration
 		st.Scopes = splitScopes(g.Scope)
 		st.ExpiresAt, st.ConnectedAt, st.StepUpScope = g.ExpiresAt, g.ConnectedAt, g.StepUpScope
+		_, serves := grantResource(g, d)
+		missing := missingScopes(g, d)
 		switch {
 		case g.SignInAgain:
 			st.State = OAuthStateSignInAgain
+		case !serves || len(missing) > 0:
+			st.State, st.SetChange = OAuthStateNeedsMoreOAu, true
+			st.StepUpScope = unionScope(g.StepUpScope, strings.Join(missing, " "))
 		case g.StepUpScope != "":
 			st.State = OAuthStateNeedsMoreOAu
 		default:
@@ -364,48 +402,97 @@ type DisconnectResult struct {
 	Revoked bool `json:"revoked"`
 }
 
-// DisconnectOAuth revokes the grant at the authorization server when it offers revocation,
-// then deletes it locally whatever the answer.
+// DisconnectOAuth revokes the grants serverID uses at the authorization server when it offers
+// revocation, then deletes them locally whatever the answer. A shared grant ends for every server
+// of its group: they hold the same tokens.
 func DisconnectOAuth(ctx context.Context, serverID string) (DisconnectResult, error) {
-	// The server's lock first: a sign-in completing now either stores before this reads the
-	// grant (and is removed) or checks the definition after (and refuses).
+	_, _, d, err := grantLoad(serverID)
+	if err != nil {
+		return DisconnectResult{ServerID: serverID}, err
+	}
+	group := grantGroup(d)
+	return disconnectWhere(ctx, serverID, group, func(g *secrets.MCPOAuthGrant) bool { return grantApplies(g, d) })
+}
+
+// disconnectWhere revokes and deletes every stored grant match selects, under the sign-in locks of
+// serverID and of group, so a sign-in completing now (with its own grant or the group's) either
+// stores before this reads the grants (and is removed) or checks the definition after (and
+// refuses). Each grant's own lock is held as well, so no renewal of it is in flight. The order is
+// server, group, grants; nothing takes them the other way round.
+func disconnectWhere(ctx context.Context, serverID, group string, match func(*secrets.MCPOAuthGrant) bool) (DisconnectResult, error) {
 	smu := lockFor(serverLockKey(serverID))
 	smu.Lock()
 	defer smu.Unlock()
+	if group != "" {
+		gmu := lockFor(signInLockKey(serverID, group))
+		gmu.Lock()
+		defer gmu.Unlock()
+	}
 	res := DisconnectResult{ServerID: serverID}
-	dropPendingFor(serverID)
-	g := currentGrant(serverID)
-	if g == nil {
+	dropPendingFor(serverID, group)
+	pick := func() []secrets.MCPOAuthGrant {
+		data, err := secrets.Load()
+		if err != nil {
+			return nil
+		}
+		var out []secrets.MCPOAuthGrant
+		for _, g := range data.MCPOAuth {
+			if match(&g) {
+				out = append(out, g)
+			}
+		}
+		return out
+	}
+	found := pick()
+	if len(found) == 0 {
 		return res, nil
 	}
-	res.HadGrant, res.Issuer = true, g.Issuer
-	key := serverID + "\n" + g.Issuer
-	mu := lockFor(key) // not while a refresh of this grant is in flight
-	mu.Lock()
-	defer mu.Unlock()
-	if g = currentGrant(serverID); g == nil {
+	keys := make([]string, 0, len(found))
+	for i := range found {
+		keys = append(keys, grantKey(&found[i]))
+	}
+	sort.Strings(keys)
+	held := map[string]bool{}
+	for _, k := range keys {
+		if !held[k] {
+			held[k] = true
+			mu := lockFor(k) // not while a refresh of this grant is in flight
+			mu.Lock()
+			defer mu.Unlock()
+		}
+	}
+	// Read again under the grants' locks: a renewal that finished meanwhile rotated the tokens.
+	found = pick()
+	if len(found) == 0 {
 		return res, nil
 	}
-	if g.RevocationEndpoint != "" {
-		token, hint := g.RefreshToken, "refresh_token"
-		if token == "" {
-			token, hint = g.AccessToken, "access_token"
+	sort.SliceStable(found, func(i, j int) bool { return found[i].ConnectedAt > found[j].ConnectedAt })
+	res.HadGrant, res.Issuer, res.Revoked = true, found[0].Issuer, true
+	for i := range found {
+		g := &found[i]
+		revoked := false
+		if g.RevocationEndpoint != "" {
+			token, hint := g.RefreshToken, "refresh_token"
+			if token == "" {
+				token, hint = g.AccessToken, "access_token"
+			}
+			if token != "" {
+				rctx, cancel := context.WithTimeout(ctx, oauthHTTPTimeout)
+				revoked = revokeTokenVia(rctx, *g, serverID, token, hint)
+				cancel()
+			}
 		}
-		if token != "" {
-			rctx, cancel := context.WithTimeout(ctx, oauthHTTPTimeout)
-			res.Revoked = revokeToken(rctx, *g, token, hint)
-			cancel()
-		}
+		res.Revoked = res.Revoked && revoked
+		rotatedMu.Lock()
+		delete(rotated, grantKey(g))
+		rotatedMu.Unlock()
 	}
-	rotatedMu.Lock()
-	delete(rotated, key)
-	rotatedMu.Unlock()
 	// A sign-in still open in a browser tab must not bring the grant back after this.
-	dropPendingFor(serverID)
+	dropPendingFor(serverID, group)
 	err := updateSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuth[:0]
 		for _, o := range s.MCPOAuth {
-			if o.ServerID != serverID {
+			if !match(&o) {
 				kept = append(kept, o)
 			}
 		}
@@ -427,22 +514,27 @@ func revokeUnstored(ctx context.Context, g secrets.MCPOAuthGrant) {
 	}
 	rctx, cancel := context.WithTimeout(ctx, oauthHTTPTimeout)
 	defer cancel()
-	revokeToken(rctx, g, token, hint)
+	revokeTokenVia(rctx, g, g.ServerID, token, hint)
 }
 
-func dropPendingFor(serverID string) {
+// dropPendingFor ends the sign-ins in flight for serverID, and for every server of group when it
+// is not empty.
+func dropPendingFor(serverID, group string) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
 	for k, p := range pendingAuths {
-		if p.serverID == serverID {
+		if p.serverID == serverID || (group != "" && p.group == group) {
 			delete(pendingAuths, k)
 		}
 	}
 }
 
-func revokeToken(ctx context.Context, g secrets.MCPOAuthGrant, token, hint string) bool {
+// revokeTokenVia revokes token. via is the server a confidential client's request names to the CP,
+// which resolves the client from it: a definition that still has that client, which the one the
+// grant was started from may no longer be.
+func revokeTokenVia(ctx context.Context, g secrets.MCPOAuthGrant, via, token, hint string) bool {
 	if g.TokenAuth == tokenAuthCP {
-		return revokeTokenCP(ctx, g.ServerID, g.Issuer, g.ClientID, token, hint)
+		return revokeTokenCP(ctx, via, g.Issuer, g.ClientID, token, hint)
 	}
 	if !endpointUsable(g.RevocationEndpoint) {
 		return false

@@ -222,6 +222,31 @@ describe("row states", () => {
     expect(tab.location.href).toContain("https://as.example.com/authorize");
   });
 
+  it("needs more permission after a set change says so, and that the server may be held back", async () => {
+    setStatus({ state: "needs_more_permission", setChange: true, stepUpScope: "s:new", scopes: ["s:a"], sharedWith: ["Drive", "Docs"] });
+    replies["POST api/mcp-servers/mcp-1/oauth/start"] = () => ({
+      authorize_url: "https://as.example.com/authorize?x=1", issuer: "https://as.example.com", registration: "tenant",
+    });
+    await mount(row());
+    expect(host!.querySelector('[data-testid="mcp-oauth-set-change"]')!.textContent).toContain("The administrator changed what this sign-in covers");
+    expect(text()).not.toContain("The server asked for a permission");
+    expect(host!.querySelector('[data-testid="mcp-oauth-relay-note"]')!.textContent).toContain("held back");
+    expect(host!.querySelector('[data-testid="mcp-oauth-shared"]')!.textContent).toContain("shares one sign-in with Drive, Docs");
+    await click(button("Approve the extra permission"));
+    expect(calls.find((c) => c.path.endsWith("/oauth/start"))!.body.scope).toBe("s:a s:new");
+  });
+
+  it("names the servers a connected shared sign-in covers, in Japanese too", async () => {
+    setStatus({ state: "connected", sharedWith: ["Drive"] });
+    await mount(row(), "ja");
+    expect(host!.querySelector('[data-testid="mcp-oauth-shared"]')!.textContent).toContain("Drive とサインインを共有");
+    act(() => root!.unmount());
+    host!.remove();
+    setStatus({ state: "connected" });
+    await mount(row());
+    expect(host!.querySelector('[data-testid="mcp-oauth-shared"]')).toBeNull();
+  });
+
   it("needs more permission has one sign-in button: the Agent adds the challenged scope to a plain start too", async () => {
     setStatus({ state: "needs_more_permission", stepUpScope: "mcp:write", scopes: ["mcp:read"] });
     await mount(row());

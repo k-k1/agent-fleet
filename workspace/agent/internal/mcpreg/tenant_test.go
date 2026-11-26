@@ -311,8 +311,8 @@ func TestFetchTenantNamesTheSignInsItEnded(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]bool{}
-	for _, id := range res.EndedOAuth {
-		got[id] = true
+	for _, e := range res.EndedOAuth {
+		got[e.ID] = true
 	}
 	if !reflect.DeepEqual(got, map[string]bool{"t-gone": true, "t-moved": true, "t-plain": true}) {
 		t.Fatalf("ended %v, want t-gone, t-moved and t-plain", res.EndedOAuth)
