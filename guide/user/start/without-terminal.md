@@ -38,14 +38,6 @@ Asking the AI questions, translating, reading documents and following developmen
 - The "Develop in a repository" steps (connecting a Git service, launching sessions) can be skipped if you do not use them
 - You can stop the workspace when you are done. Press **Start** next time to bring it back ([Stop the workspace at the end of the day](end-of-day.md))
 
-## When a shared session is waiting for a response
-
-The session owner, the member who shared the session, answers the agent's questions and grants permission for actions.
-
-If you have **"View only"** access, tell the owner directly if you notice something.
-With **"Can propose"** access, use **"Propose to owner"** at the bottom of the view to suggest an answer or send a follow-up.
-The agent receives your proposal once the owner approves it.
-
 ## When it goes wrong
 
 The first things to try, and the frequent questions, are in [Read the frequently asked questions](../troubleshooting/faq.md).
