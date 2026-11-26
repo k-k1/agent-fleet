@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -683,5 +684,137 @@ func TestDeleteSpaceWithExpectSettlesOnlyWhatWasShown(t *testing.T) {
 				t.Fatal("without a list, a session spelt inside the space was left listed")
 			}
 		})
+	}
+}
+
+// A link classified as a worktree's at the entry is a worktree for the whole delete: when the same
+// question cannot be answered again inside the gate (git failing), the delete is refused, rather
+// than removing the worktree as a plain folder without its status or tombstone.
+func TestDeletingALinkToAWorktreeRefusesWhenGitStopsAnswering(t *testing.T) {
+	e := tombstoneSetup(t)
+	alias := filepath.Join(e.home, "repos", "wtalias")
+	if err := os.Symlink(e.wt, alias); err != nil {
+		t.Fatal(err)
+	}
+	tmuxSays(t, tmuxNoServer)
+	path := os.Getenv("PATH")
+	empty := t.TempDir()
+	restore := gitx.SetDeleteStepHook(func(step, dir string) {
+		if step == "pre-gate" {
+			_ = os.Setenv("PATH", empty)
+		}
+	})
+	defer restore()
+	code := httpStatus(t, e.srv, "DELETE", "/repos/wtalias?force=true", nil)
+	_ = os.Setenv("PATH", path)
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("delete with git gone = %d, want 503", code)
+	}
+	if got, _ := os.ReadFile(filepath.Join(e.wt, "f")); string(got) != "edited" {
+		t.Fatalf("the uncommitted edit is gone: %q", got)
+	}
+	if m, ok := session.ReadMeta("aiaaaa1"); !ok || m.Archived {
+		t.Fatalf("the worktree's session was settled: %+v %v", m, ok)
+	}
+}
+
+// With the repositories folder itself behind a link, a delete through an alias records the
+// worktree under the repositories folder as a restore looks it up, and the restore brings the
+// worktree and its AI session back.
+func TestDeletingALinkToAWorktreeUnderALinkedReposRestores(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude"))
+	if err := os.MkdirAll(filepath.Join(home, "repo-disk"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "repo-disk"), filepath.Join(home, "repos")); err != nil {
+		t.Fatal(err)
+	}
+	mux := trashMux()
+	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+	wt, err := gitx.EnsureWorktree(parent, "main", "wt-x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "committed.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, wt, "add", "-A")
+	gitAt(t, wt, "commit", "-q", "-m", "x")
+	if err := os.Symlink(wt, filepath.Join(home, "repos", "wtalias")); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "ailnk01", Dir: wt, Kind: session.KindClaude})
+	tmuxSays(t, tmuxNoServer)
+
+	do(t, srv, "DELETE", "/repos/wtalias?force=true", nil, http.StatusOK, nil)
+	arcs := worktreeArchives(t, srv)
+	if len(arcs) != 1 || arcs[0].Worktree == nil {
+		t.Fatalf("archives = %+v", arcs)
+	}
+	if want := filepath.Join(home, "repos", filepath.Base(wt)); arcs[0].Worktree.Path != want {
+		t.Fatalf("tombstone path = %q, want %q", arcs[0].Worktree.Path, want)
+	}
+	do(t, srv, "POST", "/cleanup/archives/"+arcs[0].ID+"/restore", nil, http.StatusOK, nil)
+	if !gitx.IsGitRepo(wt) {
+		t.Fatal("the worktree did not come back")
+	}
+	if m, _ := session.ReadMeta("ailnk01"); m.Archived {
+		t.Fatal("the worktree's AI session is still on the shelf")
+	}
+}
+
+// Without force the status is read too, on the worktree the link named when the delete began: a
+// link re-pointed to a dirty worktree while the status runs neither refuses nor removes that one.
+func TestDeletingALinkToAWorktreeReadsTheStatusOfTheFirstTarget(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	e := spaceDeleteSetup(t)
+	parent := filepath.Join(e.home, "repos", "app")
+	gitInit(t, parent)
+	clean, err := gitx.EnsureWorktree(parent, "main", "wt-a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirty, err := gitx.EnsureWorktree(parent, "main", "wt-b", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirty, "work.txt"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(e.home, "repos", "wtalias")
+	if err := os.Symlink(clean, alias); err != nil {
+		t.Fatal(err)
+	}
+	tmuxSays(t, tmuxNoServer)
+	ran := false
+	restore := gitx.SetDeleteStepHook(func(step, dir string) {
+		if step == "status" {
+			ran = true
+			_ = os.Remove(alias)
+			_ = os.Symlink(dirty, alias)
+		}
+	})
+	defer restore()
+	do(t, e.srv, "DELETE", "/repos/wtalias", nil, http.StatusOK, nil)
+	if !ran {
+		t.Fatal("the status step did not run")
+	}
+	if gitx.IsGitRepo(clean) {
+		t.Fatal("the clean worktree the link named is still there")
+	}
+	if b, _ := os.ReadFile(filepath.Join(dirty, "work.txt")); string(b) != "mine" {
+		t.Fatal("the dirty worktree lost its work")
 	}
 }

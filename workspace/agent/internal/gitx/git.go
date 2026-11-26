@@ -2201,26 +2201,32 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	tm := newDeleteTimer(dir)
 	defer tm.log()
 
-	fireDeleteHook("pre-gate", dir)
 	// An entry that is itself a link. One to a linked worktree deletes the worktree it points at
-	// (`git worktree remove` would follow it anyway): its real path is taken here, once, and the
-	// whole delete runs on it (guards, mark, status, tombstone, sessions, the remove), so a link
-	// re-pointed meanwhile cannot send any step elsewhere. Any other link is removed as the link
-	// alone, and only what is spelt through it is settled (linkOnly).
-	linkOnly := false
+	// (`git worktree remove` would follow it anyway): the worktree's own entry is taken here, once,
+	// and the whole delete runs on it (guards, mark, status, tombstone, sessions, the remove), so a
+	// link re-pointed meanwhile cannot send any step elsewhere. Any other link is removed as the
+	// link alone, and only what is spelt through it is settled (linkOnly).
+	linkOnly, ofWorktree := false, false
 	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		real, err := filepath.EvalSymlinks(dir)
 		switch {
-		case err == nil && IsLinkedWorktree(real):
-			dir = real
-		case err == nil:
-			linkOnly = true
-		default:
+		case err != nil:
 			httpx.WriteErr(w, http.StatusConflict, "delete_failed",
 				"this entry is a link that does not resolve, so it was left as it is: "+err.Error())
 			return
+		case IsLinkedWorktree(real):
+			entry, ok := reposEntryOf(real)
+			if !ok {
+				httpx.WriteErr(w, http.StatusConflict, "delete_failed",
+					"this entry is a link to a worktree that is not itself an entry of the repositories folder, so it could not be restored from the trash; it was left as it is")
+				return
+			}
+			dir, ofWorktree = entry, true
+		default:
+			linkOnly = true
 		}
 	}
+	fireDeleteHook("pre-gate", dir)
 	var (
 		end         func()
 		parent      string
@@ -2231,6 +2237,13 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 			tm.step("guards", func() {
 				svn = !IsGitRepo(dir) && isSvnRepo(dir)
 				linked = !svn && IsLinkedWorktree(dir)
+				if ofWorktree && !linked {
+					// Classified as a worktree a moment ago and not now (git failing, say): taken
+					// for a plain folder it would be removed without its status or tombstone.
+					httpx.WriteErr(w, http.StatusServiceUnavailable, "delete_failed",
+						"could not tell again what this worktree is, so it was left as it is; try again in a moment")
+					return
+				}
 				if linked {
 					parent = WorktreeParent(dir)
 				}
@@ -2243,6 +2256,27 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	defer end()
 	deleteRepoMarked(w, r, dir, parent, linked, svn, linkOnly, tm)
+}
+
+// reposEntryOf is the entry of the repositories folder that real (a resolved path) is, spelt
+// under ReposRoot as a restore looks it up (ResolveRepoDir), and false when real is not directly
+// in the repositories folder, or that entry is a link or names another folder.
+func reposEntryOf(real string) (string, bool) {
+	root, err := filepath.EvalSymlinks(ReposRoot())
+	if err != nil || filepath.Dir(real) != root {
+		return "", false
+	}
+	entry, ok := ResolveRepoDir(filepath.Base(real))
+	if !ok {
+		return "", false
+	}
+	if fi, err := os.Lstat(entry); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+	if again, err := filepath.EvalSymlinks(entry); err != nil || again != real {
+		return "", false
+	}
+	return entry, true
 }
 
 // decideDeleteRepo is the part of a delete that runs inside the gate. It returns the function
