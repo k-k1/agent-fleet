@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
@@ -111,7 +112,11 @@ func (c *createRun) checkRoute() bool {
 	}
 	// The credential policy, once the selection is known valid (ADR 0138 D11, D12). The launch it
 	// judged is the one recorded (armMeta).
-	ref, judged := newLaunchPolicyRefusal(c.req.Kind, c.req.Route, session.Meta{Kind: c.kind, Model: c.req.Model, Driver: c.driver})
+	ref, judged, deferred := judgeNewLaunch(c.req.Kind, c.req.Route, session.Meta{Kind: c.kind, Model: c.req.Model, Driver: c.driver})
+	if deferred {
+		// Only the working directory is missing: judgeDeferredDefault decides once it exists.
+		c.deferredDefault, ref = true, nil
+	}
 	ref = c.fromDefaultRefusal(c.checkDefaultFixed(ref, judged))
 	if ref != nil {
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
@@ -134,6 +139,27 @@ func (c *createRun) checkRoute() bool {
 			}
 		}
 	}
+	return true
+}
+
+// judgeDeferredDefault is the credential policy's judgement of a create checkRoute deferred for
+// want of its working directory (judgeNewLaunch), run once resolveWorkingCopy has made it and
+// before anything else is written. A refusal removes the worktree this create just made, so a
+// refused create leaves nothing behind.
+func (c *createRun) judgeDeferredDefault() bool {
+	if !c.deferredDefault {
+		return true
+	}
+	ref, judged := deferredDefaultRefusal(c.req.Kind, session.Meta{Kind: c.kind, Dir: c.req.Dir, Subdir: c.subdir, Model: c.req.Model, Driver: c.driver})
+	if ref != nil {
+		if c.createdWorktree != "" {
+			gitx.RemoveFreshWorktree(c.createdParent, c.createdWorktree, c.createdBranch)
+			c.createdWorktree = ""
+		}
+		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+		return false
+	}
+	c.judgedLaunch = judged
 	return true
 }
 

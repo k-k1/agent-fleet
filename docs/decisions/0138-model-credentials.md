@@ -281,9 +281,15 @@ not see muse or cursor at all.
     available.
   - What a policy judges a launch on (`ResolveLaunch`) therefore stays `{}`: under a restriction a create follows
     D11b's order (the member's default route, else `route_required`, which tells the member to name a model or set a
-    default route), and a resume of a session with no record is judged as having none (one with a record is judged on it, below). A create is judged before its working
-    directory is known, and a resume must not wait on a probe. Making a restricted create reach the record
-    below is #5035.
+    default route), and a resume of a session with no record is judged as having none (one with a record is judged on it, below). A resume must not wait on a probe.
+  - A restricted Managed create, fork or recreate that names no model, under a policy that allows Zen, is judged
+    on the record below once its directory is known (#5035): `judgeNewLaunch` defers the refusal, and
+    `deferredDefaultRefusal` asks the serve about `Meta.CWD` and judges the route it proves (recorded as that launch).
+    A create makes its worktree first and removes it again when refused; a fork or recreate judges before anything
+    is stopped or archived, a move's target before its source closes. Every other case (several providers, a key, an
+    unanswered serve, a Terminal, a policy without Zen) stays `route_required`. A start of the session so created is
+    judged on its record without a probe (`agents.DefaultLaunchHolder`: no stored key, the cached account and billing
+    views still resolve the free route), which is also what keeps a Managed input revalidation probe-free.
   - The launch RECORD (`agents.DefaultLaunchResolver`, used where the launch is recorded) asks the running
     `opencode serve` (never starting one) about the directory the session runs in (a session the shared serve runs, never a Terminal, which runs its own opencode in a pane the serve says nothing
     about; `Meta.CWD`, symlinks resolved;
@@ -304,7 +310,7 @@ not see muse or cursor at all.
     start, and a catalog reloaded inside the same serve process (#5037).
   - Everything else records `{}`: several providers, a key or another endpoint on the opencode provider, a paid, unpriced
     or missing default, no running serve, an answer for another directory, and the assistant chat (it has no directory).
-  - Follow-ups: #4228 (per-call bindings for opencode's session rows), #5035 (the restricted create) and #5037.
+  - Follow-ups: #4228 (per-call bindings for opencode's session rows) and #5037.
 - **A kind with more than one login mode resolves per mode, at execution.** muse resolves to `muse-login` or
   `meta-api` from its `mechanism` (`muse/auth.go:96-130`, with `META_API_KEY` in the Agent's environment counting as
   `meta-api`, since it overrides the login); codex resolves to `chatgpt-subscription` or `openai-api` from

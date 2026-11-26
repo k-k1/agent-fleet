@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
@@ -58,39 +59,90 @@ func restrictingPolicy() (routepolicy.Policy, bool) {
 // cannot tell, must name its route. The first allowed route is never picked on the member's
 // behalf. The returned launch is the one judged, for the caller to record, nil when nothing was
 // resolved here.
+//
+// A Managed launch that names no model on a kind that can prove its default from the working
+// directory (agents.DefaultLaunchResolver) is refused here as well, since no directory is known
+// to a caller that judges early. A caller that can wait for the directory asks
+// judgeNewLaunch instead and finishes with deferredDefaultRefusal.
 func newLaunchPolicyRefusal(kind string, sel *routes.Selection, m session.Meta) (*agents.RouteRefusal, *routes.Launch) {
+	ref, l, _ := judgeNewLaunch(kind, sel, m)
+	return ref, l
+}
+
+// judgeNewLaunch is newLaunchPolicyRefusal that also says when the refusal it returns is only for
+// want of the working directory (deferred): the launch is a Managed one on a kind that proves its
+// default model from the directory, under a policy that allows the route such a proof can give.
+// The caller then judges again with deferredDefaultRefusal once the directory is known, and the
+// refusal returned here is the one that judgement falls back to.
+func judgeNewLaunch(kind string, sel *routes.Selection, m session.Meta) (ref *agents.RouteRefusal, launch *routes.Launch, deferred bool) {
 	if !modelKind(kind) {
-		return nil, nil
+		return nil, nil, false
 	}
 	if ref := policyGate(); ref != nil {
-		return ref, nil
+		return ref, nil, false
 	}
 	p, restricted := restrictingPolicy()
 	if !restricted {
-		return nil, nil
+		return nil, nil, false
 	}
 	if sel != nil {
 		if r := sel.Normalize().Route; !p.Allows(r) {
-			return forbiddenRefusal(kind, r, p), nil
+			return forbiddenRefusal(kind, r, p), nil, false
 		}
-		return nil, nil
+		return nil, nil, false
 	}
 	a, _ := RegisteredAgent(NormalizeKind(kind))
 	_, oneRoute := a.(agents.OneRouteResolver)
 	_, perCall := a.(agents.PerCallRouter)
 	cr, resolves := a.(agents.CredentialResolver)
 	if !resolves || !oneRoute && !perCall {
-		return requiredRefusal(kind, p, ""), nil
+		return requiredRefusal(kind, p, ""), nil, false
 	}
 	l, _ := withinBudget(kind+" ResolveLaunch", func() routes.Launch { return cr.ResolveLaunch(m) })
 	switch {
 	case l.Route == "" && perCall && !oneRoute:
 		if r := forbiddenModelRoute(a, m.Model, p); r != "" {
-			return forbiddenRefusal(kind, r, p), nil
+			return forbiddenRefusal(kind, r, p), nil, false
 		}
-		return requiredRefusal(kind, p, "the route of its model cannot be told"), nil
+		return requiredRefusal(kind, p, "the route of its model cannot be told"), nil, defaultDeferrable(a, m, p)
 	case l.Route == "":
-		return requiredRefusal(kind, p, "its current login cannot be told"), nil
+		return requiredRefusal(kind, p, "its current login cannot be told"), nil, false
+	case !p.Allows(l.Route):
+		return forbiddenRefusal(kind, l.Route, p), nil, false
+	}
+	return nil, &l, false
+}
+
+// defaultDeferrable reports that m is a launch whose route only its working directory can tell
+// (agents.DefaultLaunchResolver) and that the policy allows the one route such a proof gives
+// (opencode.ai's keyless free models, filed under Zen). Only a Managed session qualifies: a
+// Terminal runs its own opencode, which the shared serve says nothing about.
+func defaultDeferrable(a agents.Agent, m session.Meta, p routepolicy.Policy) bool {
+	_, ok := a.(agents.DefaultLaunchResolver)
+	return ok && strings.TrimSpace(m.Model) == "" && m.DriverKind() == session.DriverManaged && p.Allows(routes.RouteOpencodeZen)
+}
+
+// deferredDefaultRefusal finishes a launch judgeNewLaunch deferred, once m names its working
+// directory (Dir, Subdir): the running serve is asked about it, and only the route it proves is
+// judged. Anything else (several providers, a stored key, an unanswered serve, a route the policy
+// forbids) is the route_required it was deferred from. The probe blocks for up to the launch
+// budget, so it never runs under a lock, from a resume, or from a Managed input revalidation. The
+// returned launch is the one judged, for the caller to record.
+func deferredDefaultRefusal(kind string, m session.Meta) (*agents.RouteRefusal, *routes.Launch) {
+	p, restricted := restrictingPolicy()
+	if !restricted {
+		return nil, nil
+	}
+	a, _ := RegisteredAgent(NormalizeKind(kind))
+	dr, ok := a.(agents.DefaultLaunchResolver)
+	if !ok || !defaultDeferrable(a, m, p) {
+		return requiredRefusal(kind, p, ""), nil
+	}
+	start := time.Now()
+	l, _ := withinBudget(kind+" ResolveDefaultLaunch", func() routes.Launch { return dr.ResolveDefaultLaunch(m, start) })
+	switch {
+	case l.Route == "":
+		return requiredRefusal(kind, p, "the route of its default model is not proven for this folder"), nil
 	case !p.Allows(l.Route):
 		return forbiddenRefusal(kind, l.Route, p), nil
 	}
@@ -177,6 +229,10 @@ func storedLaunchPolicyRefusal(m session.Meta) *agents.RouteRefusal {
 	_, oneRoute := a.(agents.OneRouteResolver)
 	if perCall && !oneRoute {
 		switch {
+		case cur.Route == "" && storedDefaultHolds(a, m, *rec):
+			// A session that named no model and was launched on a route its folder proved (the
+			// record deferredDefaultRefusal gave it): nothing but af's own credentials can have
+			// changed it since, and those are read without a probe.
 		case cur.Route == "":
 			return requiredRefusal(m.Kind, p, "the route of its current model cannot be told")
 		case !p.Allows(cur.Route):
@@ -192,6 +248,13 @@ func storedLaunchPolicyRefusal(m session.Meta) *agents.RouteRefusal {
 		return replacementRefusal(m.Kind, rec.Route)
 	}
 	return nil
+}
+
+// storedDefaultHolds is agents.DefaultLaunchHolder's answer for a stored session with no model
+// named, false for a kind without one.
+func storedDefaultHolds(a agents.Agent, m session.Meta, rec routes.Launch) bool {
+	h, ok := a.(agents.DefaultLaunchHolder)
+	return ok && strings.TrimSpace(m.Model) == "" && h.HoldsDefaultLaunch(m, rec)
 }
 
 // sameDestination reports whether two catalogued routes send prompts to the same destination. An

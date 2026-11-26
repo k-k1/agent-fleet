@@ -486,3 +486,46 @@ func TestDefaultModelLaunchReadsTheStoreOnce(t *testing.T) {
 		t.Fatal("the resolver waited on a second read of the credential store")
 	}
 }
+
+// HoldsDefaultLaunch confirms the free record of a Managed session that names no model from af's
+// own credentials alone, and nothing else: another record, a model, a Terminal, a stored key or a
+// signed-in account each make it false.
+func TestHoldsDefaultLaunch(t *testing.T) {
+	freeView(t)
+	free := routes.Launch{Route: routes.RouteOpencodeZen, Binding: FreeBinding}
+	managed := session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged}
+	a := agentImpl{}
+	if !a.HoldsDefaultLaunch(managed, free) {
+		t.Fatal("the free record of a keyless Managed session does not hold")
+	}
+	named := managed
+	named.Model = "opencode/big-pickle"
+	terminal := managed
+	terminal.Driver = ""
+	for name, tc := range map[string]struct {
+		m   session.Meta
+		rec routes.Launch
+	}{
+		"another record": {managed, routes.Launch{Route: routes.RouteOpencodeZen, Binding: "opencode-zen@k1"}},
+		"a named model":  {named, free},
+		"a Terminal":     {terminal, free},
+	} {
+		if a.HoldsDefaultLaunch(tc.m, tc.rec) {
+			t.Errorf("%s: held", name)
+		}
+	}
+	old := credentialView
+	t.Cleanup(func() { credentialView = old })
+	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+		return map[string]string{opencodeKeyEnv: "k"}, UsageZen, oauthState{known: true}, nil
+	}
+	if a.HoldsDefaultLaunch(managed, free) {
+		t.Error("held with a stored key")
+	}
+	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+		return nil, UsageZen, oauthState{known: true, connected: true, id: "acct"}, nil
+	}
+	if a.HoldsDefaultLaunch(managed, free) {
+		t.Error("held with a signed-in account")
+	}
+}

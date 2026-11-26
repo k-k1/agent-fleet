@@ -38,6 +38,9 @@ type createRun struct {
 	// createdWorktree is the worktree this create ran `git worktree add` for ("" when it reused
 	// one or made none); identify records the session's name on it once the name exists.
 	createdWorktree string
+	// createdParent and createdBranch are the parent the worktree hangs off and the branch the
+	// create made for it ("" when it checked out an existing one).
+	createdParent, createdBranch string
 	// idemKey is the idempotency key this create owns ("" when nothing is de-duplicated), and
 	// committed says its answer has been recorded under it.
 	idemKey   string
@@ -52,6 +55,9 @@ type createRun struct {
 	// judgedLaunch is the launch the credential policy resolved and judged (checkRoute), nil when
 	// it resolved none; armMeta records it rather than resolving again.
 	judgedLaunch *routes.Launch
+	// deferredDefault is set by checkRoute when the policy's judgement waits for the working
+	// directory (judgeDeferredDefault).
+	deferredDefault bool
 	// fromDefault: req.Route is the member's default route (applyDefaultRoute), not one the
 	// request named, so a refusal of it is route_required.
 	fromDefault bool
@@ -464,9 +470,9 @@ func (c *createRun) resolveLiveCatalogModel() bool {
 // ensureWorktree is gitx.EnsureWorktreeNew that remembers a worktree this create made.
 func (c *createRun) ensureWorktree(parent, base, newBranch, folderSeg string) (string, error) {
 	dir, created, err := gitx.EnsureWorktreeNew(parent, base, newBranch, folderSeg)
-	c.createdWorktree = ""
+	c.createdWorktree, c.createdParent, c.createdBranch = "", "", ""
 	if err == nil && created {
-		c.createdWorktree = dir
+		c.createdWorktree, c.createdParent, c.createdBranch = dir, parent, newBranch
 	}
 	return dir, err
 }

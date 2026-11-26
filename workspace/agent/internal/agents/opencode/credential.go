@@ -165,6 +165,24 @@ func (agentImpl) ResolveDefaultLaunch(m session.Meta, start time.Time) routes.La
 	return resolveDefaultModelLaunch(m, start)
 }
 
+// HoldsDefaultLaunch implements agents.DefaultLaunchHolder: the free-model record of a Managed
+// session that names no model still holds when af holds no stored key and the cached account and
+// billing views still resolve opencode.ai's keyless provider to the free route. The serve is not
+// asked again: what it proved was the directory's providers, which the record already carries.
+func (agentImpl) HoldsDefaultLaunch(m session.Meta, rec routes.Launch) bool {
+	free := routes.Launch{Route: routes.RouteOpencodeZen, Binding: FreeBinding}
+	if rec != free || strings.TrimSpace(m.Model) != "" || m.DriverKind() != session.DriverManaged {
+		return false
+	}
+	keys, pref, acct, _ := credentialView()
+	for _, v := range keys {
+		if v != "" {
+			return false
+		}
+	}
+	return resolveModel("opencode/free", keys, pref, acct, nil, nil) == free
+}
+
 // ModelLaunch is ResolveLaunch for an opencode run outside any session (the assistant chat and the
 // one-shots), on model.
 func ModelLaunch(model string) routes.Launch {

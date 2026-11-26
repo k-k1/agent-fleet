@@ -6,9 +6,9 @@ package opencode
 // opencode's own priority depend on the providers the project and its credential store make
 // available. The running `opencode serve` knows those providers for a directory, so it is asked.
 //
-// This is the RECORD only (agents.DefaultLaunchResolver). ResolveLaunch, which a policy judges a
-// launch on, stays unresolved for such a launch: a create is judged before its working directory
-// is known, and a resume must not wait on a probe.
+// This answers only where the working directory is known (agents.DefaultLaunchResolver): the
+// record, and a restricted create's judgement once its directory exists. ResolveLaunch stays
+// unresolved for such a launch, since a resume must not wait on a probe.
 //
 // Measured (opencode 2.4.0, isolated HOME, a shared serve, a loaded host):
 //   - GET /api/provider, /api/model/default and /api/plugin take `location[directory]` and answer

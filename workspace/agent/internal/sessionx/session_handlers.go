@@ -861,7 +861,7 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	// The failure net for a reserved slot: every path that ends without a meta. A no-op for a
 	// create that is not a spawn.
 	defer c.slot.release()
-	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.checkRoute() || !c.resolveWorkingCopy() || !c.identify() || !c.composeQueue() {
+	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.checkRoute() || !c.resolveWorkingCopy() || !c.judgeDeferredDefault() || !c.identify() || !c.composeQueue() {
 		return
 	}
 	meta, ok := c.armMeta()
@@ -1142,7 +1142,12 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A fork is a new launch, judged by the credential policy like a create (ADR 0138 D12).
-	policyRef, judged := newLaunchPolicyRefusal(src.Kind, src.Route, src)
+	// A fork has its working folder already, so a default model the folder proves is judged here,
+	// before anything is created.
+	policyRef, judged, deferred := judgeNewLaunch(src.Kind, src.Route, src)
+	if deferred {
+		policyRef, judged = deferredDefaultRefusal(src.Kind, src)
+	}
 	if policyRef != nil {
 		httpx.WriteErr(w, policyRef.Status, policyRef.Code, policyRef.Message)
 		return
@@ -1674,7 +1679,12 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// The new slot is a new launch: the credential policy judges it like a create, before the old
 	// identity is archived and killed.
-	policyRef, judged := newLaunchPolicyRefusal(m.Kind, m.Route, m)
+	// The slot's folder is known, so a default model it proves is judged here too: a probe that
+	// times out must refuse before the old pane is stopped, never after.
+	policyRef, judged, deferred := judgeNewLaunch(m.Kind, m.Route, m)
+	if deferred {
+		policyRef, judged = deferredDefaultRefusal(m.Kind, m)
+	}
 	if policyRef != nil {
 		httpx.WriteErr(w, policyRef.Status, policyRef.Code, policyRef.Message)
 		return

@@ -330,7 +330,13 @@ func checkMoveRequest(ctx context.Context, src session.Meta, req moveRequest) er
 	}
 	// The target is a new launch; its create judges it again, but a refused one must not cost
 	// the source either.
-	if ref, _ := newLaunchPolicyRefusal(req.Kind, req.Route, session.Meta{Kind: req.Kind, Model: req.Model, Driver: req.Driver}); ref != nil {
+	// The target runs in the source's folder, so a default model that folder proves is judged now.
+	tm := session.Meta{Kind: req.Kind, Model: req.Model, Driver: req.Driver, Dir: src.Dir, Subdir: src.Subdir}
+	ref, _, deferred := judgeNewLaunch(req.Kind, req.Route, tm)
+	if deferred {
+		ref, _ = deferredDefaultRefusal(req.Kind, tm)
+	}
+	if ref != nil {
 		return &moveError{Status: ref.Status, Code: ref.Code, Message: ref.Message}
 	}
 	return nil
