@@ -119,7 +119,8 @@ FM_KEYS = ("audience", "source_of_truth")
 # Optional: the site's search index weights this value (docs/CONVENTIONS.md §3). A line
 # FM_KEY_RE cannot read (unquoted) is dropped from the index without a sound, so it is an error.
 FM_SEARCH_KEY = "search_keywords"
-FM_SEARCH_LINE_RE = re.compile(r"^search_keywords:", re.M)
+FM_SEARCH_LINE_RE = re.compile(r"^[ \t]*search_keywords[ \t]*:.*$", re.M)
+FM_SEARCH_VALUE_RE = re.compile(r'^search_keywords: "([^"\n]*)"$')
 
 # Implementation vocabulary that must not appear on reader-facing shelves. The brake
 # that keeps those shelves written in the names shown on screen.
@@ -677,11 +678,16 @@ def check_header(files: list[str], f: Findings, strict: bool) -> None:
                 continue  # the shelf README declares it on their behalf
             f.error(f"{src}: front matter has no {key}")
         m = FM_RE.match(read(path))
-        if m and FM_SEARCH_LINE_RE.search(m.group(1)):
-            value = fm.get(FM_SEARCH_KEY)
-            if value is None:
-                f.error(f"{src}: {FM_SEARCH_KEY} must be one double-quoted line")
-            elif not [w for w in value.split(",") if w.strip()]:
+        lines = FM_SEARCH_LINE_RE.findall(m.group(1)) if m else []
+        if len(lines) > 1:
+            f.error(f"{src}: {FM_SEARCH_KEY} appears more than once")
+        for line in lines[:1]:
+            # Judge the raw line: FM_KEY_RE reads across newlines and keeps only the last of
+            # a duplicated key, so it would accept lines the index then drops.
+            v = FM_SEARCH_VALUE_RE.match(line.rstrip("\r"))
+            if v is None:
+                f.error(f"{src}: {FM_SEARCH_KEY} must be one double-quoted line starting at column 0")
+            elif not [w for w in v.group(1).split(",") if w.strip()]:
                 f.error(f"{src}: {FM_SEARCH_KEY} is empty")
 
 

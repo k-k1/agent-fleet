@@ -955,6 +955,21 @@ class SizeAndHeaderTests(unittest.TestCase):
         self.assertIn("double-quoted", self.header(f'---\n{base}search_keywords: worktree\n---\n'))
         self.assertIn("is empty", self.header(f'---\n{base}search_keywords: " , "\n---\n'))
 
+    def test_search_keywords_rejects_lines_the_key_regex_would_misread(self):
+        base = 'audience: "a"\nsource_of_truth: "b"\n'
+        for bad in (
+            '  search_keywords: worktree',
+            '  search_keywords: "worktree"',
+            'search_keywords:\n  "worktree"',
+            'search_keywords: "worktree" "bad"',
+            "search_keywords: 'worktree'",
+        ):
+            self.assertIn("column 0", self.header(f'---\n{base}{bad}\n---\n'), bad)
+        self.assertIn(
+            "more than once",
+            self.header(f'---\n{base}search_keywords: "a"\nsearch_keywords: wrong\n---\n'),
+        )
+
 
 class TableTests(unittest.TestCase):
     """A blank line between two table rows splits the table."""
