@@ -168,6 +168,22 @@ func sameIssuer(a, b string) bool {
 	return strings.TrimSuffix(a, "/") == strings.TrimSuffix(b, "/")
 }
 
+// sameGroupIssuer compares two rows' issuers the way the Agent groups them (grantGroup): equal, or
+// differing only by a root path "/" (ADR 0146 decision 2). Unlike sameIssuer it keeps
+// "https://as.example.com/realm" and ".../realm/" apart: two rows only share a grant when they
+// name one authorization server.
+func sameGroupIssuer(a, b string) bool {
+	root := func(s string) string {
+		if t := strings.TrimSuffix(s, "/"); t != s {
+			if u, err := url.Parse(t); err == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" {
+				return t
+			}
+		}
+		return s
+	}
+	return root(a) == root(b)
+}
+
 // redirectURIUsable mirrors the Agent's: https, or http on loopback (a development Console).
 func redirectURIUsable(raw string) bool {
 	u, err := url.Parse(raw)
@@ -278,7 +294,7 @@ func (a ServerAPI) resourcesOfClient(ctx context.Context, mv store.MembershipVie
 		ok := false
 		for _, o := range rows {
 			if o.Enabled && o.Auth == mcpAuthOAuth && o.OAuthSecretEnc != "" && o.OAuthClientID == row.OAuthClientID &&
-				sameIssuer(o.OAuthIssuer, row.OAuthIssuer) && sameResource(res, o.URL) {
+				sameGroupIssuer(o.OAuthIssuer, row.OAuthIssuer) && sameResource(res, o.URL) {
 				ok = true
 				break
 			}
@@ -357,7 +373,8 @@ func clientAuthRefused(status int, body []byte) bool {
 // OAuthToken (POST /internal/mcp-servers/{id}/oauth/token) runs an authorization_code or
 // refresh_token grant with the tenant's confidential client and returns the AS's answer.
 func (a ServerAPI) OAuthToken(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	// Room for a shared grant's full URL set (bridgeMaxResources URLs) next to the code.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := r.ParseForm(); err != nil || len(r.PostForm) == 0 {
 		writeTokenErr(w, http.StatusBadRequest, "invalid_request")
 		return

@@ -3,14 +3,16 @@ package mcpreg
 // One grant per tenant client and issuer (ADR 0146 decision 4).
 //
 // Tenant definitions that carry the same pre-registered client at the same issuer form a group.
-// A sign-in to any of them that is made with that client asks for every enabled definition of the
-// group at once (each URL an RFC 8707 resource, the union of their scopes), and the one grant it
-// stores lists them as its members. The grant serves a definition only while the definition is
-// still in the group at the URL the grant recorded for it: that is the relay's "a URL in the
-// grant's set" check, and a definition added to the group, moved to another URL or given a scope
-// its member entry lacks reads as "needs more permission" rather than as a second sign-in.
+// A sign-in to any of them that is made with that client asks for every enabled https definition
+// of the group at once (each URL an RFC 8707 resource, the union of their scopes), and the one
+// grant it stores lists them as its members. The grant serves a definition only while the
+// definition is still in the group at the URL the grant recorded for it: that is the relay's "a
+// URL in the grant's set" check, and a definition added to the group, moved to another URL or
+// given a scope its member entry lacks reads as "needs more permission" rather than as a second
+// sign-in.
 //
-// Every other definition keeps a grant of its own, as before: one member, itself.
+// Every other grant is the definition's own, as before: one member, itself. So is a grant stored
+// before groups existed (no Group): it serves the server it was made for and ends with it.
 //
 // The URLs come from the tenant's definitions, not from each server's own metadata: the admin who
 // bound the client to those URLs is the one who says they belong to it, and the CP bridge refuses
@@ -22,6 +24,19 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
+
+// maxSharedResources is how many URLs one shared sign-in asks for; the CP bridge refuses more
+// (bridgeMaxResources). A larger group signs each server in on its own, as before sharing.
+const maxSharedResources = 32
+
+// groupIssuer is an issuer as a group key compares it: only a root path "/" is dropped (ADR 0146
+// decision 2's equivalence). "https://as.example.com/realm" and ".../realm/" stay two issuers.
+func groupIssuer(iss string) string {
+	if t := strings.TrimSuffix(iss, "/"); t != iss && issuerEquivalent(t, iss) {
+		return t
+	}
+	return iss
+}
 
 // grantGroup is the key of the grant d shares with the other definitions of the same tenant
 // client, "" when d's grant is its own. Confidential is part of it: a grant made with a public
@@ -36,15 +51,7 @@ func grantGroup(d ServerDef) string {
 	if c.Confidential {
 		auth = tokenAuthCP
 	}
-	return strings.TrimSuffix(c.Issuer, "/") + "\n" + c.ClientID + "\n" + auth
-}
-
-// grantGroupOf is the group of a stored grant: set only for one made with a tenant client.
-func grantGroupOf(g *secrets.MCPOAuthGrant) string {
-	if g.Registration != OAuthRegTenant {
-		return ""
-	}
-	return strings.TrimSuffix(g.Issuer, "/") + "\n" + g.ClientID + "\n" + g.TokenAuth
+	return groupIssuer(c.Issuer) + "\n" + c.ClientID + "\n" + auth
 }
 
 // grantMember is the entry g holds for serverID. A grant made before members existed covers its
@@ -64,15 +71,33 @@ func grantMember(g *secrets.MCPOAuthGrant, serverID string) (secrets.MCPOAuthGra
 	return secrets.MCPOAuthGrantMember{}, false
 }
 
-// grantResource is the resource g was made for at d, when g may be sent to d now: d has a member
-// entry, is still in the grant's group (a definition that left it is no longer what the grant was
-// made for), and its URL is the one the entry recorded.
+// grantApplies reports whether g is a grant of d's: a group's grant applies to every definition of
+// the group, member or not (a definition the group gained reads as needing more permission, not as
+// signed out), and any other grant to the definition it has a member entry for. A tenant client's
+// grant made before groups existed still needs d to carry that client, as it did then.
+func grantApplies(g *secrets.MCPOAuthGrant, d ServerDef) bool {
+	if g.Group != "" {
+		return g.Group == grantGroup(d)
+	}
+	if _, member := grantMember(g, d.ID); !member {
+		return false
+	}
+	if g.Registration != OAuthRegTenant {
+		return true
+	}
+	c := d.OAuthClient
+	return d.Origin == OriginTenant && c != nil && sameIssuer(c.Issuer, g.Issuer) && c.ClientID == g.ClientID &&
+		c.Confidential == (g.TokenAuth == tokenAuthCP)
+}
+
+// grantResource is the resource g was made for at d, when g may be sent to d now: g applies to d,
+// d has a member entry, and d's URL is the one the entry recorded.
 func grantResource(g *secrets.MCPOAuthGrant, d ServerDef) (string, bool) {
-	m, ok := grantMember(g, d.ID)
-	if !ok {
+	if !grantApplies(g, d) {
 		return "", false
 	}
-	if grp := grantGroupOf(g); grp != "" && grp != grantGroup(d) {
+	m, ok := grantMember(g, d.ID)
+	if !ok {
 		return "", false
 	}
 	u, err := url.Parse(d.URL)
@@ -80,6 +105,20 @@ func grantResource(g *secrets.MCPOAuthGrant, d ServerDef) (string, bool) {
 		return "", false
 	}
 	return m.Resource, true
+}
+
+// tokenCovers reports whether g's current access token was requested for res. A grant that does
+// not record it (made before it existed) was requested for its own resource.
+func tokenCovers(g *secrets.MCPOAuthGrant, res string) bool {
+	if len(g.TokenResources) == 0 {
+		return res == g.Resource
+	}
+	for _, r := range g.TokenResources {
+		if r == res {
+			return true
+		}
+	}
+	return false
 }
 
 // missingScopes lists the scopes d carries that its member entry was not asked for: all of them
@@ -103,21 +142,9 @@ func missingScopes(g *secrets.MCPOAuthGrant, d ServerDef) []string {
 	return out
 }
 
-// grantApplies reports whether g is a grant of d's: a tenant client's grant applies to every
-// definition of its group, member or not (a definition the group gained reads as needing more
-// permission, not as signed out), and any other grant to the definitions it has a member entry
-// for. A tenant grant does not apply to a definition that left its group.
-func grantApplies(g *secrets.MCPOAuthGrant, d ServerDef) bool {
-	if grp := grantGroupOf(g); grp != "" {
-		return grp == grantGroup(d)
-	}
-	_, member := grantMember(g, d.ID)
-	return member
-}
-
 // findGrantFor returns a copy of the grant d uses among those that apply to it. One that serves d
-// wins over one that does not, then the newest, so two grants left from before sharing each keep
-// serving their own server.
+// wins over one that does not, then the newest: a definition signed in on its own (a DCR retry)
+// next to its group's grant uses whichever sign-in is newer (stored later, on a tie).
 func findGrantFor(data *secrets.Data, d ServerDef) *secrets.MCPOAuthGrant {
 	var best *secrets.MCPOAuthGrant
 	bestServes := false
@@ -127,7 +154,7 @@ func findGrantFor(data *secrets.Data, d ServerDef) *secrets.MCPOAuthGrant {
 			continue
 		}
 		_, serves := grantResource(&g, d)
-		if best == nil || (serves && !bestServes) || (serves == bestServes && g.ConnectedAt > best.ConnectedAt) {
+		if best == nil || (serves && !bestServes) || (serves == bestServes && g.ConnectedAt >= best.ConnectedAt) {
 			best, bestServes = &g, serves
 		}
 	}
@@ -154,38 +181,70 @@ func defIn(reg Registry, id string) ServerDef {
 	return ServerDef{ID: id}
 }
 
-// groupPeers are the other enabled OAuth definitions in d's group, in registry order.
-func groupPeers(reg Registry, d ServerDef) []ServerDef {
+// sharedURL: a shared bearer goes to https only (http on loopback, for development). A peer is
+// never signed in on its own here, so nothing else would stop a plain-http row from receiving it.
+func sharedURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Host != "" && (u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname())))
+}
+
+// groupPeers are the other definitions a sign-in of d with its tenant client also asks for:
+// enabled https OAuth definitions of d's group, in registry order. ok is false when the group is
+// too large for one sign-in, which then covers d alone.
+func groupPeers(reg Registry, d ServerDef) (peers []ServerDef, ok bool) {
 	group := grantGroup(d)
 	if group == "" {
-		return nil
+		return nil, true
 	}
-	var out []ServerDef
 	for _, o := range reg.Servers {
-		if o.ID != d.ID && o.Enabled && o.Transport == TransportHTTP && grantGroup(o) == group {
-			out = append(out, o)
+		if o.ID != d.ID && o.Enabled && o.Transport == TransportHTTP && grantGroup(o) == group && sharedURL(o.URL) {
+			if _, canon := canonicalResource(o.URL); canon {
+				peers = append(peers, o)
+			}
+		}
+	}
+	if len(peers)+1 > maxSharedResources {
+		return nil, false
+	}
+	return peers, true
+}
+
+// memberStillValid reports whether m is still what a sign-in for group asked for: its definition
+// is in the group, at m's URL.
+func memberStillValid(reg Registry, m secrets.MCPOAuthGrantMember, group string) bool {
+	d := defIn(reg, m.ServerID)
+	u, err := url.Parse(d.URL)
+	return err == nil && grantGroup(d) == group && relayBound(m.Resource, u)
+}
+
+// memberResources are the members' resources, deduplicated as whole strings (a URL may hold a
+// comma, so it is never split).
+func memberResources(members []secrets.MCPOAuthGrantMember) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range members {
+		if !seen[m.Resource] {
+			seen[m.Resource] = true
+			out = append(out, m.Resource)
 		}
 	}
 	return out
 }
 
-// servedResources are the resources of g's members that g still serves, deduplicated: what a
-// renewal asks for. A member whose definition left, moved or vanished is not asked for again, so
-// the CP bridge, which refuses a URL that is no longer one of the client's rows, is not sent one.
+// servedResources are the resources of g's members that g still serves: what a renewal asks for.
+// A member whose definition left, moved or vanished is not asked for again, so the CP bridge,
+// which refuses a URL that is no longer one of the client's rows, is not sent one.
 func servedResources(g *secrets.MCPOAuthGrant, reg Registry) []string {
 	if len(g.Members) == 0 {
 		return []string{g.Resource}
 	}
-	var out []string
-	seen := map[string]bool{}
+	var served []secrets.MCPOAuthGrantMember
 	for _, m := range g.Members {
-		res, ok := grantResource(g, defIn(reg, m.ServerID))
-		if ok && !seen[res] {
-			seen[res] = true
-			out = append(out, res)
+		if _, ok := grantResource(g, defIn(reg, m.ServerID)); ok {
+			served = append(served, m)
 		}
 	}
-	return out
+	return memberResources(served)
 }
 
 // sameSignIn reports whether a and b are the same stored sign-in: the server it was started from
@@ -194,9 +253,11 @@ func sameSignIn(a, b *secrets.MCPOAuthGrant) bool {
 	return a.ServerID == b.ServerID && grantGeneration(a) == grantGeneration(b)
 }
 
-// grantKey is the lock and pending-rotation key of one stored sign-in.
+// grantKey is the lock of the credentials a grant renews with: its client at its issuer. Every
+// renewal with that client is serialized, so two sign-ins that hold the same refresh token (an AS
+// that returns it again on a new sign-in) never spend it twice.
 func grantKey(g *secrets.MCPOAuthGrant) string {
-	return g.ServerID + "\n" + grantGeneration(g)
+	return "cred\n" + g.Issuer + "\n" + g.ClientID
 }
 
 // signInLockKey orders a sign-in's completion against a disconnect of what it would store: per

@@ -133,11 +133,12 @@ type pendingAuth struct {
 	revocationEndpoint   string
 	resource             string
 	// group and members are what the grant is for: the signed-in server alone, or every server of
-	// its tenant client's group (oauth_grant_set.go). resources are the members' URLs, each sent
-	// as an RFC 8707 resource.
-	group       string
-	members     []secrets.MCPOAuthGrantMember
-	resources   []string
+	// its tenant client's group (oauth_grant_set.go). Each member's URL is an RFC 8707 resource.
+	group   string
+	members []secrets.MCPOAuthGrantMember
+	// ends are the disconnect counts of the server and the group when the sign-in started: a
+	// disconnect after that ends this sign-in too, even one already past its callback.
+	ends        [2]uint64
 	scope       string
 	redirectURI string
 	verifier    string
@@ -554,27 +555,35 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 	}
 	// A sign-in made with the tenant's client is one for every server of that client (ADR 0146
 	// decision 4): it asks for all their URLs and scopes, and the grant serves all of them.
+	// A server that is not https, or a group too large for one request, signs in on its own as
+	// before.
 	members := []secrets.MCPOAuthGrantMember{{ServerID: d.ID, Resource: rep.Resource, Scopes: d.Scopes}}
 	group := ""
-	if _, ok := tenantClient(d, srv); ok && (req.Registration == "" || req.Registration == OAuthRegPreregistered) {
+	if _, ok := tenantClient(d, srv); ok && sharedURL(d.URL) && (req.Registration == "" || req.Registration == OAuthRegPreregistered) {
 		reg, err := Load()
 		if err != nil {
 			return StartResult{}, oerr(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be read")
 		}
-		group = grantGroup(d)
-		for _, o := range groupPeers(reg, d) {
-			if res, ok := canonicalResource(o.URL); ok {
+		if peers, ok := groupPeers(reg, d); ok {
+			group = grantGroup(d)
+			for _, o := range peers {
+				res, _ := canonicalResource(o.URL)
 				members = append(members, secrets.MCPOAuthGrantMember{ServerID: o.ID, Resource: res, Scopes: o.Scopes})
 			}
 		}
 	}
-	var defScopes, resources []string
+	var defScopes []string
 	for _, m := range members {
 		defScopes = append(defScopes, m.Scopes...)
-		resources = append(resources, m.Resource)
+	}
+	if group != "" && len(d.Scopes) == 0 {
+		// A server without scopes of its own asks for what it would alone (its challenge, else its
+		// PRM's list); the others' scopes must not replace that. A peer without scopes gets what
+		// the sign-in asks for and steps up on its own 403, as any server does.
+		defScopes = append(defScopes, strings.Fields(selectScope(nil, rep.ChallengedScope, rep.prmScopes, srv.ep.asScopes))...)
 	}
 	defScopes = splitScopes(strings.Join(defScopes, " "))
-	resources = splitScopes(strings.Join(resources, " ")) // canonical URLs hold no space or comma
+	resources := memberResources(members)
 	scope := req.Scope
 	if scope == "" {
 		if g := currentGrant(serverID); g != nil && g.StepUpScope != "" {
@@ -627,8 +636,9 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 		serverID: d.ID, serverName: d.Name, issuer: srv.Issuer, issParam: srv.IssParam,
 		registration: cl.path, clientID: cl.id, secret: cl.secret, tokenAuth: cl.tokenAuth,
 		tokenEndpoint: srv.ep.token, revocationEndpoint: revocation, resource: rep.Resource,
-		group: group, members: members, resources: resources, scope: scope, redirectURI: req.RedirectURI, verifier: verifier,
+		group: group, members: members, scope: scope, redirectURI: req.RedirectURI, verifier: verifier,
 		expires: oauthNow().Add(oauthStateTTL), tenantClient: copyTenantClient(d.OAuthClient),
+		ends: endCounts(d.ID, group),
 	}); e != nil {
 		return StartResult{}, e
 	}
@@ -688,14 +698,37 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 	if req.Code == "" {
 		return fail(http.StatusBadRequest, OAuthErrNoCode, "the authorization response carried no code")
 	}
-	form := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {req.Code},
-		"redirect_uri":  {p.redirectURI},
-		"code_verifier": {p.verifier},
-		"resource":      p.resources,
+	// The peers are asked for only while they are still what the sign-in was for: one the tenant
+	// moved or took out of the group while the browser was away is left out, so it neither gets
+	// the token nor makes the CP refuse the whole exchange.
+	members := p.members[:1]
+	if reg, err := Load(); err == nil {
+		for _, m := range p.members[1:] {
+			if memberStillValid(reg, m, p.group) {
+				members = append(members, m)
+			}
+		}
 	}
-	tok, terr := postToken(ctx, p.serverID, p.issuer, p.tokenEndpoint, form, p.clientID, p.secret, p.tokenAuth)
+	resources := memberResources(members)
+	exchange := func(resources []string) (tokenResponse, *tokenError) {
+		form := url.Values{
+			"grant_type":    {"authorization_code"},
+			"code":          {req.Code},
+			"redirect_uri":  {p.redirectURI},
+			"code_verifier": {p.verifier},
+			"resource":      resources,
+		}
+		return postToken(ctx, p.serverID, p.issuer, p.tokenEndpoint, form, p.clientID, p.secret, p.tokenAuth)
+	}
+	tok, terr := exchange(resources)
+	if terr != nil && terr.code == "invalid_target" && len(resources) > 1 {
+		// The CP refuses a set with a URL that is no longer the client's before it calls the AS
+		// (the tenant changed a row this workspace has not fetched yet), and an AS may refuse a set
+		// it does not issue together; the code is unspent either way. The token is then for this
+		// server alone, and the others renew into it when they are next used.
+		resources = []string{p.resource}
+		tok, terr = exchange(resources)
+	}
 	if terr != nil {
 		return fail(http.StatusBadGateway, OAuthErrTokenExchange, "the authorization server refused the code ("+terr.code+")")
 	}
@@ -709,7 +742,7 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		ClientID: p.clientID, ClientSecret: p.secret, TokenAuth: p.tokenAuth,
 		TokenEndpoint: p.tokenEndpoint, RevocationEndpoint: p.revocationEndpoint,
 		Resource: p.resource, Scope: scope, AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken,
-		ConnectedAt: now, SignInID: newSignInID(),
+		ConnectedAt: now, SignInID: newSignInID(), Group: p.group, TokenResources: resources,
 	}
 	if tok.ExpiresIn > 0 {
 		g.ExpiresAt = now + int64(tok.ExpiresIn)
@@ -727,6 +760,13 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		revokeUnstored(ctx, g)
 		return fail(http.StatusConflict, OAuthErrStateMismatch, "the server's definition changed while this sign-in was open; sign in again")
 	}
+	if endCounts(p.serverID, p.group) != p.ends {
+		// Disconnected (here, or on another server of the group) after this sign-in began: the
+		// member ended what it would store.
+		mu.Unlock()
+		revokeUnstored(ctx, g)
+		return fail(http.StatusConflict, OAuthErrStateMismatch, "the sign-in was disconnected while it was open; sign in again")
+	}
 	// The other members are kept only while they are still what the sign-in asked for; one that
 	// left the group or moved meanwhile reads as needing more permission.
 	reg, lerr := Load()
@@ -734,28 +774,18 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		mu.Unlock()
 		return fail(http.StatusInternalServerError, OAuthErrInternal, "the secret store could not be read")
 	}
-	var defs []ServerDef
-	for _, m := range p.members {
-		d := defIn(reg, m.ServerID)
-		if m.ServerID != p.serverID {
-			if u, err := url.Parse(d.URL); err != nil || grantGroup(d) != p.group || !relayBound(m.Resource, u) {
-				continue
-			}
+	var ids []string
+	for _, m := range members {
+		if m.ServerID != p.serverID && !memberStillValid(reg, m, p.group) {
+			continue
 		}
 		g.Members = append(g.Members, m)
-		defs = append(defs, d)
+		ids = append(ids, m.ServerID)
 	}
 	err := updateSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuth[:0]
 		for _, o := range s.MCPOAuth {
-			// One grant per server: every grant a member of this one used is replaced, another
-			// issuer's included. A shared grant this server's sign-in was started from before it
-			// left that group serves the group's other servers and stays.
-			replaced := false
-			for _, d := range defs {
-				replaced = replaced || grantApplies(&o, d)
-			}
-			if !replaced {
+			if !replacedBy(&o, g, ids) {
 				kept = append(kept, o)
 			}
 		}
@@ -777,6 +807,25 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		ServerID: g.ServerID, ServerName: p.serverName, Issuer: g.Issuer,
 		Registration: g.Registration, Scope: g.Scope, ExpiresAt: g.ExpiresAt,
 	}, nil
+}
+
+// replacedBy reports whether the stored grant o goes when g, made for the servers ids, is stored:
+// one grant per server. A shared grant replaces its group's grant and every grant of its own a
+// member had; a grant of one server replaces only that server's own grants, so a member signing in
+// on its own (a DCR retry) leaves its group's grant to the others.
+func replacedBy(o *secrets.MCPOAuthGrant, g secrets.MCPOAuthGrant, ids []string) bool {
+	if g.Group != "" && o.Group == g.Group {
+		return true
+	}
+	if o.Group != "" {
+		return false
+	}
+	for _, id := range ids {
+		if _, member := grantMember(o, id); member {
+			return true
+		}
+	}
+	return false
 }
 
 // flexInt reads a JSON number that some authorization servers send as a string.

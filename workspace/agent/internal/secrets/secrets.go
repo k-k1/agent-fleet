@@ -464,6 +464,13 @@ type MCPOAuthGrant struct {
 	// was asked for (ADR 0146 decision 4: one grant per tenant client and issuer). Empty on grants
 	// made before it existed, which cover ServerID at Resource only.
 	Members []MCPOAuthGrantMember `json:"members,omitempty"`
+	// Group is the tenant client's group key (issuer, client id, public or confidential) of a grant
+	// made with that client; it then applies to every definition of the group. Empty otherwise,
+	// and on grants made before it existed, which apply to ServerID only.
+	Group string `json:"group,omitempty"`
+	// TokenResources are the resources the current access token was requested for (the code
+	// exchange or the last renewal). A member outside them is sent a renewed token, never this one.
+	TokenResources []string `json:"tokenResources,omitempty"`
 }
 
 // MCPOAuthGrantMember is one definition a grant was made for.

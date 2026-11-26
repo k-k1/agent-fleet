@@ -103,7 +103,7 @@ A list of more than 12 scopes, here or in a connection test, is folded into "**S
 - When the authorization server offers no automatic registration, you see "**A client ID is needed**". Enter the client ID you registered
   there by hand (and the secret, if it has one) and press "**Save and sign in**"
 - "**Disconnect**" deletes the saved sign-in, and revokes it at the authorization server when that supports it
-- Servers your administrator distributed with one client can share one sign-in; the row names the others. Signing in on any of them connects all of them, and "**Disconnect**" on any of them disconnects all of them
+- Servers your administrator distributed with one client can share one sign-in; the row names the others. Signing in on any of them connects all of them that are switched on, and "**Disconnect**" on any of them disconnects all of them
 
 ## What you can change, by origin
 

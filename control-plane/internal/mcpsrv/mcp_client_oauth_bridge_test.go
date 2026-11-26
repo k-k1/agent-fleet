@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -464,13 +465,14 @@ func TestBridgeAcceptsOnlyTheClientsURLSet(t *testing.T) {
 	a, ctx := newMCPServerAPITest(t, true)
 	as := newASStub(t)
 	bridgeRow(t, a, ctx, as.srv.URL, "s3cret")
+	issuer := as.srv.URL
 	add := func(tenant, id, u, clientID, secret string, enabled bool) string {
 		t.Helper()
 		row := store.MCPServerRow{
 			ID: id, TenantID: tenant, Name: id, Transport: "http", URL: u, Targets: "session",
 			Enabled: enabled, Auth: mcpAuthOAuth, CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 		}
-		b := mcpServerBody{Auth: mcpAuthOAuth, OAuthClient: &mcpOAuthClientBody{Issuer: as.srv.URL, ClientID: clientID, ClientSecret: secret}}
+		b := mcpServerBody{Auth: mcpAuthOAuth, OAuthClient: &mcpOAuthClientBody{Issuer: issuer, ClientID: clientID, ClientSecret: secret}}
 		if err := a.resolveOAuthClient(ctx, tenant, b, nil, &row); err != nil {
 			t.Fatal(err)
 		}
@@ -484,14 +486,31 @@ func TestBridgeAcceptsOnlyTheClientsURLSet(t *testing.T) {
 	disabled := add("tenant-a", "s4", "https://disabled.example.com/mcp", "corp", "s3cret", false)
 	public := add("tenant-a", "s5", "https://public.example.com/mcp", "corp", "", true)
 	otherTenant := add("tenant-b", "s6", "https://other-tenant.example.com/mcp", "corp", "s3cret", true)
+	// The same issuer spelled with a root "/" is one authorization server; one with a path is another.
+	issuer = as.srv.URL + "/"
+	rootSlash := add("tenant-a", "s7", "https://root-slash.example.com/mcp", "corp", "s3cret", true)
+	issuer = as.srv.URL + "/realm"
+	otherIssuer := add("tenant-a", "s8", "https://other-issuer.example.com/mcp", "corp", "s3cret", true)
+	issuer = as.srv.URL
 
 	set := codeForm()
-	set["resource"] = []string{bridgeResource, peer}
+	set["resource"] = []string{bridgeResource, peer, rootSlash}
 	if w := bridgeCall(a, "token", "tenant-a", set); w.Code != 200 {
 		t.Fatalf("the client's URL set: %d %s", w.Code, w.Body)
 	}
-	if got := as.forms[0]["resource"]; len(got) != 2 || got[0] != bridgeResource || got[1] != peer {
+	if got := as.forms[0]["resource"]; len(got) != 3 || got[0] != bridgeResource || got[1] != peer || got[2] != rootSlash {
 		t.Fatalf("AS resources = %v", got)
+	}
+
+	// The largest set the Agent sends: 32 long URLs fit the request body.
+	full := []string{bridgeResource}
+	for i := 0; len(full) < bridgeMaxResources; i++ {
+		full = append(full, add("tenant-a", "f"+strconv.Itoa(i), "https://svc-"+strconv.Itoa(i)+".example.com/"+strings.Repeat("p", 1500), "corp", "s3cret", true))
+	}
+	f32 := codeForm()
+	f32["resource"] = full
+	if w := bridgeCall(a, "token", "tenant-a", f32); w.Code != 200 || len(as.forms[1]["resource"]) != bridgeMaxResources {
+		t.Fatalf("32 resources: %d %s", w.Code, w.Body)
 	}
 
 	var many []string
@@ -505,7 +524,9 @@ func TestBridgeAcceptsOnlyTheClientsURLSet(t *testing.T) {
 		"a public client's row":     {bridgeResource, public},
 		"another tenant's row":      {bridgeResource, otherTenant},
 		"an unknown URL":            {bridgeResource, "https://evil.example.com/mcp"},
+		"another issuer's row":      {bridgeResource, otherIssuer},
 		"too many":                  many,
+		"33 rows":                   append(append([]string(nil), full...), peer),
 	} {
 		f := codeForm()
 		f["resource"] = res
@@ -517,7 +538,25 @@ func TestBridgeAcceptsOnlyTheClientsURLSet(t *testing.T) {
 			t.Errorf("%s (refresh): %d %s, want invalid_target", name, w.Code, w.Body)
 		}
 	}
-	if len(as.forms) != 1 {
+	if len(as.forms) != 2 {
 		t.Fatalf("the AS was called %d time(s)", len(as.forms))
+	}
+}
+
+// Two rows share a grant only at one authorization server: a root "/" is the only spelling
+// difference that still names it (ADR 0146 decision 2), a path's trailing "/" names another.
+func TestSameGroupIssuer(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"https://as.example.com", "https://as.example.com", true},
+		{"https://as.example.com", "https://as.example.com/", true},
+		{"https://as.example.com/realm", "https://as.example.com/realm/", false},
+		{"https://as.example.com/realm", "https://as.example.com/other", false},
+	} {
+		if got := sameGroupIssuer(c.a, c.b); got != c.want {
+			t.Errorf("sameGroupIssuer(%q, %q) = %v", c.a, c.b, got)
+		}
 	}
 }

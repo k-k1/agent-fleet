@@ -182,13 +182,14 @@ func endedOAuth(prev, next []ServerDef) []EndedOAuth {
 }
 
 // EndTenantSignIn ends what a tenant fetch ended for e (revoked at the authorization server when
-// it offers that, deleted locally either way). The definition's own grants go, as before. A shared
-// grant goes only with its group: until then it keeps serving the group's other servers, and this
-// one, no longer what the grant was made for, reads as needing more permission.
+// it offers that, deleted locally either way). The definition's own grants go, as before, a tenant
+// client's grant made before groups existed included. A shared grant goes only with its group:
+// until then it keeps serving the group's other servers, and this one, no longer what the grant
+// was made for, reads as needing more permission.
 func EndTenantSignIn(ctx context.Context, e EndedOAuth) error {
 	own := func(g *secrets.MCPOAuthGrant) bool {
 		_, member := grantMember(g, e.ID)
-		return member && grantGroupOf(g) == ""
+		return member && g.Group == ""
 	}
 	if _, err := disconnectWhere(ctx, e.ID, "", own); err != nil {
 		return err
@@ -196,7 +197,7 @@ func EndTenantSignIn(ctx context.Context, e EndedOAuth) error {
 	if e.Group == "" || !e.GroupGone {
 		return nil
 	}
-	_, err := disconnectWhere(ctx, e.ID, e.Group, func(g *secrets.MCPOAuthGrant) bool { return grantGroupOf(g) == e.Group })
+	_, err := disconnectWhere(ctx, e.ID, e.Group, func(g *secrets.MCPOAuthGrant) bool { return g.Group == e.Group })
 	return err
 }
 

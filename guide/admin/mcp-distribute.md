@@ -79,9 +79,11 @@ If you registered a client for Agent Fleet at the server's authorization server,
 
 #### One sign-in for several servers
 
-Distributions that carry the same client ID at the same authorization server, both public or both confidential, share one sign-in per member. Signing in to any of them requests every enabled one's URL and scopes at once, and connects all of them. Each row names the others it shares with, and "**Disconnect**" on any of them ends the sign-in for all.
+Distributions that carry the same client ID at the same authorization server, both public or both confidential, share one sign-in per member. Signing in to any of them requests the URL and scopes of every one the member has switched on, and connects all of them. Each row names the others it shares with, and "**Disconnect**" on any of them ends the sign-in for all.
 
 - Adding a distribution with that client, or moving one to another URL, shows "**More permission needed**" on that row; it reaches no session until the member signs in again. The other rows keep working
+- Give every distribution of the group its "**Scopes**". A row without them gets what the others ask for (plus its own server's request when the member signs in from that row), and asks for more permission when its server refuses
+- Only https URLs share the sign-in. An http distribution, and every distribution of a group of more than 32, signs in on its own
 - The URL and scope lists all go into one authorization request. With many servers, keep the joined scopes within the 1024-byte limit above, or the sign-in is refused
 
 These changes cut every member's sign-in, and members sign in again.
