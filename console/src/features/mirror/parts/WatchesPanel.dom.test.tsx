@@ -17,6 +17,7 @@ import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { answerConfirm, confirmDialog } from "../../../test/confirmDialog.ts";
 import { WatchesPanel } from "./WatchesPanel.tsx";
 import { t } from "../../../lib/i18n/index.ts";
+import { setFormatPrefs } from "../../../lib/intl.ts";
 import { useWorkItemStore } from "../../workitems/store.ts";
 import type { WorkItem } from "../../workitems/read.ts";
 import { useWorkItemModal } from "../../workitems/modal.ts";
@@ -34,6 +35,8 @@ afterEach(() => {
   opened.menu = null;
   act(() => root?.unmount());
   vi.useRealTimers();
+  vi.unstubAllEnvs();
+  setFormatPrefs("auto", "auto");
   host?.remove();
   root = null;
   host = null;
@@ -95,6 +98,31 @@ describe("WatchesPanel", () => {
     mount([pr, timer]);
     expect(rows()).toHaveLength(2);
     expect(document.querySelector(".mw-end")).toBeNull();
+  });
+
+  it("shows the due instant across midnight in the browser zone", async () => {
+    vi.stubEnv("TZ", "Asia/Tokyo");
+    // Expire the browser zone cached by any earlier render.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 2000);
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("Asia/Tokyo");
+    setFormatPrefs("ja-JP", "UTC");
+    const watch = { ...timer, due: "2026-11-26T18:21:00Z" };
+    const onEnd = vi.fn();
+    mount([watch], onEnd);
+    const label = rows()[0].querySelector(".mw-ref");
+    expect(label?.textContent).toBe("2026/11/27 03:21:00");
+    expect(label?.getAttribute("title")).toBe(timer.ref);
+    await act(async () => document.querySelector<HTMLButtonElement>(".mw-end")!.click());
+    expect(confirmDialog()!.querySelector("pre.ui-confirm-code")?.textContent).toBe(timer.ref);
+    await answerConfirm(true);
+    expect(onEnd).toHaveBeenCalledExactlyOnceWith(watch);
+  });
+
+  it.each([undefined, "invalid"])("shows the timer ref when due is %s", (due) => {
+    mount([{ ...timer, due }]);
+    expect(rows()[0].querySelector(".mw-ref")?.textContent).toBe(timer.ref);
+    expect(rows()[0].querySelector(".mw-left")).toBeNull();
   });
 
   it("ends only after the member confirms", async () => {

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
+import { browserTimeZone, DATETIME_FULL, fmtDateTime } from "../../../lib/intl.ts";
 import { displayName } from "../../../lib/sessionview.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import type { SessionWatch } from "../../../core/api/client.ts";
@@ -182,6 +183,9 @@ export function WatchesPanel({
           const left = timeLeftMs(w, now);
           const href = safeWatchUrl(w.url);
           const ref = w.ref || w.id;
+          const label = w.source === "time" && w.due && left !== null
+            ? fmtDateTime(w.due, { ...DATETIME_FULL, timeZone: browserTimeZone() })
+            : ref;
           const busy = ending.has(w.id);
           const fleet = w.source === "fleet" && Boolean(w.ref);
           return (
@@ -198,11 +202,11 @@ export function WatchesPanel({
                   title={ref}
                   onClick={isPullRequest(w.source) ? (e) => openPullRequest(e, href) : undefined}
                 >
-                  {ref}
+                  {label}
                 </a>
               ) : (
                 <span className="mw-ref" title={ref}>
-                  {ref}
+                  {label}
                 </span>
               )}
               <span className="mw-meta">
