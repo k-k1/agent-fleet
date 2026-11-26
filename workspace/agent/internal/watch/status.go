@@ -65,6 +65,10 @@ const (
 	statusPageTTL = 2 * time.Minute
 	// statusFailTTL keeps a failed read for a short while, so six subjects of one dead page cost one
 	// timeout and not six.
+	// statusMaxSkew is how far a provider time may be ahead of the Agent's clock and still be
+	// believed; statusToldMax bounds the reported-incident list in the cursor.
+	statusMaxSkew     = 5 * time.Minute
+	statusToldMax     = 30
 	statusFailTTL     = 30 * time.Second
 	statusResFresh    = 10 * time.Minute
 	statusMaxBody     = 4 << 20
@@ -381,7 +385,7 @@ func (s *Status) Resolve(ctx context.Context, ref, _ string) (Resolved, error) {
 	// and would make an incident resolved just before the watch count as new. Without a Date the
 	// Agent's clock stands in (a skewed clock moves the boundary by the skew, nothing else).
 	floor := s.now().UnixMilli()
-	if pr.fresh && pr.date > 0 {
+	if pr.fresh && pr.date > 0 && pr.date*1000 <= floor+statusMaxSkew.Milliseconds() {
 		floor = pr.date * 1000
 	}
 	var ids []string
@@ -462,10 +466,13 @@ func wantsStatus(want []string, typ string) bool {
 type statusCursor struct {
 	FloorMs int64  `json:"floor_ms,omitempty"` // also the mark: nothing at or before it is news
 	MarkID  string `json:"mark_id,omitempty"`
-	RecGen  int    `json:"rec_gen,omitempty"`
-	RecHold bool   `json:"rec_hold,omitempty"`
-	DegGen  int    `json:"deg_gen,omitempty"`
-	DegSig  string `json:"deg_sig,omitempty"`
+	// Told are the last few incidents reported, so one whose resolution time is corrected later is
+	// not reported again and cannot pull the mark past a newer resolution.
+	Told    []string `json:"told,omitempty"`
+	RecGen  int      `json:"rec_gen,omitempty"`
+	RecHold bool     `json:"rec_hold,omitempty"`
+	DegGen  int      `json:"deg_gen,omitempty"`
+	DegSig  string   `json:"deg_sig,omitempty"`
 }
 
 func (s *Status) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
@@ -686,7 +693,7 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 	var bestMs int64
 	for i := range list {
 		inc := &list[i]
-		if !statusIDRE.MatchString(inc.ID) || !isResolvedStatus(inc.Status) {
+		if !statusIDRE.MatchString(inc.ID) || !isResolvedStatus(inc.Status) || slices.Contains(cur.Told, inc.ID) {
 			continue // one broken entry must not hide the others
 		}
 		t, err := time.Parse(time.RFC3339, inc.ResolvedAt)
@@ -694,6 +701,9 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 			continue
 		}
 		ms := t.UnixMilli()
+		if ms > at.Add(statusMaxSkew).UnixMilli() {
+			continue // from the future: a damaged time must not move the mark out of reach
+		}
 		if ms < cur.FloorMs || ms == cur.FloorMs && (cur.MarkID == "" || inc.ID <= cur.MarkID) {
 			continue
 		}
@@ -717,6 +727,10 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 		return nil
 	}
 	cur.FloorMs, cur.MarkID = bestMs, best.ID
+	cur.Told = append(cur.Told, best.ID)
+	if len(cur.Told) > statusToldMax {
+		cur.Told = cur.Told[len(cur.Told)-statusToldMax:]
+	}
 	return &Event{
 		Source: StatusKind, Subject: subject, Type: EventStatusIncidentResolved, Version: best.ID, At: at,
 		Occurred: time.UnixMilli(bestMs).UTC(),

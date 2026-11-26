@@ -76,7 +76,7 @@ func newStatusFake(t *testing.T) (*Status, *statusFake) {
 	t.Cleanup(srv.Close)
 	s := NewStatus()
 	s.Base = map[string]string{"github": srv.URL}
-	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 0, 0, 0, time.UTC) }
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 4, 0, 0, 0, time.UTC) }
 	return s, f
 }
 
@@ -340,6 +340,47 @@ func TestStatusEngineKeepsHistoryFromLaterWatches(t *testing.T) {
 	}
 }
 
+func TestStatusCorrectedTimeAndFutureTimeDoNotSilenceTheWatch(t *testing.T) {
+	s, f := newStatusFake(t)
+	res, _ := s.Resolve(context.Background(), "github:Actions", "")
+	cur := s.SeedCursor(nil, res.Seed)
+	f.incidents = map[string]any{"incidents": []any{inc("a", "A", "resolved", "2026-11-26T03:10:00Z", "aaa1")}}
+	s.pages = nil
+	evs, cur := poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
+	if len(evs) != 1 || evs[0].Version != "a" {
+		t.Fatalf("%+v", evs)
+	}
+	// A's resolution time is corrected to after B's: B must still arrive and A must not repeat.
+	f.incidents = map[string]any{"incidents": []any{
+		inc("a", "A", "resolved", "2026-11-26T03:16:00Z", "aaa1"),
+		inc("b", "B", "resolved", "2026-11-26T03:15:00Z", "aaa1"),
+	}}
+	s.pages = nil
+	evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
+	if len(evs) != 1 || evs[0].Version != "b" {
+		t.Fatalf("a corrected time hid the new incident: %+v", evs)
+	}
+	// One damaged time far in the future is ignored; the next real resolution still arrives.
+	f.incidents = map[string]any{"incidents": []any{
+		inc("x", "X", "resolved", "2027-11-26T03:00:00Z", "aaa1"),
+		inc("c", "C", "resolved", "2026-11-26T03:20:00Z", "aaa1"),
+	}}
+	s.pages = nil
+	evs, _ = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
+	if len(evs) != 1 || evs[0].Version != "c" {
+		t.Fatalf("a future time moved the mark out of reach: %+v", evs)
+	}
+	// A summary whose Date is a year ahead does not set the floor.
+	f.date.Store("Fri, 26 Nov 2027 03:00:00 GMT")
+	s.pages = nil
+	r2, _ := s.Resolve(context.Background(), "github:Actions", "")
+	var c statusCursor
+	_ = json.Unmarshal(r2.Seed, &c)
+	if c.FloorMs > s.Now().Add(statusMaxSkew).UnixMilli() {
+		t.Fatalf("floor from a Date in the future: %d", c.FloorMs)
+	}
+}
+
 func TestStatusFloorIsTheSubscribersMoment(t *testing.T) {
 	s, f := newStatusFake(t)
 	// A cached answer (read at 03:00:00) must not make the floor older than the subscriber.
@@ -477,7 +518,7 @@ func TestStatusOneEndpointFailingKeepsTheOther(t *testing.T) {
 	f.failPath = "/api/v2/summary.json"
 	f.incidents = map[string]any{"incidents": []any{inc("n", "N", "resolved", "2026-11-26T03:30:00Z")}}
 	s.pages = nil
-	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 5, 0, 0, time.UTC) }
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 4, 5, 0, 0, time.UTC) }
 	evs, _, _, err = s.Poll(context.Background(), res.Subject, s.SeedCursor(nil, res.Seed), []string{EventStatusRecovered, EventStatusIncidentResolved})
 	if err != nil || len(evs) != 1 || evs[0].Type != EventStatusIncidentResolved {
 		t.Fatalf("resolved lost to the other endpoint: %v %+v", err, evs)
@@ -510,7 +551,7 @@ func TestStatusIncompleteAnswersAreNotBelieved(t *testing.T) {
 	}
 	// None of them is remembered: the next good answer is read once the failure window passes.
 	f.raw = ""
-	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 5, 0, 0, time.UTC) }
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 4, 5, 0, 0, time.UTC) }
 	if evs, _ := poll(t, s, res.Subject, nil, EventStatusRecovered); len(evs) != 1 {
 		t.Fatal("a bad answer was cached past the failure window")
 	}
@@ -574,7 +615,7 @@ func TestStatusReadsAreSharedPerURL(t *testing.T) {
 		t.Fatalf("a failed read was repeated %d times inside the window", f.hits.Load())
 	}
 	f.code = 0
-	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 5, 0, 0, time.UTC) }
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 4, 5, 0, 0, time.UTC) }
 	if err := poll2(); err != nil {
 		t.Fatal(err)
 	}
