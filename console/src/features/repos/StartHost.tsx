@@ -12,10 +12,11 @@ import { useStartWork, type HandoffTake } from "./useStartWork.ts";
 import { StartModal } from "./StartModal.tsx";
 import { branchItemOf } from "./branchRule.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
-import { useLaunchTarget, useLaunchSeed } from "./store.ts";
+import { useLaunchTarget, useLaunchSeed, useSpaceHandoff } from "./store.ts";
 import { markHandoffLaunched } from "../mirror/HandoffProposal.tsx";
 import { launchFromHandoffOffer } from "../sharing/acceptHandoff.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { identityScope, useTenantStore } from "../../core/store/tenant.ts";
 import { recordWorkItemLaunch } from "../workitems/launch.ts";
 import { workItemLaunchBranch } from "../workitems/read.ts";
 import { stashStoredDraft } from "../memo/launchStash.ts";
@@ -40,11 +41,25 @@ export function StartHost() {
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
+  // A handoff from a member's space (its own store: nothing that reads the launch seed can take it).
+  const spaceHandoff = useSpaceHandoff((s) => s.offerId);
+  const spaceHandoffPrompt = useSpaceHandoff((s) => s.prompt);
+  const spaceHandoffTitle = useSpaceHandoff((s) => s.title);
   const seedSpace = useLaunchSeed((s) => s.space);
   // A launch that came from a work item (docs/log/80). The ledger is written only AFTER the
   // launch succeeded.
   const seedWorkItem = useLaunchSeed((s) => s.workItem);
   const clearSeed = useLaunchSeed((s) => s.clear);
+  // A tenant or account switch drops a space handoff at once: it names an offer of the previous
+  // scope, and its launch would send that id to the new one. Here, not in the inbox button, so the
+  // pop-out shell (which mounts this host without the button) gets it too.
+  const scope = useTenantStore(identityScope);
+  const scopeRef = useRef(scope);
+  useEffect(() => {
+    if (scopeRef.current === scope) return;
+    scopeRef.current = scope;
+    useSpaceHandoff.getState().clear();
+  }, [scope]);
   // The hub's one draft (ADR 0142 decision 5). Every opening starts it from the seed, so a memo
   // being sent or restored is the text the hub opens with.
   const draft = useHubDraft();
@@ -66,6 +81,11 @@ export function StartHost() {
   useEffect(() => {
     if (startTick !== lastTickRef.current) {
       lastTickRef.current = startTick;
+      // A handoff from a member's space has a launch of its own, holding the offer. The hub would
+      // copy its text into a draft that a repository launch could then send under the same offer
+      // (a workspace that finished starting opens the hub by itself), so the dedicated launch
+      // keeps the screen and the hub does not open over it.
+      if (useSpaceHandoff.getState().offerId) return;
       clearLaunch();
       setHome(false);
       setCarry(false);
@@ -196,6 +216,33 @@ export function StartHost() {
           }}
         />
       )}
+      {/* A handoff from another member's space: no repository to open it in, so the launch is a
+          dialog of its own that starts in a new space of the recipient's (never home). The offer
+          is taken around the launch exactly as for a repository. It stays mounted when another dialog
+          opens over it (a clone toast's repository dialog): unmounting would drop what the member
+          has typed into it. */}
+      {spaceHandoff && (
+        <LaunchModal
+          newSpace
+          repo=""
+          kinds={agentKinds}
+          access={ctx.access}
+          claudeExpired={ctx.claudeExpired}
+          settling={ctx.connsSettling}
+          allowWorktree={false}
+          initialPrompt={spaceHandoffPrompt || undefined}
+          initialTitle={spaceHandoffTitle || undefined}
+          onClose={() => useSpaceHandoff.getState().clear()}
+          onLaunch={async (o) => {
+            // seedless: another launch's seed (a memo or inbox request the hub holds, a work item, a
+            // proposal's lineage) must not decide this create's route or body.
+            const run = (take?: HandoffTake) => startWork({ dir: "", repo: "", seedless: true }, o, take);
+            const r = await launchFromHandoffOffer(spaceHandoff, run, toast);
+            if (r.ok) useSpaceHandoff.getState().clear();
+            return r;
+          }}
+        />
+      )}
       {launch && (
         <LaunchModal
           repo={launch.name}
@@ -205,6 +252,9 @@ export function StartHost() {
           access={ctx.access}
           claudeExpired={ctx.claudeExpired}
           settling={ctx.connsSettling}
+          // Stacked over a space handoff's dialog: while the create is out, Escape and back must
+          // not fall to it, or its close drops what was typed there.
+          holdKeys={!!spaceHandoff}
           allowWorktree={!launch.worktree && launch.vcs !== "svn" && !launch.unborn}
           isSvn={launch.vcs === "svn"}
           isUnborn={!!launch.unborn}

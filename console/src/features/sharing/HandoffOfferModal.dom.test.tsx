@@ -103,6 +103,62 @@ describe("HandoffOfferModal", () => {
     expect(sendButton()?.disabled).toBe(false);
   });
 
+  // #5233: a session in a space has no repository to hand over. The giver is told the files stay
+  // behind, in the space wording, and has to acknowledge it before sending.
+  it("tells the giver a space's files stay behind and asks for the space acknowledgement", async () => {
+    await render({ members: MEMBERS, context: { vcs: "", space: true, warning: "space_files_stay" } });
+    const { t } = await import("../../lib/i18n/index.ts");
+    expect(document.body.textContent).toContain(t("handoff.space_hint"));
+    expect(document.body.textContent).toContain(t("handoff.ack_space"));
+    expect(document.body.textContent).not.toContain(t("handoff.ack_dirty"));
+    expect(sendButton()?.disabled).toBe(true);
+    await act(async () => {
+      (find('input[type="checkbox"]') as HTMLInputElement).click();
+    });
+    expect(sendButton()?.disabled).toBe(false);
+  });
+
+  // A tick belongs to the warning it was given for: when the verdict turns into another warning
+  // (the Agent started reporting the space), the box starts unticked and the send names what is
+  // acknowledged, so the space note is never accepted unread.
+  it("does not carry a tick given for uncommitted changes over to the space warning", async () => {
+    await render({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 0, dirty: true, warning: "uncommitted_changes" } });
+    await act(async () => {
+      (find('input[type="checkbox"]') as HTMLInputElement).click();
+    });
+    apiJSON.mockImplementationOnce(async () => ({ error: { code: "handoff_warning", message: "the session runs in a space" } }));
+    // The Agent is updated before the send: the verdict is now the space's.
+    api.mockImplementation(async () => ({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 0, space: true, warning: "space_files_stay" } }));
+    await act(async () => {
+      sendButton()!.closest("form")!.requestSubmit();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(apiJSON.mock.calls.at(-1)?.[2]).toMatchObject({ ackWarning: true, ackedWarning: "uncommitted_changes" });
+    const { t } = await import("../../lib/i18n/index.ts");
+    // The refusal is shown in the member's language, not as the server's English.
+    expect(document.body.textContent).toContain(t("handoff.warning_changed"));
+    expect(document.body.textContent).not.toContain("the session runs in a space");
+    expect(document.body.textContent).toContain(t("handoff.ack_space"));
+    expect((find('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false);
+    expect(sendButton()?.disabled).toBe(true);
+    await act(async () => {
+      (find('input[type="checkbox"]') as HTMLInputElement).click();
+    });
+    apiJSON.mockClear();
+    await act(async () => {
+      sendButton()!.closest("form")!.requestSubmit();
+    });
+    expect(apiJSON.mock.calls.at(-1)?.[2]).toMatchObject({ ackWarning: true, ackedWarning: "space_files_stay" });
+  });
+
+  it("shows no space note for a repository", async () => {
+    await render({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 0 } });
+    const { t } = await import("../../lib/i18n/index.ts");
+    expect(document.body.textContent).not.toContain(t("handoff.space_hint"));
+  });
+
   // "Push, then send" (#2072). The opt-in exists only for the two reasons a push clears, says
   // what it will publish, and sends pushFirst so the CP pushes and re-asks the Agent; the
   // verdict after the push is never decided here.

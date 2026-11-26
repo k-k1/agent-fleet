@@ -14,16 +14,20 @@ import { answerConfirm, confirmDialog } from "../../test/confirmDialog.ts";
 import type { HandoffOffer } from "./handoffStore.ts";
 
 const apiJSON = vi.fn();
+// api("api/spaces") answers a list of spaces (an Agent that supports them); anything else is the
+// handoff store's own read.
+const spacesOk = async (...a: unknown[]): Promise<unknown> => (String(a[0]).includes("api/spaces") ? { spaces: [] } : { offers: [] });
+const apiGet = vi.fn(spacesOk);
 vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
-  return { ...real, apiJSON: (...a: unknown[]) => apiJSON(...a), api: vi.fn(async () => ({ offers: [] })) };
+  return { ...real, apiJSON: (...a: unknown[]) => apiJSON(...a), api: (...a: unknown[]) => apiGet(...a) };
 });
 vi.mock("../repos/useRepoRail.ts", () => ({ useRepoRailContext: () => ({ access: { kinds: { get: (k: string) => ({ kind: k }), has: () => true }, noRoute: false, allOff: false, refresh: () => {} }, launchKinds: ["claude"], connsSettling: false }) }));
 vi.mock("../repos/StartModal.tsx", () => ({ StartModal: () => null }));
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 vi.mock("../repos/LaunchModal.tsx", () => ({
-  LaunchModal: (p: { repo: string; branch?: string; initialPrompt?: string }) => (
-    <div data-testid="launch-dialog">
+  LaunchModal: (p: { repo: string; branch?: string; initialPrompt?: string; newSpace?: boolean }) => (
+    <div data-testid="launch-dialog" data-new-space={String(!!p.newSpace)}>
       {p.repo}|{p.branch}|{p.initialPrompt}
     </div>
   ),
@@ -31,9 +35,11 @@ vi.mock("../repos/LaunchModal.tsx", () => ({
 
 const { HandoffOfferRow, repoNameFromRemote } = await import("./HandoffOfferRow.tsx");
 const { StartHost } = await import("../repos/StartHost.tsx");
-const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
+const { useLaunchSeed, useLaunchTarget, useReposStore, useSpaceHandoff } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { useSessionsStore } = await import("../sessions/store.ts");
+const { SHARE_REQUEST_TIMEOUT_MS } = await import("./boundedRequest.ts");
 
 const offer: HandoffOffer = {
   id: "offer-1", sessionId: "cat-1", sessionName: "session-1", recipientUserKey: "bob", ownerUserKey: "alice",
@@ -68,6 +74,8 @@ const acceptButton = () =>
 
 beforeEach(() => {
   apiJSON.mockReset();
+  apiGet.mockReset();
+  apiGet.mockImplementation(spacesOk);
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -78,6 +86,7 @@ afterEach(async () => {
   host.remove();
   root = null;
   useLaunchSeed.getState().clear();
+  useSpaceHandoff.getState().clear();
   useLaunchTarget.getState().clear();
   useReposStore.setState({ repos: [] } as never);
 });
@@ -112,6 +121,183 @@ describe("the received handoff row", () => {
     expect(useLaunchSeed.getState().handoffOfferId).toBe("offer-1");
     // Opening the dialog must not hold the offer: a cancelled dialog leaves it pending.
     expect(apiJSON).not.toHaveBeenCalled();
+  });
+
+  // #5233: a handoff from a session that ran in the sender's space has no repository.
+  describe("an offer from a space", () => {
+    const fromSpace: HandoffOffer = { ...offer, branch: "", repoRemote: "", headSha: "", sourceSpace: true };
+
+    it("says the sender's files stay behind and offers no working copy to pick", async () => {
+      await render([{ name: "private", path: "/r/private" }], false, fromSpace);
+      expect(host.textContent).toContain(t("handoff.space_offer_hint", { who: "alice" }));
+      expect(select()).toBeNull();
+      expect(host.textContent).not.toContain(t("handoff.accept_no_repo_hint"));
+      expect(acceptButton().disabled).toBe(false);
+    });
+
+    it("can be accepted with no working copy at all", async () => {
+      await render([], false, fromSpace);
+      expect(host.textContent).not.toContain(t("handoff.accept_no_repo_hint"));
+      expect(acceptButton().disabled).toBe(false);
+    });
+
+    it("opens the new-space dialog on accept, seeded with the text, and takes nothing yet", async () => {
+      await render([{ name: "private", path: "/r/private" }], true, fromSpace);
+      await act(async () => acceptButton().click());
+      const dialog = document.querySelector("[data-testid=launch-dialog]") as HTMLElement | null;
+      expect(dialog?.dataset.newSpace).toBe("true");
+      expect(useSpaceHandoff.getState()).toMatchObject({ offerId: "offer-1", prompt: "Continue the work.", title: "Carry on" });
+      // The launch seed is not touched: nothing that reads it can take this offer.
+      expect(useLaunchSeed.getState().handoffOfferId).toBe("");
+      expect(useLaunchTarget.getState().target).toBeNull();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("asks the Agent for its spaces before it starts anything", async () => {
+      await render([], true, fromSpace);
+      await act(async () => acceptButton().click());
+      expect(apiGet.mock.calls.some((c) => String(c[0]).includes("api/spaces"))).toBe(true);
+    });
+
+    it("starts nothing and says so when the Agent is too old to start in a space", async () => {
+      apiGet.mockImplementation(async () => ({ error: { status: 404, code: "http_404", message: "not found" } }));
+      await render([], true, fromSpace);
+      await act(async () => acceptButton().click());
+      expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
+      expect(useSpaceHandoff.getState().offerId).toBe("");
+      expect(document.body.textContent).toContain(t("handoff.space_unsupported"));
+    });
+
+    // Support not proven is not support: an Agent without spaces would take the field as home.
+    it.each([
+      ["a gateway error", async () => ({ error: { status: 502, code: "http_502", message: "bad gateway" } })],
+      ["a dropped connection", async () => Promise.reject(new TypeError("Failed to fetch"))],
+      ["an answer that is no list of spaces", async () => ({ offers: [] })],
+      ["an empty answer", async () => ({})],
+    ])("starts nothing on %s, and says the check failed rather than that the Agent is old", async (_n, answer) => {
+      apiGet.mockImplementation(answer as never);
+      await render([], true, fromSpace);
+      await act(async () => acceptButton().click());
+      expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
+      expect(useSpaceHandoff.getState().offerId).toBe("");
+      expect(document.body.textContent).toContain(t("handoff.space_check_failed"));
+      expect(document.body.textContent).not.toContain(t("handoff.space_unsupported"));
+      expect(acceptButton().disabled).toBe(false); // retry is possible
+    });
+
+    // An Agent that took the connection and never answers must not freeze the row: the probe has a
+    // deadline, and retry and decline work again afterwards.
+    it("frees the row when the Agent never answers, and starts nothing", async () => {
+      vi.useFakeTimers();
+      try {
+        apiGet.mockImplementation((async (...a: unknown[]) => {
+          if (!String(a[0]).includes("api/spaces")) return { offers: [] };
+          const signal = (a[1] as { signal?: AbortSignal } | undefined)?.signal;
+          return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+        }) as never);
+        await render([], true, fromSpace);
+        await act(async () => acceptButton().click());
+        expect(acceptButton().disabled).toBe(true); // checking
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SHARE_REQUEST_TIMEOUT_MS + 1000);
+        });
+        expect(acceptButton().disabled).toBe(false);
+        expect(useSpaceHandoff.getState().offerId).toBe("");
+        expect(document.body.textContent).toContain(t("handoff.space_check_failed"));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("cancels the probe when the row goes away", async () => {
+      let signal: AbortSignal | undefined;
+      apiGet.mockImplementation((async (...a: unknown[]) => {
+        if (!String(a[0]).includes("api/spaces")) return { offers: [] };
+        signal = (a[1] as { signal?: AbortSignal } | undefined)?.signal;
+        return new Promise(() => undefined);
+      }) as never);
+      await render([], true, fromSpace);
+      await act(async () => acceptButton().click());
+      expect(signal?.aborted).toBe(false);
+      await act(async () => root!.render(<ToastProvider><StartHost /></ToastProvider>));
+      expect(signal?.aborted).toBe(true);
+    });
+
+    describe("an answer that arrives late", () => {
+      function slowSpaces() {
+        let release: () => void = () => undefined;
+        apiGet.mockImplementation((async (...a: unknown[]) => {
+          if (!String(a[0]).includes("api/spaces")) return { offers: [] };
+          await new Promise<void>((r) => (release = r));
+          return { spaces: [] };
+        }) as never);
+        return () => release();
+      }
+      const settle = async (release: () => void) => {
+        await act(async () => {
+          release();
+          await new Promise((r) => setTimeout(r, 0));
+        });
+      };
+
+      it("writes nothing once the inbox that held the row is closed", async () => {
+        await render([], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        await act(async () => root!.render(<ToastProvider><StartHost /></ToastProvider>)); // the row is gone
+        await settle(release);
+        expect(useSpaceHandoff.getState().offerId).toBe("");
+        expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
+      });
+
+      it("never overwrites the launch of another offer opened meanwhile", async () => {
+        await render([{ name: "private", path: "/r/private" }], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        // Another offer from the same list is accepted first: its repository dialog is open.
+        await act(async () => {
+          useLaunchSeed.getState().set("B's text", "B", "", "", "offer-b");
+          useLaunchTarget.getState().open({ name: "private", path: "/r/private", branch: "main" } as never);
+        });
+        await settle(release);
+        expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-b", prompt: "B's text" });
+        expect(useSpaceHandoff.getState().offerId).toBe("");
+        expect((document.querySelector("[data-testid=launch-dialog]") as HTMLElement).dataset.newSpace).toBe("false");
+      });
+
+      it("writes nothing when the tenant changed meanwhile", async () => {
+        const { useTenantStore } = await import("../../core/store/tenant.ts");
+        useTenantStore.setState({ tenant: "a" });
+        await render([], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        await act(async () => useTenantStore.setState({ tenant: "b" }));
+        await settle(release);
+        expect(useSpaceHandoff.getState().offerId).toBe("");
+        useTenantStore.setState({ tenant: "" });
+      });
+
+      it("writes nothing when another account signed in to the same tenant meanwhile", async () => {
+        const { useTenantStore } = await import("../../core/store/tenant.ts");
+        useTenantStore.setState({ tenant: "a", whoami: { email: "a@example.com", resolved_user: "a" } as never });
+        await render([], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        await act(async () => useTenantStore.setState({ whoami: { email: "b@example.com", resolved_user: "b" } as never }));
+        await settle(release);
+        expect(useSpaceHandoff.getState().offerId).toBe("");
+        useTenantStore.setState({ tenant: "", whoami: null });
+      });
+
+      it("writes nothing when the Start hub was opened meanwhile", async () => {
+        await render([], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        await act(async () => useSessionsStore.getState().openStart());
+        await settle(release);
+        expect(useSpaceHandoff.getState().offerId).toBe("");
+      });
+    });
   });
 
   // #2058: a launch whose result stays unknown can be given back, by the recipient only, after a

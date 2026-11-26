@@ -46,6 +46,9 @@ export interface HandoffOffer {
   /** The inbox only: listed just so the recipient can give back a launch that still holds an
    *  offer no longer shared with them, or whose session was archived. No body or coordinates. */
   recoveryOnly?: boolean;
+  /** The inbox only: the offer comes from a session that ran in the sender's space, whose files
+   *  stay in their home. There is no repository to pick: the launch starts in a new space. */
+  sourceSpace?: boolean;
   /** Only the inbox carries the body: the recipient has to read it to decide whether to accept. */
   prompt?: string;
   sourceSessionKind?: string;

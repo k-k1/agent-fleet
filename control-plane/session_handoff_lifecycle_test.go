@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -323,6 +324,100 @@ func TestHandoffLifecycleOfferTakeAccept(t *testing.T) {
 	}
 	if got := agentCalls(); got != before {
 		t.Fatalf("notifying, the inbox, take and accept asked the owner Agent %d more time(s)", got-before)
+	}
+}
+
+// TestHandoffOfferFromSpaceCarriesItsOrigin is #5233: the Agent says the session runs in a
+// space and asks for the space acknowledgement, the offer records that, and only the
+// recipient's inbox reports it. A repository offer reports nothing.
+func TestHandoffOfferFromSpaceCarriesItsOrigin(t *testing.T) {
+	f := newHandoffLife(t)
+	f.setAgent(map[string]any{"space": true, "warning": "space_files_stay", "remote": nil, "branch": nil, "headSha": nil})
+	rec := f.offer(nil)
+	f.requireConflict(rec, "handoff_warning", "")
+	if e := errorOf(t, rec); e["reason"] != "space_files_stay" || strings.Contains(fmt.Sprint(e["message"]), "uncommitted") {
+		t.Fatalf("warning answered %v, want reason space_files_stay and a message about the space", e)
+	}
+	// A tick given for another warning (uncommitted changes, shown before the Agent reported the
+	// space) is not an acknowledgement of this one: it has to name the warning.
+	f.requireConflict(f.offer(map[string]any{"ackWarning": true}), "handoff_warning", "")
+	f.requireConflict(f.offer(map[string]any{"ackWarning": true, "ackedWarning": "uncommitted_changes"}), "handoff_warning", "")
+	if rows, _ := f.st.ListSessionHandoffOffersByOwner(context.Background(), f.owner.mv.MembershipID); len(rows) != 0 {
+		t.Fatalf("an unnamed acknowledgement stored an offer: %+v", rows)
+	}
+	o := f.mustOffer(map[string]any{"ackWarning": true, "ackedWarning": "space_files_stay"})
+	if !f.row(o.ID).SourceSpace {
+		t.Fatalf("the stored offer does not record the space: %+v", f.row(o.ID))
+	}
+	if in := f.inbox(f.recipient); len(in) != 1 || !in[0].SourceSpace {
+		t.Fatalf("recipient inbox = %+v, want one offer marked sourceSpace", in)
+	}
+
+	g := newHandoffLife(t)
+	p := g.mustOffer(nil)
+	if g.row(p.ID).SourceSpace {
+		t.Fatal("a repository offer was recorded as a space offer")
+	}
+	if in := g.inbox(g.recipient); len(in) != 1 || in[0].SourceSpace {
+		t.Fatalf("recipient inbox = %+v, want an offer without sourceSpace", in)
+	}
+}
+
+// A git-backed space still gates on the push. The offer is stored from the context the Agent
+// reports AFTER the push, so the origin and the acknowledgement are judged on that verdict: a
+// space that became known only then needs its own acknowledgement and publishes nothing before it.
+func TestHandoffPushThenSendFromAGitSpace(t *testing.T) {
+	f := newHandoffLife(t)
+	f.blockedForPush("no_upstream")
+	f.setAgent(map[string]any{"space": true, "warning": "space_files_stay"})
+	var seen []*http.Request
+	var bodies [][]byte
+	f.pushClears(&seen, &bodies)
+
+	// Not acknowledged: nothing is pushed and nothing is stored.
+	req := confirmedPush()
+	req["ackWarning"] = true // the tick of another warning
+	f.requireConflict(f.offer(req), "handoff_warning", "")
+	if len(seen) != 0 || f.offerRows() != 0 {
+		t.Fatalf("pushes=%d offers=%d, want neither before the space is acknowledged", len(seen), f.offerRows())
+	}
+
+	req["ackedWarning"] = "space_files_stay"
+	o := f.mustOffer(req)
+	if len(seen) != 1 || !f.row(o.ID).SourceSpace || f.row(o.ID).HeadSha != confirmedHead {
+		t.Fatalf("pushes=%d row=%+v, want one push and a space offer on %s", len(seen), f.row(o.ID), confirmedHead)
+	}
+
+	// After the push the verdict turns into the space's warning only now: the acknowledgement
+	// given for the first one does not cover it.
+	g := newHandoffLife(t)
+	g.blockedForPush("no_upstream")
+	g.setAgent(map[string]any{"warning": "uncommitted_changes"})
+	var gSeen []*http.Request
+	var gBodies [][]byte
+	g.pushThenSpace(&gSeen, &gBodies)
+	preq := confirmedPush()
+	preq["ackWarning"] = true
+	preq["ackedWarning"] = "uncommitted_changes"
+	g.requireConflict(g.offer(preq), "handoff_warning", "")
+	if len(gSeen) != 1 || g.offerRows() != 0 {
+		t.Fatalf("pushes=%d offers=%d, want the push done and no offer for an unread warning", len(gSeen), g.offerRows())
+	}
+
+	// Acknowledged by name, the offer is stored from the verdict AFTER the push: the first
+	// verdict was no space and the final one is, and the stored origin is the final one.
+	h := newHandoffLife(t)
+	h.blockedForPush("no_upstream")
+	h.setAgent(map[string]any{"warning": "uncommitted_changes"})
+	var hSeen []*http.Request
+	var hBodies [][]byte
+	h.pushThenSpace(&hSeen, &hBodies)
+	hreq := confirmedPush()
+	hreq["ackWarning"] = true
+	hreq["ackedWarning"] = "space_files_stay"
+	o2 := h.mustOffer(hreq)
+	if len(hSeen) != 1 || !h.row(o2.ID).SourceSpace {
+		t.Fatalf("pushes=%d row=%+v, want the origin of the final verdict (space)", len(hSeen), h.row(o2.ID))
 	}
 }
 

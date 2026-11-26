@@ -51,6 +51,11 @@ type handoffContext struct {
 	// it; it goes in Warning.
 	Blocked string `json:"blocked,omitempty"`
 	Warning string `json:"warning,omitempty"`
+	// Space is true when the session runs in a space (ADR 0142). A space is not a repository:
+	// whatever git carries, its other files and the session's attachments live in the giver's
+	// home and never reach the recipient, so Warning is handoffWarnSpace and the offer records
+	// the origin for the recipient's launch.
+	Space bool `json:"space,omitempty"`
 	// PushRemote / PushCommits say what "push, then send" would publish (POST
 	// /sessions/{name}/handoff-push): the URL git would push to, credentials removed, and how
 	// many commits it does not have yet. Set only when Blocked is one a push can clear and the
@@ -68,6 +73,7 @@ const (
 	handoffBlockNoUpstream = "no_upstream"
 	handoffBlockDetached   = "detached_head"
 	handoffWarnDirty       = "uncommitted_changes"
+	handoffWarnSpace       = "space_files_stay"
 )
 
 // sanitizeRemoteURL strips credentials out of a remote URL, so a URL like
@@ -152,6 +158,23 @@ func buildHandoffContext(dir string) handoffContext {
 	return c
 }
 
+// handoffContextFor is buildHandoffContext plus what only the session's own record knows: that
+// it runs in a space. The place stored at create decides; a meta from before the field falls back
+// to the directory's marker. A space overrides the dirty warning: the one acknowledgement it asks
+// for already says that nothing in the folder travels but what git publishes.
+func handoffContextFor(m session.Meta) handoffContext {
+	c := buildHandoffContext(m.Dir)
+	place := m.Place
+	if place == nil {
+		place = PlaceOf(m.Dir)
+	}
+	if place.Kind == session.PlaceSpace {
+		c.Space = true
+		c.Warning = handoffWarnSpace
+	}
+	return c
+}
+
 // HandleSessionHandoffContext — GET /sessions/{name}/handoff-context.
 func HandleSessionHandoffContext(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
@@ -168,5 +191,5 @@ func HandleSessionHandoffContext(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "no_working_copy", "session has no working copy")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, buildHandoffContext(m.Dir))
+	httpx.WriteJSON(w, http.StatusOK, handoffContextFor(m))
 }

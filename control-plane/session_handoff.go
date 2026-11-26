@@ -76,6 +76,11 @@ type handoffOfferBody struct {
 	// AckWarning means "there are uncommitted changes and I am sending anyway". A blocked
 	// state cannot be overridden this way.
 	AckWarning bool `json:"ackWarning"`
+	// AckedWarning names the warning the owner ticked. A space's warning (handoffWarnSpace) is
+	// acknowledged only by naming it: a tick given for another warning (uncommitted changes
+	// shown before the Agent started reporting the space) must not carry over to one the owner
+	// never read. Other warnings keep the plain AckWarning.
+	AckedWarning string `json:"ackedWarning,omitempty"`
 	// PushFirst is the owner's "push, then send" (#2072): when the gate blocks for a reason a
 	// push clears, the owner Agent pushes the current branch and the gate is asked again.
 	// It never overrides the gate; the offer goes only if the recomputed verdict passes.
@@ -83,6 +88,23 @@ type handoffOfferBody struct {
 	// PushExpect is what the owner was shown and confirmed: the push happens only while the
 	// working copy still matches it, and the offer only if the state after the push does too.
 	PushExpect *handoffPushExpect `json:"pushExpect,omitempty"`
+}
+
+// handoffWarnSpace is the Agent's token for a session that runs in a space
+// (workspace/agent/internal/sessionx handoffWarnSpace).
+const handoffWarnSpace = "space_files_stay"
+
+// acks reports whether the owner's acknowledgement covers the warning the Agent reports now.
+func (in handoffOfferBody) acks(warn string) bool {
+	return in.AckWarning && (warn != handoffWarnSpace || in.AckedWarning == warn)
+}
+
+// handoffWarnMessage is the English text of a refused warning; the Console shows it as it is.
+func handoffWarnMessage(warn string) string {
+	if warn == handoffWarnSpace {
+		return "the session runs in a space; its files are not handed over"
+	}
+	return "the working copy has uncommitted changes"
 }
 
 // handoffPushExpect pins a push to the snapshot the owner confirmed. It is also the body of
@@ -155,7 +177,7 @@ type handoffOfferWire struct {
 }
 
 // handoffOfferInboxWire is one entry of the recipient's inbox: the base form plus three
-// keys, 21 in all with every optional key. The three cannot be optional fields on the base type —
+// keys, 22 in all with every optional key. The three cannot be optional fields on the base type —
 // ownerUserKey is "" when the member is unknown and prompt is "" when the ciphertext cannot be
 // opened, and both still have to appear — so they are added by embedding, which JSON flattens.
 //
@@ -163,7 +185,7 @@ type handoffOfferWire struct {
 //
 // The effective JSON names of the base and the three additions must not collide:
 // encoding/json emits neither side of a collision, so a key would vanish silently. The
-// equivalence test catches that, and the counts 15 / 21 (optional keys set) are pinned
+// equivalence test catches that, and the counts 15 / 22 (optional keys set) are pinned
 // separately.
 type handoffOfferInboxWire struct {
 	handoffOfferWire
@@ -178,6 +200,10 @@ type handoffOfferInboxWire struct {
 	// still holds it after an unshare or archive (ListReceivedSessionHandoffOffers): it
 	// carries no body or coordinates, and nothing launches from it.
 	RecoveryOnly bool `json:"recoveryOnly,omitempty"`
+	// SourceSpace marks an offer from a session that ran in a space (#5233): the sender's files
+	// and attachments stay in their home, and the Console starts the launch in a new space of
+	// the recipient's own instead of asking for a repository. Absent for a repository handoff.
+	SourceSpace bool `json:"sourceSpace,omitempty"`
 	// OwnerEmail names the sender the way the recipient's shared-sessions list does (ownerEmail
 	// there too), absent when unknown; the Console falls back to ownerUserKey.
 	OwnerEmail string `json:"ownerEmail,omitempty"`
@@ -398,7 +424,7 @@ func handoffPushClears(blocked string) bool {
 // Agent call carries a member-origin mark (ADR 0113): AGENT_TOKEN is in every session's shell,
 // and the Agent accepts this route only on the CP's word that the owner asked. ok=false means
 // it has written the refusal.
-func (a sessionHandoffAPI) pushThenRecheck(w http.ResponseWriter, r *http.Request, res *resolved, c store.SharedSessionCatalog, hctx map[string]any, exp *handoffPushExpect, ack bool) (map[string]any, string, bool) {
+func (a sessionHandoffAPI) pushThenRecheck(w http.ResponseWriter, r *http.Request, res *resolved, c store.SharedSessionCatalog, hctx map[string]any, exp *handoffPushExpect, in handoffOfferBody) (map[string]any, string, bool) {
 	fail := func(e *apiError) (map[string]any, string, bool) {
 		writeAPIErr(w, e)
 		return nil, "", false
@@ -414,8 +440,8 @@ func (a sessionHandoffAPI) pushThenRecheck(w http.ResponseWriter, r *http.Reques
 	if str(hctx, "branch") != exp.Branch || str(hctx, "headSha") != exp.HeadSha || str(hctx, "pushRemote") != exp.PushRemote {
 		return changed(hctx)
 	}
-	if warn := str(hctx, "warning"); warn != "" && !ack {
-		writeHandoffErr(w, http.StatusConflict, "handoff_warning", "the working copy has uncommitted changes", map[string]any{"reason": warn, "context": hctx})
+	if warn := str(hctx, "warning"); warn != "" && !in.acks(warn) {
+		writeHandoffErr(w, http.StatusConflict, "handoff_warning", handoffWarnMessage(warn), map[string]any{"reason": warn, "context": hctx})
 		return nil, "", false
 	}
 	rows, err := a.mgr.store.ListSessionHandoffOffersByOwner(r.Context(), res.mv.MembershipID)
@@ -574,7 +600,7 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 	}
 	if blocked != "" && in.PushFirst && handoffPushClears(blocked) {
 		var ok bool
-		if hctx, blocked, ok = a.pushThenRecheck(w, r, res, c, hctx, in.PushExpect, in.AckWarning); !ok {
+		if hctx, blocked, ok = a.pushThenRecheck(w, r, res, c, hctx, in.PushExpect, in); !ok {
 			return
 		}
 	}
@@ -582,8 +608,8 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 		writeHandoffErr(w, http.StatusConflict, "handoff_blocked", "the working copy is not in a handoff-able state", map[string]any{"reason": blocked, "context": hctx})
 		return
 	}
-	if warn, _ := hctx["warning"].(string); warn != "" && !in.AckWarning {
-		writeHandoffErr(w, http.StatusConflict, "handoff_warning", "the working copy has uncommitted changes", map[string]any{"reason": warn, "context": hctx})
+	if warn, _ := hctx["warning"].(string); warn != "" && !in.acks(warn) {
+		writeHandoffErr(w, http.StatusConflict, "handoff_warning", handoffWarnMessage(warn), map[string]any{"reason": warn, "context": hctx})
 		return
 	}
 	ct, kr, err := a.seal(r.Context(), res.mv.TenantID, []byte(in.Prompt))
@@ -598,6 +624,7 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 		OwnerMembershipID: res.mv.MembershipID, RecipientMembershipID: recipient.MembershipID,
 		Title: in.Title, Ciphertext: ct, KeyRef: kr,
 		RepoRemote: stripURLUserinfo(str("remote")), Branch: str("branch"), HeadSha: str("headSha"),
+		SourceSpace:       hctx["space"] == true,
 		SourceSessionName: c.Name, SourceSessionKind: c.Kind, Status: "pending",
 		CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(handoffOfferTTL).Format(time.RFC3339),
 	}
@@ -665,6 +692,7 @@ func (a sessionHandoffAPI) listReceived(w http.ResponseWriter, r *http.Request, 
 			SourceSessionKind: o.SourceSessionKind,
 			TakeRev:           rev,
 			RecoveryOnly:      row.RecoveryOnly,
+			SourceSpace:       o.SourceSpace && !row.RecoveryOnly,
 			OwnerEmail:        members[o.OwnerMembershipID].Email,
 		}
 		if row.RecoveryOnly {

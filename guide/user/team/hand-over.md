@@ -63,6 +63,20 @@ The dialog says why.
 
 If git refuses the push, nothing is sent and git's message appears in the dialog.
 
+### A session that runs in a space
+
+A [space](../sessions/spaces.md) is a folder of its own, not a repository, so its files and the session's attachments stay
+in your home and never reach the recipient. They get the handoff text and nothing else.
+
+- The dialog says so and asks you to tick "**Send anyway; I understand the space's files are not handed over**" before
+  "**Send handoff**" is enabled. The tick is for that warning alone: if the dialog's state changes to another warning
+  while it is open, it starts unticked again. Put what the recipient needs into the handoff text
+- The recipient's offer shows no repository, branch or commit and no working copy to choose. It says the files stay in
+  your home, and "**Take it over**" opens the launch dialog for **a new space of their own**, never a repository and
+  never home
+- A space that is also a git working copy is still checked like a repository: unpushed commits block the send, and
+  "**Push, then send**" is offered. Even then the recipient starts in a new space, not in a clone
+
 ## Take over a handoff you received
 
 A handoff shows up for the recipient in three places.
@@ -73,8 +87,12 @@ A handoff shows up for the recipient in three places.
 
 To take it:
 
-1. Press "**Take it over**" and choose a working copy. If your workspace has none yet, clone the source repository first
-2. The usual launch dialog opens with everything filled in. Check it and launch
+1. Press "**Take it over**" and choose a working copy. If your workspace has none yet, clone the source repository first.
+   A handoff from a space has no working copy to choose: the offer says the sender's files stay behind
+2. The usual launch dialog opens with everything filled in. Check it and launch. For a handoff from a space it is the
+   new-space dialog, and the session starts in a new space under `~/spaces`. It first asks your workspace whether it can
+   start in a space; if the workspace is stopped or does not answer, nothing starts and you are told to start it and
+   take the handoff again
 
 The session runs in the recipient's workspace and its cost is theirs. To refuse, press "**Decline**".
 

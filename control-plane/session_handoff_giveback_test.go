@@ -613,3 +613,36 @@ func TestHandoffRecoveryRowNeverLaunches(t *testing.T) {
 		h.requireCode(h.withdraw(), http.StatusOK, "")
 	})
 }
+
+// TestHandoffRecoveryRowDropsTheSpaceOrigin: a recovery row carries no body or coordinates, and
+// its origin goes with them, so a Console never starts a new-space launch from one.
+func TestHandoffRecoveryRowDropsTheSpaceOrigin(t *testing.T) {
+	handoffDialects(t, func(t *testing.T, h *handoffRecovery) {
+		ctx := context.Background()
+		if _, err := h.st.DB().ExecContext(ctx, `UPDATE session_handoff_offer SET source_space=1 WHERE id=?`, h.offer); err != nil {
+			t.Fatal(err)
+		}
+		h.agent.set("drop", "agent")
+		_ = h.create(h.mustTake())
+		h.ageTake()
+		// While the session is listed the row is a normal one and says where it came from.
+		if row := h.inboxRow(); row == nil || row["sourceSpace"] != true {
+			t.Fatalf("the inbox row is %v, want a normal row with sourceSpace", row)
+		}
+		cats, err := h.st.ListSharedSessionCatalogByOwner(ctx, h.members["a"])
+		if err != nil || len(cats) != 1 {
+			t.Fatalf("catalog = %v err=%v", cats, err)
+		}
+		cats[0].Archived = true
+		if err := h.st.ReplaceSharedSessionCatalog(ctx, "ws-a", h.members["a"], cats); err != nil {
+			t.Fatal(err)
+		}
+		row := h.inboxRow()
+		if row == nil || row["recoveryOnly"] != true {
+			t.Fatalf("the inbox row is %v, want a recovery row", row)
+		}
+		if _, ok := row["sourceSpace"]; ok {
+			t.Fatalf("a recovery row still carries sourceSpace: %v", row)
+		}
+	})
+}
