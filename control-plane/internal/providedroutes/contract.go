@@ -132,14 +132,14 @@ func UpstreamHeaders(in http.Header) (http.Header, *Refusal) {
 	return out, nil
 }
 
-// refusedInvokeFields are top-level request fields that change the price or reach resources the
-// price table does not cover. invoke's body is the model's own (Anthropic's Messages shape), so
-// only the fields that move the bill are named; Converse's shape is AWS's own, and every field
-// outside convFields is refused (its modelId included).
+// refusedInvokeFields are the top-level invoke fields a provided route refuses. invoke's body is
+// the model's own (Anthropic's Messages shape), so only these are named; Converse's shape is
+// AWS's own, and every field outside convFields is refused (its modelId included).
 //
-// model is refused in any value, the path's own id included: the path is the only model the
-// allow-list checks, and a body that names another would be signed and sent before Bedrock
-// rejects the mismatch (ADR 0129 D7: "a model outside the list (path and body)").
+//   - service_tier and inference_geo change the price outside the table.
+//   - model names a model in the body. Bedrock selects the model by the path's id, the only one the
+//     allow-list checks, so a body model is refused before signing whatever it names, the path's
+//     own id included (ADR 0129 D7: "a model outside the list (path and body)").
 var refusedInvokeFields = []string{"model", "service_tier", "inference_geo"}
 
 var convFields = []string{"messages", "system", "inferenceConfig", "toolConfig", "additionalModelRequestFields",

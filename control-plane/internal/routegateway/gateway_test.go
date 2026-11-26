@@ -494,11 +494,11 @@ func TestProvidedRouteGatewayContractRefusals(t *testing.T) {
 		{"ARN model id", good, streamPath("arn%3Aaws%3Abedrock%3Aus-east-1%3A111122223333%3Aapplication-inference-profile%2Fx"), prStreamBody, nil, 412, providedroutes.CodeModelNotAllowed},
 		{"model outside the list", good, streamPath("us.anthropic.claude-sonnet-5-5"), prStreamBody, nil, 412, providedroutes.CodeModelNotAllowed},
 		{"invoke body naming a model outside the list", good, "/model/" + prTestModel + "/invoke",
-			`{"anthropic_version":"bedrock-2023-05-31","max_tokens":1000,"model":"us.anthropic.claude-sonnet-5-5","messages":[]}`, nil, 400, providedroutes.CodeRequestRefused},
+			`{"anthropic_version":"bedrock-2023-05-31","max_tokens":1000,"model":"us.anthropic.claude-sonnet-5-5","messages":[{"role":"user","content":"hi"}]}`, nil, 400, providedroutes.CodeRequestRefused},
 		{"stream body naming a model outside the list", good, streamPath(prTestModel),
-			`{"anthropic_version":"bedrock-2023-05-31","max_tokens":1000,"model":"us.anthropic.claude-sonnet-5-5","messages":[]}`, nil, 400, providedroutes.CodeRequestRefused},
+			`{"anthropic_version":"bedrock-2023-05-31","max_tokens":1000,"model":"us.anthropic.claude-sonnet-5-5","messages":[{"role":"user","content":"hi"}]}`, nil, 400, providedroutes.CodeRequestRefused},
 		{"Converse body naming a model outside the list", good, "/model/" + prTestModel + "/converse",
-			`{"messages":[],"inferenceConfig":{"maxTokens":1000},"modelId":"us.anthropic.claude-sonnet-5-5"}`, nil, 400, providedroutes.CodeRequestRefused},
+			`{"messages":[{"role":"user","content":[{"text":"hi"}]}],"inferenceConfig":{"maxTokens":1000},"modelId":"us.anthropic.claude-sonnet-5-5"}`, nil, 400, providedroutes.CodeRequestRefused},
 		{"another operation", good, "/model/" + prTestModel + "/count-tokens", prStreamBody, nil, 404, providedroutes.CodeOperationNotAllowed},
 		{"listing models", good, "/foundation-models", "", nil, 404, providedroutes.CodeOperationNotAllowed},
 		{"missing output cap", good, streamPath(prTestModel), `{"messages":[]}`, nil, 400, providedroutes.CodeOutputCap},
@@ -513,11 +513,17 @@ func TestProvidedRouteGatewayContractRefusals(t *testing.T) {
 	if e.up.n() != 0 || e.assumer.count() != 0 {
 		t.Fatalf("a refused call reached upstream (%d) or STS (%d)", e.up.n(), e.assumer.count())
 	}
-	if rows, _ := e.st.ListInFlightProvidedRouteCalls(ctx, 0); len(rows) != 0 {
+	rows, err := e.st.ListInFlightProvidedRouteCalls(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
 		t.Fatalf("a refused call reserved: %+v", rows)
 	}
 	var n int
-	_ = e.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM provided_route_call`).Scan(&n)
+	if err := e.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM provided_route_call`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 0 {
 		t.Fatalf("%d call rows after refusals", n)
 	}
