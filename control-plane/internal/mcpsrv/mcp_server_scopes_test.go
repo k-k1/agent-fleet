@@ -165,13 +165,17 @@ func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
 	if w := upsert(http.MethodPut, created.ID, gmail); w.Code != http.StatusOK {
 		t.Fatalf("restore: %d %s", w.Code, w.Body)
 	}
+	if row, ok, err := a.store.GetMCPServer(ctx, tn.ID, created.ID); err != nil || !ok || row.OAuthScopes != strings.Join(scopes, " ") {
+		t.Fatalf("after restoring scopes to an empty list: %q (%v %v)", row.OAuthScopes, ok, err)
+	}
 	static := gmail
 	static.Auth, static.Scopes = "", nil
 	if w := upsert(http.MethodPut, created.ID, static); w.Code != http.StatusOK {
 		t.Fatalf("to static: %d %s", w.Code, w.Body)
 	}
-	if row, _, _ := a.store.GetMCPServer(ctx, tn.ID, created.ID); row.OAuthScopes != "" || row.Auth != "" {
-		t.Fatalf("after leaving OAuth: auth=%q scopes=%q", row.Auth, row.OAuthScopes)
+	row, ok, err = a.store.GetMCPServer(ctx, tn.ID, created.ID)
+	if err != nil || !ok || row.Name != "gmail" || row.OAuthScopes != "" || row.Auth != "" {
+		t.Fatalf("after leaving OAuth: auth=%q scopes=%q (%v %v)", row.Auth, row.OAuthScopes, ok, err)
 	}
 }
 
