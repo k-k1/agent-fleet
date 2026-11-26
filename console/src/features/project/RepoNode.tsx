@@ -22,7 +22,7 @@ import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useShownSchedules } from "..//schedules/store.ts";
-import { childNodes, sessionsInFolder, shellPlaceKey, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
+import { childNodes, sessionsActedOnInFolder, sessionsInFolder, shellPlaceKey, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
@@ -102,7 +102,8 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   // own folder: mine comes from sessionsInFolder(r.name), so a worktree counts as a separate
   // folder name and is naturally excluded from the base repo's bulk action.
   // Read from the whole folder, an auto-run's stopped sessions included: this is an action, not a count.
-  const stoppedMine = sessionsInFolder(sessions, r.name).filter((s) => !s.alive && !s.locked);
+  // An action, so only what it may touch (sessionsActedOnInFolder).
+  const stoppedMine = sessionsActedOnInFolder(sessions, r.name).filter((s) => !s.alive && !s.locked);
   if (!open) {
     for (const f of below) {
       const cs = sessionsInFolder(shown, f);

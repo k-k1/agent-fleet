@@ -309,11 +309,11 @@ function TalkRowBody({ h }: { h: SessionSearchHit }) {
   );
 }
 
-// Which session a hit is, beyond its title: the slug, and the branch it recorded (the working
-// copy's folder when there is none). Two sessions often share a title, and only this tells them apart.
+// Which session a hit is, beyond its title: the slug, and the branch it recorded (else its space,
+// else the working copy's folder). Two sessions often share a title, and only this tells them apart.
 function TalkWhere({ h }: { h: SessionSearchHit }) {
   const folder = h.dir ? h.dir.split("/").filter(Boolean).pop() : "";
-  const place = h.branch || folder;
+  const place = h.branch || h.space || folder;
   return (
     <span className="cp-talk-where" title={[h.session, h.branch, h.dir].filter(Boolean).join("\n")}>
       <span className="cp-talk-slug">{h.session}</span>

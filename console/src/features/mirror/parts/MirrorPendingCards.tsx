@@ -1,4 +1,5 @@
 import type { Session } from "../../../types/session.ts";
+import { ticketRepoOf } from "./useTranscriptCaps.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
@@ -53,6 +54,7 @@ export function MirrorPendingCards({
   // A kind answered only by id (opencode) gets no Cancel on a card without one: the Terminal Cancel
   // is an Escape, a key into a modal whose keys are unmeasured (registry questionByIdOnly).
   const keysAllowed = !agentOf(sessionMeta?.kind).caps.questionByIdOnly;
+  const metaRepo = ticketRepoOf(sessionMeta);
   return (
     <>
       {carried && (
@@ -63,7 +65,7 @@ export function MirrorPendingCards({
           carried={carried}
           session={session}
           agentName={agentName}
-          repo={sessionMeta?.repo ?? null}
+          repo={metaRepo}
           onOpenFile={openFile}
           onOpenPlan={openPlan}
           onReviewPlan={reviewCarriedPlan}
@@ -144,7 +146,7 @@ export function MirrorPendingCards({
           session={session}
           questions={pending}
           pendingText={pendingText}
-          repo={sessionMeta?.repo ?? null}
+          repo={metaRepo}
           sending={sending}
           answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
           menuKeys={keysAllowed}
@@ -184,7 +186,7 @@ export function MirrorPendingCards({
         <LiveReplyCard
           agentName={agentName}
           text={liveText}
-          repo={sessionMeta?.repo ?? null}
+          repo={metaRepo}
           onOpenFile={openFile}
           mode={liveMode === "typewriter" ? "typewriter" : "lines"}
         />

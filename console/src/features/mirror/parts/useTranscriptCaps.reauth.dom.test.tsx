@@ -10,10 +10,10 @@ import type { TranscriptCaps } from "../transcript/capabilities.ts";
 
 const stub = () => new Proxy({ wiring: undefined, current: new Set() }, { get: (t, k) => (k in t ? (t as never)[k] : () => {}) });
 
-function Probe({ kind, out }: { kind: string; out: { caps?: TranscriptCaps } }) {
+function Probe({ kind, out, meta = {} }: { kind: string; out: { caps?: TranscriptCaps }; meta?: object }) {
   out.caps = useTranscriptCaps({
     session: "s1",
-    sessionMeta: { kind } as never,
+    sessionMeta: { kind, ...meta } as never,
     settings: settingsDefaults(),
     managed: true,
     readOnly: false,
@@ -44,5 +44,23 @@ describe("useTranscriptCaps onReauth", () => {
     expect(s.settingsSection).toBe("credentials");
     expect(s.settingsTarget).toBe(kind);
     act(() => root.unmount());
+  });
+});
+
+// #5219: ticket links resolve against the session's working copy, so a space named like a
+// repository resolves none, whatever its row's `repo` still says.
+describe("useTranscriptCaps repo", () => {
+  const capsFor = (meta: object) => {
+    const out: { caps?: TranscriptCaps } = {};
+    const root = createRoot(document.createElement("div"));
+    act(() => root.render(<Probe kind="claude" out={out} meta={meta} />));
+    act(() => root.unmount());
+    return out.caps!;
+  };
+  it("is the working copy the stored place names, and none for a space or home", () => {
+    expect(capsFor({ repo: "notes", place: { kind: "repo", id: "notes" } }).repo).toBe("notes");
+    expect(capsFor({ repo: "notes", place: { kind: "space", id: "notes" } }).repo).toBeNull();
+    expect(capsFor({ repo: "dev", place: { kind: "home" } }).repo).toBeNull();
+    expect(capsFor({ repo: "notes" }).repo).toBe("notes");
   });
 });

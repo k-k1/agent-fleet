@@ -46,6 +46,24 @@ describe("handoffLaunchTarget", () => {
     expect(t).toEqual({ error: "no_parent" });
   });
 
+  // #5219: a session started through a link spells another path and stores no repository place.
+  // Its working-copy id is not taken alone: a file copy outside the list carries the clone's id,
+  // and a link re-pointed under a running session reads the new target's.
+  it("does not match a row by the working-copy id alone", () => {
+    const a: Repo = { ...WT, workingCopyId: "wc_a" };
+    const linked = sess({ repo: "current", dir: "/home/dev/links/current", worktree: true, place: { kind: "other" }, workingCopyId: "wc_a" });
+    expect(handoffLaunchTarget(linked, [GIT, a], true)).toEqual({ error: "no_parent" });
+    expect(handoffLaunchTarget(linked, [GIT, a], false)).toMatchObject({ repo: { name: "current", path: "/home/dev/links/current" } });
+  });
+
+  it("does not pick a parent from a stored place the dir no longer proves", () => {
+    // A meta stored while `current/..` led to app@wip-x (an earlier Agent placed it so); the link
+    // now leads under a worktree of another repository, whose branch the list reports.
+    const other: Repo = { name: "lib", path: "/home/dev/repos/lib", branch: "main" };
+    const stale = sess({ repo: "..", dir: "/home/dev/links/current/..", worktree: true, place: { kind: "worktree", id: "app@wip-x", parent: "app" }, currentBranch: "temp/lib" });
+    expect(handoffLaunchTarget(stale, [GIT, WT, other], true)).toEqual({ error: "no_parent" });
+  });
+
   it("reports no_dir for a session with no working directory", () => {
     expect(handoffLaunchTarget(sess({}), [GIT], false)).toEqual({ error: "no_dir" });
   });
@@ -73,6 +91,12 @@ describe("handoffLaunchTarget", () => {
 
     it("ignores the new-worktree opt-in: a space has no parent clone to branch from", () => {
       expect(handoffLaunchTarget(inSpace({ worktree: true }), [GIT, WT], true)).toMatchObject({ space: "research-aaa" });
+    });
+
+    it("takes the space from the stored place on a row that carries no space (#5219)", () => {
+      const clash: Repo = { name: "research-aaa", path: "/home/dev/repos/research-aaa", branch: "main" };
+      const stopped = sess({ repo: "research-aaa", place: { kind: "space", id: "research-aaa" }, dir: "/home/dev/spaces/research-aaa" });
+      expect(handoffLaunchTarget(stopped, [clash], false)).toEqual({ space: "research-aaa", dir: "/home/dev/spaces/research-aaa" });
     });
 
     it("needs no directory to name the space", () => {

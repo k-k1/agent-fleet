@@ -135,6 +135,50 @@ describe("activeGroups", () => {
     expect(activeGroups([s("y", { repo: "removed" })], [], spaces, null, new Set(), undefined, true)[0].kind).toBe("other");
   });
 
+  // #5219: a row may carry the place but no `space` (the Control Plane's mirror serves those), and
+  // an older Agent still wrote the space's folder into `repo`.
+  it("files a space by its stored place, never under the repository of the same name", () => {
+    const named = [repo("s1", { remote: "github.com", remotePath: "acme/s1" })];
+    const list = [
+      s("r", { repo: "s1", place: { kind: "repo", id: "s1" } }),
+      s("live", { repo: "", space: "s1", place: { kind: "space", id: "s1" } }),
+      s("nospace", { repo: "s1", place: { kind: "space", id: "s1" } }),
+      s("home", { repo: "", place: { kind: "home" }, dir: "/home/s1" }),
+    ];
+    const groups = activeGroups(list, named, spaces, null);
+    expect(groups.map((g) => [g.kind, g.label, names(g.sessions).sort()])).toEqual([
+      ["repo", "s1", ["r"]],
+      ["space", "Research", ["live", "nospace"]],
+      ["other", "", ["home"]],
+    ]);
+  });
+
+  it("trusts a stored place over the folder name while the working-copy list lags (#5219)", () => {
+    const lagging = [repo("app", { remote: "github.com", remotePath: "acme/app" })];
+    const list = [
+      // a clone of its own whose folder happens to read like a worktree of app
+      s("clone", { repo: "app@notes", place: { kind: "repo", id: "app@notes" } }),
+      // a real worktree of app under a name of its own
+      s("qa", { repo: "qa-copy", place: { kind: "worktree", id: "qa-copy", parent: "app" } }),
+      // a row without a place is still guessed from its name
+      s("legacy", { repo: "app@wip-1" }),
+    ];
+    const groups = activeGroups(list, lagging, spaces, null);
+    expect(groups.map((g) => [g.kind, g.label, names(g.sessions).sort()])).toEqual([
+      ["repo", "app", ["legacy", "qa"]],
+      ["other", "", ["clone"]],
+    ]);
+    // The same with app's working set chosen: the stored parent puts qa in it, and the clone
+    // named app@notes is no copy of app.
+    const scoped = activeGroups(list, lagging, spaces, set({ repos: ["app"] }));
+    expect(scoped.map((g) => [g.kind, g.label, names(g.sessions).sort()])).toEqual([["repo", "app", ["legacy", "qa"]]]);
+    const unknown = activeGroups(list, [], spaces, null, new Set(), undefined, false);
+    expect(unknown.map((g) => [g.key, names(g.sessions).sort()])).toEqual([
+      ["c:app", ["legacy", "qa"]],
+      ["c:app@notes", ["clone"]],
+    ]);
+  });
+
   it("names a space by its folder until the list knows it", () => {
     expect(activeGroups([s("sp", { space: "s9" })], [], spaces, null)[0].label).toBe("s9");
   });

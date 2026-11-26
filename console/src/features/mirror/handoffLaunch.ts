@@ -9,6 +9,7 @@
 // every future Repo flag reaches the dialog without another site to remember.
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
+import { sessionSpace } from "../../lib/project.ts";
 
 /** Resolved target, or why one could not be built (the caller turns it into a toast). A session
  *  that runs in a space (ADR 0142) targets that space, never a repository: `dir` is only what the
@@ -21,8 +22,11 @@ export function targetDir(target: { repo: Repo } | { space: string; dir: string 
 }
 
 /** The repos rail's row for this session's working copy. Matched on `dir`/`path` first —
- *  the only reliable link between a session and its copy — with the folder name as the
- *  fallback for a row the list has not caught up with. */
+ *  the only reliable link between a session and its copy — with the folder name the session
+ *  recorded (`repo`, the dir's base name) as the fallback for a row the list has not caught up
+ *  with. Never on the stored place or the working-copy id alone: neither proves the dir still
+ *  leads to that copy (a link re-pointed since, a file copy of a clone outside the list). A
+ *  space never reaches here (handoffLaunchTarget). */
 function repoOf(session: Session | null | undefined, repos: Repo[]): Repo | undefined {
   const dir = session?.dir || session?.path || "";
   return repos.find((r) => !!r.path && r.path === dir) || repos.find((r) => r.name === session?.repo);
@@ -42,7 +46,8 @@ export function handoffLaunchTarget(
   // A space is no row of the repos rail: looked up there, it would fall through to a Repo built
   // from the session alone (no vcs, so read as git) and the launch dialog would offer a worktree
   // and branch in a folder that is not a working copy. It starts in the same space instead.
-  if (session?.space) return { space: session.space, dir: path };
+  const space = session ? sessionSpace(session) : "";
+  if (space) return { space, dir: path };
   if (!path) return { error: "no_dir" };
   const mine = repoOf(session, repos);
   const branch = session?.currentBranch || session?.branch;

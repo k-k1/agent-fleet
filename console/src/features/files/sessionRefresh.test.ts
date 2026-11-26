@@ -78,6 +78,12 @@ describe("sessionPrefix", () => {
     expect(sessionPrefix({ repo: "" })).toBe("");
     expect(sessionPrefix({})).toBe("");
   });
+  it("names no working copy for a space or home session, whatever its repo says (#5219)", () => {
+    expect(sessionPrefix({ repo: "notes", place: { kind: "space", id: "notes" } })).toBe("");
+    expect(sessionPrefix({ repo: "dev", place: { kind: "home" } })).toBe("");
+    expect(sessionPrefix({ repo: "notes", space: "notes" })).toBe("");
+    expect(sessionPrefix({ repo: "", place: { kind: "worktree", id: "app@wip", parent: "app" } })).toBe("repos/app@wip");
+  });
 });
 
 describe("createTurnEndDetector", () => {

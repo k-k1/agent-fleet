@@ -559,7 +559,7 @@ type CatalogEntry struct {
 	Name          string `json:"name"`
 	Kind          string `json:"kind"`
 	Dir           string `json:"dir"`
-	Repo          string `json:"repo"`
+	Repo          string `json:"repo"` // FolderLabel: display only, a share is matched by WorkingCopyID
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
 	Title         string `json:"title,omitempty"`
 	Label         string `json:"label,omitempty"`
@@ -1202,6 +1202,16 @@ func StoppedTTL() (d time.Duration, ok bool) {
 	return StoppedArchiveDefault, true
 }
 
+// FolderLabel is the folder a session is shown by: its working copy (Repo), else the directory's
+// own name, because a space or home session records no Repo and would otherwise be shown by
+// its opaque slug. Display only; never a key.
+func FolderLabel(m Meta) string {
+	if m.Repo != "" || m.Dir == "" {
+		return m.Repo
+	}
+	return filepath.Base(m.Dir)
+}
+
 // Display derives a human-readable session name, mirroring the Console's
 // displayName (lib/sessionview.ts): the user title if set; else a claude session's
 // --name label (minus the "[AF:<name>] " tag, label.go); else "{repo}@MMDD-HHMM". The random slug
@@ -1214,7 +1224,7 @@ func Display(m Meta) string {
 	if m.Label != "" {
 		return StripLabel(m.Label)
 	}
-	base := m.Repo
+	base := FolderLabel(m)
 	if base == "" {
 		base = m.Name
 	}

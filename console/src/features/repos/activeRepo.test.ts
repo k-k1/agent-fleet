@@ -12,6 +12,12 @@ describe("activeRepoOf", () => {
   it("is nothing for a session in a space of the same name", () => {
     expect(activeRepoOf({ name: "b", kind: "claude", repo: "notes", space: "notes" })).toBeNull();
   });
+  it("goes by the stored place (#5219)", () => {
+    expect(activeRepoOf({ name: "c", kind: "claude", repo: "notes", place: { kind: "space", id: "notes" } })).toBeNull();
+    expect(activeRepoOf({ name: "d", kind: "claude", repo: "dev", place: { kind: "home" } })).toBeNull();
+    expect(activeRepoOf({ name: "e", kind: "claude", repo: "app", place: { kind: "other" } })).toBeNull();
+    expect(activeRepoOf({ name: "f", kind: "claude", repo: "app@wip", place: { kind: "worktree", id: "app@wip", parent: "app" } })).toBe("app@wip");
+  });
   it("is nothing without a session", () => {
     expect(activeRepoOf(undefined)).toBeNull();
   });

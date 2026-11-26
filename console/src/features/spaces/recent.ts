@@ -2,6 +2,7 @@
 // used again by starting a session in it, so "recently used" is the newest session in the space;
 // a space nobody started a session in yet ranks by its own creation time. The Agent's list is
 // ordered by creation alone, which would bury a month-old space the member returns to every day.
+import { sessionSpace } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
 import type { Space } from "./store.ts";
 
@@ -12,10 +13,11 @@ export const RECENT_SPACES = 5;
 export function rankSpaces(spaces: Space[], sessions: Session[]): Space[] {
   const lastUse = new Map<string, number>();
   for (const s of sessions) {
-    if (!s.space || !s.createdAt) continue;
+    const space = sessionSpace(s);
+    if (!space || !s.createdAt) continue;
     const at = Date.parse(s.createdAt);
     if (Number.isNaN(at)) continue;
-    if (at > (lastUse.get(s.space) ?? -Infinity)) lastUse.set(s.space, at);
+    if (at > (lastUse.get(space) ?? -Infinity)) lastUse.set(space, at);
   }
   // A session's time wins even when it is older than the space (a clock set back): the creation
   // time stands in only for a space no session was started in.

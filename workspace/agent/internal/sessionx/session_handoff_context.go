@@ -19,7 +19,6 @@ package sessionx
 import (
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -115,7 +114,8 @@ func gitHasUpstream(dir string) bool {
 // buildHandoffContext folds dir's state into one answer. When dir is not a git working
 // copy, Vcs is left empty (or set to svn) and no gate is evaluated.
 func buildHandoffContext(dir string) handoffContext {
-	c := handoffContext{Repo: filepath.Base(dir), Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
+	// Repo is set from the session's stored place (handoffContextFor, handoffRepo).
+	c := handoffContext{Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
 	switch {
 	case gitx.IsGitRepo(dir):
 		c.Vcs = "git"
@@ -164,15 +164,29 @@ func buildHandoffContext(dir string) handoffContext {
 // for already says that nothing in the folder travels but what git publishes.
 func handoffContextFor(m session.Meta) handoffContext {
 	c := buildHandoffContext(m.Dir)
-	place := m.Place
-	if place == nil {
-		place = PlaceOf(m.Dir)
-	}
+	place := handoffPlace(m)
+	c.Repo = repoName(place, m.Dir)
 	if place.Kind == session.PlaceSpace {
 		c.Space = true
 		c.Warning = handoffWarnSpace
 	}
 	return c
+}
+
+// handoffPlace is the place a session's handoff context goes by: the one stored at create, so it
+// agrees with the session's own record even after the directory changed (a space's marker
+// removed); a meta from before places were stored is classified from its directory now, by the
+// launch rule.
+func handoffPlace(m session.Meta) *session.Place {
+	if m.Place != nil {
+		return m.Place
+	}
+	return sessionPlaceOf(m.Dir, m.Subdir)
+}
+
+// handoffRepo is the repo a session's handoff context names (none for a space or home).
+func handoffRepo(m session.Meta) string {
+	return repoName(handoffPlace(m), m.Dir)
 }
 
 // HandleSessionHandoffContext — GET /sessions/{name}/handoff-context.

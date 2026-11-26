@@ -285,6 +285,28 @@ describe("MoveSessionModal: the move", () => {
     expect(opened).toEqual(["t9"]);
   });
 
+  // #5219: the per-repo model memory belongs to a working copy; a space named like a repository
+  // has none, whatever its row's `repo` still says.
+  it("defaults the model from the working copy's memory, never a same-named repository's for a space", async () => {
+    routes["POST api/sessions/s1/move"] = { source: "s1", target: { name: "t9", kind: "codex", alive: true } };
+    localStorage.setItem("af.repo-model.codex.notes", "remembered-model");
+    try {
+      const postedModel = async (s: Session) => {
+        calls.length = 0;
+        await render(s);
+        await click(document.querySelector('.seg-btn[data-kind="codex"]'));
+        await click(confirmBtn());
+        return (calls.find((c) => c.method === "POST")?.body as { model?: string } | undefined)?.model;
+      };
+      expect(await postedModel({ ...src, repo: "notes", place: { kind: "repo", id: "notes" } })).toBe("remembered-model");
+      act(() => root?.unmount());
+      root = createRoot(host);
+      expect(await postedModel({ ...src, repo: "notes", place: { kind: "space", id: "notes" } })).not.toBe("remembered-model");
+    } finally {
+      localStorage.removeItem("af.repo-model.codex.notes");
+    }
+  });
+
   it("shows the move in flight where it stays visible, and locks the dialog meanwhile", async () => {
     routes["POST api/sessions/s1/move"] = () => new Promise(() => {});
     await render();

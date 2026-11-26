@@ -78,8 +78,20 @@ func TestPlaceOf(t *testing.T) {
 	}
 	// GET /repos lists any folder name, spaces included, so the place does too.
 	gitInit(t, filepath.Join(repos, "team app"))
-	// A symlink entry under ~/repos is skipped by GET /repos and is no repository here either.
+	// A symlink entry under ~/repos is skipped by GET /repos and is no repository here either, and
+	// a link elsewhere is filed by its own spelling, never by where it points now (it can be
+	// pointed elsewhere while the session is stopped).
 	if err := os.Symlink(filepath.Join(repos, "foo"), filepath.Join(repos, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "links"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repos, "foo@wt"), filepath.Join(home, "links", "foo@wt")); err != nil {
+		t.Fatal(err)
+	}
+	// ~/links/sub/.. runs in ~/repos/foo today, and wherever sub points after it is re-pointed.
+	if err := os.Symlink(filepath.Join(repos, "foo", "sub"), filepath.Join(home, "links", "sub")); err != nil {
 		t.Fatal(err)
 	}
 	// ~/repos/hop/../foo runs in ~/elsewhere/foo, wherever Clean would fold it lexically.
@@ -147,9 +159,12 @@ func TestPlaceOf(t *testing.T) {
 		{filepath.Join(repos, "team app"), session.Place{Kind: session.PlaceRepo, ID: "team app"}},
 		{filepath.Join(repos, "alias"), session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "alias") + "/", session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(home, "links", "foo@wt"), session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo/.", session.Place{Kind: session.PlaceOther}},
-		{filepath.Join(home, "elsewhere", "back") + "/../team app", session.Place{Kind: session.PlaceRepo, ID: "team app"}},
+		// A ".." over a link is no place: the link can be pointed elsewhere later (#5262 review).
+		{filepath.Join(home, "elsewhere", "back") + "/../team app", session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(home, "links", "sub") + "/..", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "sep"), session.Place{Kind: session.PlaceRepo, ID: "sep"}},
 		{filepath.Join(repos, "sep@wt"), session.Place{Kind: session.PlaceWorktree, ID: "sep@wt"}},
 		{filepath.Join(repos, "vendor@wt"), session.Place{Kind: session.PlaceWorktree, ID: "vendor@wt"}},
@@ -254,16 +269,27 @@ func TestPlaceSpaceAndRepositoryOfOneNameStayApart(t *testing.T) {
 	for _, body := range []map[string]any{
 		{"kind": "shell", "dir": p.repo},
 		{"kind": "shell", "space": map[string]any{"folder": "app"}},
+		{"kind": "shell", "dir": homeDir()},
 	} {
 		if rec := p.post(body, ""); rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
 			t.Fatalf("create %v: %d %s", body, rec.Code, rec.Body)
 		}
 	}
 	places := map[string]*session.Place{}
+	repos := map[string]string{}
 	for _, m := range session.ListMetas() {
-		if m.Dir == p.repo || m.Dir == spaceDir {
+		if m.Dir == p.repo || m.Dir == spaceDir || m.Dir == homeDir() {
 			places[m.Dir] = m.Place
+			repos[m.Dir] = m.Repo
 		}
+	}
+	// Repo names a working copy only: a space and home record none, so neither passes for the
+	// repository named like its folder.
+	if repos[p.repo] != "app" || repos[spaceDir] != "" || repos[homeDir()] != "" {
+		t.Errorf("Repo by dir = %q", repos)
+	}
+	if h := places[homeDir()]; h == nil || h.Kind != session.PlaceHome {
+		t.Errorf("home session place = %+v", h)
 	}
 	repo, space := places[p.repo], places[spaceDir]
 	if repo == nil || *repo != (session.Place{Kind: session.PlaceRepo, ID: "app"}) {
@@ -334,11 +360,16 @@ func TestForkAndRecreateStoreThePlace(t *testing.T) {
 	isolateAgentState(t)
 	spaceDir := placeSpace(t, "kept")
 	want := session.Place{Kind: session.PlaceSpace, ID: "kept"}
-	if got := forkMeta(session.Meta{Name: "plsrc", Dir: spaceDir, Kind: session.KindShell}, "plfork", "", "plsrc", "").Place; got == nil || *got != want {
+	fork := forkMeta(session.Meta{Name: "plsrc", Dir: spaceDir, Kind: session.KindShell, Repo: "kept"}, "plfork", "", "plsrc", "")
+	if got := fork.Place; got == nil || *got != want {
 		t.Errorf("fork place = %+v, want %+v", got, want)
 	}
+	if fork.Repo != "" {
+		t.Errorf("fork of a space session records Repo %q", fork.Repo)
+	}
 
-	session.WriteMeta(session.Meta{Name: "plrecr", Dir: spaceDir, Kind: session.KindShell})
+	// Repo as an Agent from before the place was stored wrote it: the space's folder name.
+	session.WriteMeta(session.Meta{Name: "plrecr", Dir: spaceDir, Kind: session.KindShell, Repo: "kept"})
 	if rec := callHandler(HandleRecreateSession, http.MethodPost, "plrecr", ""); rec.Code != http.StatusOK {
 		t.Fatalf("recreate: %d %s", rec.Code, rec.Body)
 	}
@@ -354,5 +385,153 @@ func TestForkAndRecreateStoreThePlace(t *testing.T) {
 	}
 	if fresh.Place == nil || *fresh.Place != want {
 		t.Errorf("recreate place = %+v, want %+v", fresh.Place, want)
+	}
+	if fresh.Repo != "" {
+		t.Errorf("recreate copied Repo %q instead of deriving it from the place", fresh.Repo)
+	}
+}
+
+// The handoff context names the working copy by the same rule as the meta: none for a space.
+func TestHandoffContextNamesNoRepositoryForASpace(t *testing.T) {
+	isolateAgentState(t)
+	spaceDir := placeSpace(t, "app")
+	if got := handoffRepo(session.Meta{Dir: spaceDir}); got != "" {
+		t.Errorf("space handoff context repo = %q", got)
+	}
+	if got := handoffRepo(session.Meta{Dir: homeDir()}); got != "" {
+		t.Errorf("home handoff context repo = %q", got)
+	}
+	other := filepath.Join(homeDir(), "projects", "app")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := handoffRepo(session.Meta{Dir: other}); got != "app" {
+		t.Errorf("other directory handoff context repo = %q, want its base name", got)
+	}
+
+	// GET handoff-context goes by the place the session stored, not by what the directory
+	// looks like now: with the space's marker gone the session is still the space's.
+	session.WriteMeta(session.Meta{Name: "plhoff", Kind: session.KindShell, Dir: spaceDir, Place: &session.Place{Kind: session.PlaceSpace, ID: "app"}})
+	if err := os.Remove(filepath.Join(spaceDir, spacex.MarkerFile)); err != nil {
+		t.Fatal(err)
+	}
+	rec := callHandler(HandleSessionHandoffContext, http.MethodGet, "plhoff", "")
+	var c handoffContext
+	if err := json.Unmarshal(rec.Body.Bytes(), &c); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("GET handoff-context: %d %v: %s", rec.Code, err, rec.Body)
+	}
+	if c.Repo != "" {
+		t.Errorf("handoff context of a space session whose marker is gone names repo %q", c.Repo)
+	}
+}
+
+// A shared space or home session keeps the folder name the recipient's heading and an inbox
+// attachment show, although its meta records no Repo.
+func TestCatalogNamesASpaceSessionByItsFolder(t *testing.T) {
+	isolateAgentState(t)
+	spaceDir := placeSpace(t, "notes")
+	if got := catalogEntry(session.Meta{Name: "plcat", Kind: session.KindShell, Dir: spaceDir}, false).Repo; got != "notes" {
+		t.Errorf("space catalog repo = %q", got)
+	}
+	if got := catalogEntry(session.Meta{Name: "plcat", Kind: session.KindShell, Dir: spaceDir, Repo: "app"}, false).Repo; got != "app" {
+		t.Errorf("catalog repo with Repo set = %q", got)
+	}
+}
+
+// The cleanup dialog groups a stopped space session under its folder although its meta records
+// no Repo, so same-titled rows of two spaces stay apart.
+func TestCleanupGroupsASpaceSessionByItsFolder(t *testing.T) {
+	isolateAgentState(t)
+	for _, f := range []string{"one", "two"} {
+		session.WriteMeta(session.Meta{Name: "plcl" + f, Kind: session.KindShell, Dir: placeSpace(t, f), Title: "same", Place: &session.Place{Kind: session.PlaceSpace, ID: f}})
+	}
+	rec := httptest.NewRecorder()
+	HandleSessionsCleanup(rec, httptest.NewRequest(http.MethodGet, "/sessions/cleanup", nil))
+	var body struct {
+		Candidates []cleanupCandidate `json:"candidates"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("GET /sessions/cleanup: %d %v: %s", rec.Code, err, rec.Body)
+	}
+	got := map[string]string{}
+	for _, c := range body.Candidates {
+		got[c.ID] = c.Repo
+	}
+	if got["plclone"] != "one" || got["plcltwo"] != "two" {
+		t.Errorf("cleanup repo by session = %v", got)
+	}
+}
+
+// With a subdir the process enters the lexically cleaned dir (Meta.CWD Joins), so the place is
+// judged there too: ~/repos/hop/../app with a subdir runs in ~/repos/app, not where hop leads.
+func TestSessionPlaceFollowsTheLaunchRule(t *testing.T) {
+	isolateAgentState(t)
+	home := homeDir()
+	repos := filepath.Join(home, "repos")
+	gitInit(t, filepath.Join(repos, "app"))
+	gitInit(t, filepath.Join(home, "elsewhere", "app"))
+	if err := os.MkdirAll(filepath.Join(home, "elsewhere", "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "elsewhere", "child"), filepath.Join(repos, "hop")); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(repos, "hop") + "/../app"
+	src := session.Meta{Name: "plsd", Dir: dir, Subdir: "src", Kind: session.KindShell}
+	// The subdir is gone (a branch switch removed it): CWD falls back to the raw dir, and so
+	// does the place.
+	if cwd, got := src.CWD(), sessionPlaceOf(dir, "src"); cwd != dir || got.Kind != session.PlaceOther {
+		t.Errorf("subdir missing: CWD %q, place %+v", cwd, got)
+	}
+	if err := os.MkdirAll(filepath.Join(repos, "app", "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if cwd, got := src.CWD(), sessionPlaceOf(dir, "src"); cwd != filepath.Join(repos, "app", "src") || *got != (session.Place{Kind: session.PlaceRepo, ID: "app"}) {
+		t.Errorf("subdir present: CWD %q, place %+v", cwd, got)
+	}
+	if got := sessionPlaceOf(dir, ""); got.Kind != session.PlaceOther {
+		t.Errorf("without a subdir: %+v", got)
+	}
+	if got := forkMeta(src, "plsdf", "", "plsd", "").Place; got == nil || got.Kind != session.PlaceRepo {
+		t.Errorf("fork with a subdir: %+v", got)
+	}
+}
+
+// #5268: a link inside a copy, A/current -> A/src, with dir A/current/.. leads back into A at
+// create (the physical and lexical readings agree), and into B once the link is pointed at B's
+// folder. A ".." that cancels a link is no place, before and after the retarget, while a ".."
+// over a real directory keeps its place.
+func TestPlaceOfDotDotOverALinkInsideACopy(t *testing.T) {
+	isolateAgentState(t)
+	repos := filepath.Join(homeDir(), "repos")
+	a, b := filepath.Join(repos, "A"), filepath.Join(repos, "B")
+	for _, d := range []string{a, b} {
+		gitInit(t, d)
+		if err := os.MkdirAll(filepath.Join(d, "src"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(a, "current")
+	if err := os.Symlink(filepath.Join(a, "src"), link); err != nil {
+		t.Fatal(err)
+	}
+	dir := link + "/.."
+	if got := PlaceOf(dir); got.Kind != session.PlaceOther {
+		t.Errorf("before the retarget: %+v", got)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(b, "src"), link); err != nil {
+		t.Fatal(err)
+	}
+	if got := PlaceOf(dir); got.Kind != session.PlaceOther {
+		t.Errorf("after the retarget: %+v", got)
+	}
+	if got := PlaceOf(filepath.Join(a, "src") + "/.."); *got != (session.Place{Kind: session.PlaceRepo, ID: "A"}) {
+		t.Errorf("a .. over a real directory: %+v", got)
+	}
+	if got := PlaceOf(filepath.Join(a, "src", "x") + "/../.."); got.Kind != session.PlaceOther {
+		t.Errorf("a .. over a missing component: %+v", got)
 	}
 }

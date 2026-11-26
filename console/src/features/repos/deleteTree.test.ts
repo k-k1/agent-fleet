@@ -303,3 +303,18 @@ describe("削除の並列実行（#4736）", () => {
     await runPool([], 3, async () => {});
   });
 });
+
+// #5219: the stored place can name this copy while the Agent now reads another copy's id for the
+// session's directory (a `link/..` dir whose link was pointed elsewhere while it was stopped).
+// Stopping or shelving it before this folder goes would act on another copy's session.
+describe("a session the Agent now places in another copy", () => {
+  it("is not this copy's to stop, shelve or forget", () => {
+    const a = repo("app@a", { workingCopyId: "wc_a" });
+    const here = sess("here", "app@a", { place: { kind: "worktree", id: "app@a", parent: "app" }, workingCopyId: "wc_a" });
+    const moved = sess("moved", "..", { place: { kind: "worktree", id: "app@a", parent: "app" }, workingCopyId: "wc_b", alive: true });
+    const unknown = sess("unknown", "app@a", { place: { kind: "worktree", id: "app@a", parent: "app" } });
+    const [p] = planTree(node(a), [here, moved, unknown]);
+    expect(p.sessions.map((s) => s.name).sort()).toEqual(["here", "unknown"]);
+    expect(sessionsToClear(p, true).archive.map((s) => s.name).sort()).toEqual(["here", "unknown"]);
+  });
+});

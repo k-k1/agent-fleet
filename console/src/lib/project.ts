@@ -15,16 +15,31 @@ import type { Repo } from "../features/repos/store.ts";
 import type { Session } from "../types/session.ts";
 import { compareText } from "./intl.ts";
 
-// The working-copy folder a session runs in. Agent sessions carry `repo`
-// (the folder name); fall back to the working dir's basename so a session with a
-// dir but no repo field still lands under its folder. "" = no folder (e.g. a
-// shell in home, or a session in a space) → not under any repository.
-//
-// A space (ADR 0142) is no working copy, even when its folder shares a repository's
-// name: the Agent marks it by the directory's root (`space`), and the name never decides.
+// Where a session runs is the place the Agent stored at create (Session.place). Only a row
+// without one (a session created before the Agent stored it) is placed by the older evidence:
+// the Agent's `space`, then the folder name in `repo`. A space and a repository that share a
+// folder name therefore never share a group, and a stopped workspace's rows, which carry
+// `place` but no `space`, still land in their space.
+
+/** The space folder (~/spaces/<folder>) a session runs in, "" outside a space. */
+export function sessionSpace(s: Pick<Session, "place" | "space">): string {
+  if (s.place) return s.place.kind === "space" ? s.place.id || "" : "";
+  return s.space || "";
+}
+
+/** The working-copy folder under ~/repos a session runs in, as the session names it, or ""
+ *  when it runs in none: a space, home, or any other directory. A row without a stored place
+ *  is taken at its `repo`, unless the Agent marked it as a space. */
+export function sessionRepo(s: Pick<Session, "place" | "space" | "repo">): string {
+  if (s.place) return s.place.kind === "repo" || s.place.kind === "worktree" ? s.place.id || "" : "";
+  return s.space ? "" : s.repo || "";
+}
+
+// The working-copy folder a session runs in, "" for none (a shell in home, a session in a
+// space) → not under any repository. A row without a stored place and without `repo` falls
+// back to the working dir's basename, so an older list still lands under its folder.
 export function sessionFolder(s: Session): string {
-  if (s.space) return "";
-  if (s.repo) return s.repo;
+  if (s.place || s.space || s.repo) return sessionRepo(s);
   const dir = s.dir || "";
   return dir ? dir.split("/").filter(Boolean).pop() || "" : "";
 }
@@ -119,6 +134,36 @@ export function sessionsInFolder(sessions: Session[], folderName: string): Sessi
   return sessions
     .filter((s) => sessionFolder(s) === folderName)
     .sort((a, b) => compareText(b.createdAt || "", a.createdAt || ""));
+}
+
+/** Where a session runs, as one key for grouping a caller's own explicit list of sessions (an
+ *  Auto-run's stop plan): its working copy's folder; else "~" for home, "~/spaces/<folder>" for a
+ *  space, or the directory itself. None of those can be a folder name under ~/repos, so a home or
+ *  space session never joins a same-named repository's group. */
+export function sessionPlaceKey(s: Session): string {
+  const folder = sessionFolder(s);
+  if (folder) return folder;
+  const space = sessionSpace(s);
+  if (space) return "~/spaces/" + space;
+  if (s.place?.kind === "home") return "~";
+  return s.dir || s.path || s.name;
+}
+
+// The folder a session was matched by before places were stored: none in a space, else `repo`,
+// else the dir's base name.
+function recordedFolder(s: Session): string {
+  if (s.space) return "";
+  if (s.repo) return s.repo;
+  return (s.dir || "").split("/").filter(Boolean).pop() || "";
+}
+
+/** The sessions of `folderName` an action on that copy may touch (stop, archive, delete before
+ *  the folder goes): those placed in it that the recorded folder names too. A stored place is
+ *  judged once, at create, and can outlive the directory it was judged on (a link inside the
+ *  copy pointed elsewhere since, #5268), so an action never reaches further than the folder
+ *  match did before places were stored. Views list sessionsInFolder; only actions narrow. */
+export function sessionsActedOnInFolder(sessions: Session[], folderName: string): Session[] {
+  return sessionsInFolder(sessions, folderName).filter((s) => recordedFolder(s) === folderName);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -545,7 +590,7 @@ export function orphanSessions(sessions: Session[], repos: Repo[], terminals = f
   const names = new Set(repos.map((r) => r.name));
   return withoutUnattended(sessions, shown)
     .filter((s) => {
-      if (s.space) return false; // the Spaces section's (spaceGroups)
+      if (sessionSpace(s)) return false; // the Spaces section's (spaceGroups)
       if (!terminals && isTerminalSession(s)) return false; // the Terminal view's
       const f = sessionFolder(s);
       return !f || !names.has(f);
@@ -565,10 +610,11 @@ export interface SpaceGroup {
 export function spaceGroups(sessions: Session[], terminals = false, shown?: ReadonlySet<string>): SpaceGroup[] {
   const by = new Map<string, Session[]>();
   for (const s of withoutUnattended(sessions, shown)) {
-    if (!s.space || (!terminals && isTerminalSession(s))) continue; // a space's shells are the Terminal view's
-    const list = by.get(s.space);
+    const space = sessionSpace(s);
+    if (!space || (!terminals && isTerminalSession(s))) continue; // a space's shells are the Terminal view's
+    const list = by.get(space);
     if (list) list.push(s);
-    else by.set(s.space, [s]);
+    else by.set(space, [s]);
   }
   const newest = (g: SpaceGroup) => g.sessions[0]?.createdAt || "";
   return [...by.entries()]
@@ -600,14 +646,16 @@ const cleanPath = (p: string): string => p.replace(/\/{2,}/g, "/").replace(/\/+$
 
 /** Where a shell was opened: its space, else the listed working copy it runs in, else home.
  *
- *  `Session.repo` is the base name of the launch directory, so a shell started in the home
+ *  A row with a stored place names its copy by it (home and other directories name none), the
+ *  working-copy id overruling it. On a row without one, `Session.repo` is the base name of the launch directory, so a shell started in the home
  *  directory carries the home folder's own name (a member called `dev` has repo "dev") and would
  *  pass for a working copy of that name. A repository needs the directory to be that copy, in this
  *  order of evidence: the working-copy id both sides carry (it survives any spelling of the path,
  *  a symlink included); else the listed path; else `<root>/repos/<folder>` for a list without
  *  paths. A row with no `dir` (an older list) is taken at its word. */
 export function shellPlaceOf(s: Session, repos: PlaceRepos): ShellPlace {
-  if (s.space) return { kind: "space", folder: s.space };
+  const space = sessionSpace(s);
+  if (space) return { kind: "space", folder: space };
   // The id first, whatever the directory is called: a shell started through a symlink to a copy
   // has the link's name in `repo`, and only the id leads back to the copy.
   // Only when the id is the copy's alone: a file copy of a clone carries the same marker, and two
@@ -615,6 +663,12 @@ export function shellPlaceOf(s: Session, repos: PlaceRepos): ShellPlace {
   const byId = s.workingCopyId ? [...repos].filter(([, c]) => c.id === s.workingCopyId) : [];
   if (byId.length === 1) return { kind: "repo", folder: byId[0][0] };
   const f = sessionFolder(s);
+  // A stored place decides by itself (a shell started through a link spells another path), unless
+  // the row carries a working-copy id that the named copy does not.
+  if (s.place) {
+    const named = f ? repos.get(f) : undefined;
+    return named && !(named.id && s.workingCopyId && named.id !== s.workingCopyId) ? { kind: "repo", folder: f } : { kind: "home" };
+  }
   const copy = f ? repos.get(f) : undefined;
   if (f && copy) {
     const dir = cleanPath(s.dir || "");
