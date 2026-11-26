@@ -596,7 +596,7 @@ func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody 
 		Headers: headers, Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 		TimeoutMS: row.TimeoutMS, Enabled: row.Enabled, UserSecret: row.UserSecret, Auth: row.Auth,
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-		OAuthClient: maskedOAuthClient(row), Scopes: splitScopes(row.OAuthScopes),
+		OAuthClient: maskedOAuthClient(row), Scopes: distScopesOf(row),
 	}
 }
 
@@ -827,7 +827,10 @@ func distClientOf(row store.MCPServerRow) *distOAuthClient {
 	return &distOAuthClient{Issuer: row.OAuthIssuer, ClientID: row.OAuthClientID, Confidential: row.OAuthSecretEnc != ""}
 }
 
-// distScopesOf is an oauth row's scope list; the API never stores scopes on another row.
+// distScopesOf is an oauth row's scope list, for the admin list and the distribution alike. The API
+// never stores scopes on another row; one edited into the table directly is left out rather than
+// shown, where a client would send it back and be refused, or distributed, where the Agent would
+// drop the definition.
 func distScopesOf(row store.MCPServerRow) []string {
 	if row.Auth != mcpAuthOAuth {
 		return nil

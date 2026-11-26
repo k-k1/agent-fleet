@@ -643,10 +643,10 @@ const tenantOAuthClient = (f: TenantForm) => {
 };
 
 // tenantScopes is the scope list a tenant body carries: the typed tokens, OAuth only. Only ASCII
-// space, tab and newlines separate, so another space character stays inside a token, where
-// tenantScopesValid refuses it the way the control plane would.
+// whitespace separates (space, tab, LF, VT, FF, CR), so another space character such as NBSP stays
+// inside a token, where tenantScopesValid refuses it the way the control plane would.
 export const tenantScopes = (f: TenantForm): string[] =>
-  f.auth === "oauth" ? f.oauthScopes.split(/[ \t\r\n]+/).filter((s) => s !== "") : [];
+  f.auth === "oauth" ? f.oauthScopes.split(/[\x09-\x0d\x20]+/).filter((s) => s !== "") : [];
 
 // MAX_SCOPE_LEN is the Agent's bound on an authorization request's scope parameter.
 const MAX_SCOPE_LEN = 1024;

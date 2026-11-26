@@ -120,6 +120,27 @@ func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
 		t.Fatalf("distributed %+v", d)
 	}
 
+	// An edit to another non-empty list replaces it, order kept.
+	other := []string{"openid", "https://www.googleapis.com/auth/drive.readonly", "email"}
+	changed := gmail
+	changed.Scopes = other
+	if w := upsert(http.MethodPut, created.ID, changed); w.Code != http.StatusOK {
+		t.Fatalf("change: %d %s", w.Code, w.Body)
+	}
+	if row, _, _ := a.store.GetMCPServer(ctx, tn.ID, created.ID); row.OAuthScopes != strings.Join(other, " ") {
+		t.Fatalf("stored after change %q", row.OAuthScopes)
+	}
+	rec = httptest.NewRecorder()
+	a.AdminList(rec, httptest.NewRequest(http.MethodGet, "/api/admin/mcp-servers?tenant=a", nil))
+	if !strings.Contains(rec.Body.String(), `"scopes":["openid","https://www.googleapis.com/auth/drive.readonly","email"]`) {
+		t.Fatalf("list after change: %s", rec.Body)
+	}
+	if d := distribute(); len(d) != 1 || !reflect.DeepEqual(d[0].Scopes, other) {
+		t.Fatalf("distributed after change %+v", d)
+	}
+	scopes = other
+	gmail = changed
+
 	// A refused list leaves the stored one alone.
 	bad := gmail
 	bad.Scopes = []string{"read,archive"}
@@ -139,10 +160,24 @@ func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
 	if d := distribute(); len(d) != 1 || d[0].Scopes != nil {
 		t.Fatalf("after clearing: %+v", d)
 	}
+
+	// Taking OAuth off clears the stored scopes: a static-header body cannot carry any.
+	if w := upsert(http.MethodPut, created.ID, gmail); w.Code != http.StatusOK {
+		t.Fatalf("restore: %d %s", w.Code, w.Body)
+	}
+	static := gmail
+	static.Auth, static.Scopes = "", nil
+	if w := upsert(http.MethodPut, created.ID, static); w.Code != http.StatusOK {
+		t.Fatalf("to static: %d %s", w.Code, w.Body)
+	}
+	if row, _, _ := a.store.GetMCPServer(ctx, tn.ID, created.ID); row.OAuthScopes != "" || row.Auth != "" {
+		t.Fatalf("after leaving OAuth: auth=%q scopes=%q", row.Auth, row.OAuthScopes)
+	}
 }
 
 // A row that holds scopes but is no longer OAuth (only a direct database edit makes one) is
-// distributed without them: the Agent would drop the whole definition otherwise.
+// distributed and listed without them: the Agent would drop the whole definition, and an admin
+// client sending the listed row back would be refused.
 func TestDistributeSendsScopesOnlyForOAuth(t *testing.T) {
 	a, ctx := newMCPServerAPITest(t, false)
 	row := store.MCPServerRow{ID: "s1", TenantID: "t", Name: "wiki", Transport: "http", URL: "https://wiki.example/mcp",
@@ -152,8 +187,20 @@ func TestDistributeSendsScopesOnlyForOAuth(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	a.Distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil), store.MembershipView{TenantID: "t"})
-	if strings.Contains(rec.Body.String(), `"scopes"`) {
+	var out struct {
+		Servers []map[string]json.RawMessage `json:"servers"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+		t.Fatalf("distribute: %d %s", rec.Code, rec.Body)
+	}
+	if len(out.Servers) != 1 || string(out.Servers[0]["id"]) != `"s1"` {
+		t.Fatalf("want s1 alone, got %s", rec.Body)
+	}
+	if _, ok := out.Servers[0]["scopes"]; ok {
 		t.Fatalf("a static-header row was sent with scopes: %s", rec.Body)
+	}
+	if b := rowToBody(row, nil); b.Scopes != nil {
+		t.Fatalf("a static-header row is listed with scopes %q", b.Scopes)
 	}
 }
 

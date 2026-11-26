@@ -40,7 +40,7 @@ const click = async (b: HTMLElement | undefined) => {
   expect(b).toBeTruthy();
   await act(async () => b!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 };
-const scopesBox = () => host!.querySelector("textarea") as HTMLTextAreaElement | null;
+const scopesBox = () => host!.querySelector('textarea[aria-label="Scopes"]') as HTMLTextAreaElement | null;
 const type = async (el: HTMLTextAreaElement, value: string) => {
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, value);
@@ -66,6 +66,9 @@ describe("tenant form: Scopes", () => {
     await mount({ ...base, auth: "oauth" });
     await type(scopesBox()!, "read,archive");
     expect(text()).toContain("without quotes, backslashes or commas");
+    expect(scopesBox()!.getAttribute("aria-invalid")).toBe("true");
+    const hint = document.getElementById(scopesBox()!.getAttribute("aria-describedby")!);
+    expect(hint?.textContent).toContain("without quotes, backslashes or commas");
     expect(button("Distribute")!.disabled).toBe(true);
     await type(scopesBox()!, "read archive");
     expect(button("Distribute")!.disabled).toBe(false);

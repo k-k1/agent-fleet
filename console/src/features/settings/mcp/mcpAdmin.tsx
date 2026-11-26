@@ -297,15 +297,18 @@ function TenantClientFields({ form, patch }: { form: TenantForm; patch: (p: Part
 // scope it supports.
 function TenantScopesField({ form, patch }: { form: TenantForm; patch: (p: Partial<TenantForm>) => void }) {
   const tr = useT();
+  const valid = tenantScopesValid(form);
   return (
     <Field
       label={tr("admin.mcp_oauth_scopes")}
       wide
       hint={
-        tenantScopesValid(form) ? (
-          tr("admin.mcp_oauth_scopes_hint")
+        valid ? (
+          <span id="adm-mcp-scopes-hint">{tr("admin.mcp_oauth_scopes_hint")}</span>
         ) : (
-          <span className="ps-note-warn">{tr("admin.mcp_oauth_scopes_bad")}</span>
+          <span id="adm-mcp-scopes-hint" className="ps-note-warn">
+            {tr("admin.mcp_oauth_scopes_bad")}
+          </span>
         )
       }
     >
@@ -314,6 +317,9 @@ function TenantScopesField({ form, patch }: { form: TenantForm; patch: (p: Parti
         rows={3}
         spellCheck={false}
         autoComplete="off"
+        aria-label={tr("admin.mcp_oauth_scopes")}
+        aria-describedby="adm-mcp-scopes-hint"
+        aria-invalid={!valid}
         value={form.oauthScopes}
         onChange={(e) => patch({ oauthScopes: e.target.value })}
       />

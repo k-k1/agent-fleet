@@ -37,9 +37,15 @@ describe("tenant definition scopes", () => {
     expect(tenantFormOf(row).oauthScopes).toBe("");
   });
 
+  it("splits at every ASCII whitespace, form feed and vertical tab included", () => {
+    const f = { ...base, oauthScopes: "read\fwrite\vopenid" };
+    expect(tenantScopes(f)).toEqual(["read", "write", "openid"]);
+    expect(tenantFormValid(f)).toBe(true);
+  });
+
   it("keeps a non-ASCII space inside a token, where it is refused", () => {
-    const f = { ...base, oauthScopes: "a b" };
-    expect(tenantScopes(f)).toEqual(["a b"]);
+    const f = { ...base, oauthScopes: "a\u00a0b" };
+    expect(tenantScopes(f)).toEqual(["a\u00a0b"]);
     expect(tenantFormValid(f)).toBe(false);
   });
 
@@ -53,7 +59,7 @@ describe("tenant definition scopes", () => {
       const list = [...c.scopes, ...(c.tokenOf ? ["a".repeat(c.tokenOf)] : [])];
       // The form splits at ASCII whitespace, so a case about whitespace inside one scope is a
       // different list here; the control plane is what refuses that shape.
-      if (list.some((s) => s === "" || /[ \t\r\n]/.test(s))) continue;
+      if (list.some((s) => s === "" || /[\x09-\x0d\x20]/.test(s))) continue;
       checked++;
       expect([c.name, tenantScopesValid({ ...base, oauthScopes: list.join("\n") })]).toEqual([c.name, c.valid]);
     }

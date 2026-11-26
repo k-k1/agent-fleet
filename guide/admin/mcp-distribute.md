@@ -72,10 +72,10 @@ If you registered a client for Agent Fleet at the server's authorization server,
 - The secret is stored encrypted and is never sent to a workspace. The Control Plane makes the token requests, so check with the deployment administrator that the Control Plane can reach that authorization server
 - Changing the issuer or the client ID asks for the secret again
 
-"**Scopes**" is optional: the scopes each member's sign-in requests, separated by spaces or new lines. Left empty, the sign-in requests what the server asks for. A server whose tool list anyone can read asks for nothing, and the sign-in then requests every scope the server supports, so enter the narrowest scopes the members need.
+"**Scopes**" is optional: the scopes each member's sign-in requests, separated by spaces or new lines. Left empty, the sign-in requests the scopes the server's refusal names, and without one every scope listed in the server's metadata. A server whose tool list anyone can read refuses nothing, so the sign-in then requests every scope the server supports. Enter the narrowest scopes the members need.
 
-- Each scope is one word without quotes, backslashes or commas, and together they must fit in 1024 bytes
-- A changed list applies to the next sign-in. Members already signed in keep the scopes they granted until they sign in again
+- Each scope is one word without quotes, backslashes or commas. Joined with single spaces, and with ` offline_access` added unless you listed it, they must fit in 1024 bytes
+- A changed list applies to a member's next fresh sign-in. Members already signed in keep the scopes they granted until they sign in again. A row that shows "**More permission needed**" signs in again for what was granted plus what the server asked for, not for this list
 
 These changes cut every member's sign-in, and members sign in again.
 
