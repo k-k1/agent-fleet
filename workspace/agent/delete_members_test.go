@@ -877,3 +877,66 @@ func TestDeletingALinkToAWorktreeIgnoresTheReposRootRepointed(t *testing.T) {
 		t.Fatalf("the worktree on the other disk was removed (delete = %d)", code)
 	}
 }
+
+// A tombstone holding the physical path is restored there, the path its check accepted: ~/repos
+// re-pointed after that check sends the worktree nowhere else.
+func TestRestoreOfAPhysicalTombstoneStaysOnItsPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude"))
+	diskA, diskB := filepath.Join(home, "disk-a"), filepath.Join(home, "disk-b")
+	for _, d := range []string{diskA, diskB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repos := filepath.Join(home, "repos")
+	if err := os.Symlink(diskA, repos); err != nil {
+		t.Fatal(err)
+	}
+	mux := trashMux()
+	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	parent := filepath.Join(repos, "app")
+	gitInit(t, parent)
+	wt, err := gitx.EnsureWorktree(parent, "main", "wt-x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "committed.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, wt, "add", "-A")
+	gitAt(t, wt, "commit", "-q", "-m", "x")
+	if err := os.Symlink(wt, filepath.Join(repos, "wtalias")); err != nil {
+		t.Fatal(err)
+	}
+	tmuxSays(t, tmuxNoServer)
+	do(t, srv, "DELETE", "/repos/wtalias?force=true", nil, http.StatusOK, nil)
+	arcs := worktreeArchives(t, srv)
+	if len(arcs) != 1 || arcs[0].Worktree == nil {
+		t.Fatalf("archives = %+v", arcs)
+	}
+	physical := filepath.Join(diskA, filepath.Base(wt))
+	if arcs[0].Worktree.Path != physical {
+		t.Fatalf("tombstone path = %q, want %q", arcs[0].Worktree.Path, physical)
+	}
+	prev := worktreeRestoreChecked
+	t.Cleanup(func() { worktreeRestoreChecked = prev })
+	worktreeRestoreChecked = func() {
+		_ = os.Remove(repos)
+		_ = os.Symlink(diskB, repos)
+	}
+	do(t, srv, "POST", "/cleanup/archives/"+arcs[0].ID+"/restore", nil, http.StatusOK, nil)
+	if !gitx.IsGitRepo(physical) {
+		t.Fatal("the worktree did not come back where it was")
+	}
+	if _, err := os.Lstat(filepath.Join(diskB, filepath.Base(wt))); !os.IsNotExist(err) {
+		t.Fatalf("a worktree was made on the other disk: %v", err)
+	}
+}

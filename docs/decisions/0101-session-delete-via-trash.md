@@ -140,7 +140,8 @@ lexical clean of the same paths: a session started through a link re-pointed sin
 entered. An entry that is itself a link is removed as the link alone, and only the sessions spelt through it are
 settled; a link to a linked worktree is the exception, since `git worktree remove` takes the worktree it points
 at: the link is resolved once, first, to the worktree's physical path, which must be an entry of the
-repositories folder (a restore accepts the entry under either spelling of that folder), and the whole delete
+repositories folder (a restore accepts the entry under either spelling of that folder, and runs on the path it
+accepted), and the whole delete
 (guards, mark, tombstone, sessions, the remove) runs on it, so neither the link nor `~/repos` re-pointed
 meanwhile sends a step elsewhere; one that git cannot classify again inside the gate is refused rather than
 removed as a plain folder.
