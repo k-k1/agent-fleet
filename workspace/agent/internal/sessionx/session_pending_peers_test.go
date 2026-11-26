@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -107,21 +108,21 @@ func TestRowCountsARefusedDeliveryOnce(t *testing.T) {
 	h := &blockingFakeHandle{inter: &agents.Interaction{ID: "q", Kind: agents.InteractionQuestion}}
 	installManagedFake(t, h)
 	const name, from = "pp_rowback", "pp_sender"
-	queued := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
-	want := session.PendingPeers{Count: 1, NewestAt: "2026-11-26T10:00:00Z"}
+	// Inside the spool's 24-hour expiry, which the delivery loop checks against the real clock.
+	queued := time.Now().UTC().Truncate(time.Second)
+	want := session.PendingPeers{Count: 1, NewestAt: queued.Format(time.RFC3339)}
 	var mu sync.Mutex
 	var seen []session.PendingPeers
 	prevReady, prevBack := peerDeliveryReady, pendingWrittenBack
 	peerDeliveryReady = func(session.Meta) (bool, bool) { return true, true } // misses the question
 	pendingWrittenBack = func(n string) {
-		var s session.Session
-		fillPendingPeers(&s, n)
+		p := pendingPeersOf(n)
 		mu.Lock()
 		defer mu.Unlock()
-		if s.PendingPeers == nil {
+		if p == nil {
 			seen = append(seen, session.PendingPeers{})
 		} else {
-			seen = append(seen, *s.PendingPeers)
+			seen = append(seen, *p)
 		}
 	}
 	t.Cleanup(func() {
@@ -148,5 +149,36 @@ func TestRowCountsARefusedDeliveryOnce(t *testing.T) {
 		if got != want {
 			t.Fatalf("write-back %d: row reports %+v, want %+v", i, got, want)
 		}
+	}
+}
+
+// deliverDuringWireLive is a kind whose live read is where a pending message is delivered: the
+// spool empties while the row is being built, after which the state the row carries is stale.
+type deliverDuringWireLive struct {
+	agents.Agent
+	deliver func()
+}
+
+func (a deliverDuringWireLive) WireLive(m session.Meta, alive bool) agents.LiveInfo {
+	a.deliver()
+	return a.Agent.WireLive(m, alive)
+}
+
+// The spool is read before the live state: a message delivered while the row is built is still
+// on the row, rather than an idle read before the delivery beside an empty spool read after it.
+func TestRowReadsPendingPeersBeforeTheLiveState(t *testing.T) {
+	pendingTestEnv(t)
+	const kind = "pp_test_kind"
+	restore := agentreg.SwapForTest(kind, deliverDuringWireLive{Agent: AgentOf(session.KindClaude), deliver: func() {
+		agents.TakePendingPeer("kid", "a")
+	}})
+	t.Cleanup(restore)
+	writeMeta(t, session.Meta{Name: "kid", Kind: kind})
+	m, _ := session.ReadMeta("kid")
+	if err := agents.PutPendingPeer("kid", agents.PendingPeer{ID: "a", From: "parent", Message: "x", QueuedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if s := wireSession(m, false); s.PendingPeers == nil || s.PendingPeers.Count != 1 {
+		t.Fatalf("the row lost a message delivered while it was built: %+v", s.PendingPeers)
 	}
 }

@@ -98,7 +98,9 @@ source_of_truth: "コード（本書は地図と設計意図）"
     pending スプール（利用者の回答待ち）、そこから取り出して `/input` に渡している最中の 1 通、
     Managed の実行系がまだ受け取っていない held の peer 入力を数える。`newestAt` は最新のものを
     積んだ時刻。Managed の実行系へ渡している 1 通は、実行系がターンの後ろに積むと `/input` が戻るまで
-    二重に数えることがあるので、数は上限である。無ければ項目ごと出さない（`fillPendingPeers`、`internal/sessionx/peer_pending.go`、#5270）。
+    二重に数えることがあるので、数は上限である。スプールのファイルやディレクトリが在るのに読めないときは、
+    その更新時刻に積まれた 1 通として数える。スプールは稼働状態より先に読むので、行を組み立てる間に
+    届いたメッセージは、その行に残るか、始めたターンが行に出る。無ければ項目ごと出さない（`pendingPeersOf`、`internal/sessionx/peer_pending.go`、#5270）。
   - `GET /sessions` は `sessions` の隣に `"queueReport": 1` を載せる。Control Plane が、何も持たないから
     `wakers` を省く Agent と、何も言わない古い Agent を見分けるため。
     同じ応答は、配信の prompt を参照つき item に対して組み、下のとおりブランチを決める Agent では

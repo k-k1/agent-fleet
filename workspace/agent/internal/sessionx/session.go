@@ -108,6 +108,11 @@ func wireArchivedRow(m session.Meta) session.Session {
 // wireSession builds the API representation from a meta and liveness.
 func wireSession(m session.Meta, alive bool) session.Session {
 	started := startedLabel(m)
+	// Read before the live state: a message delivered while this row is built is then either
+	// still seen here, or its /input has returned, and /input records the turn it started before
+	// it returns, so the state below reads busy. Read after it, an idle from before the delivery
+	// and an empty spool from after it would make one row that shows neither (#5270).
+	pendingPeers := pendingPeersOf(m.Name)
 	// The live-dependent fields (state / remote URL / context / resumable / bg-busy)
 	// diverge by kind — the agent computes them (see WireLive per implementation).
 	if alive {
@@ -196,7 +201,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		s.RateLimitResumeAt = rateLimitBookedAt(m, time.Now())
 	}
 	fillWakers(&s, m)
-	fillPendingPeers(&s, m.Name)
+	s.PendingPeers = pendingPeers
 	fillQueueTurn(&s, m)
 	fillStateSince(&s, m, realSinceProbes)
 	fillBackgroundSince(&s, time.Now())

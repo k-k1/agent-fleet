@@ -1223,9 +1223,9 @@ func TestMemoOccupancyPeerMessageInTransitKeepsTheRunOpen(t *testing.T) {
 	t.Run("never delivered", func(t *testing.T) {
 		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 			agent, d := e.openReported(nil)
-			// Queued long ago and refused on every try, but the member's turn ended later: the
-			// bound counts from the end.
-			agent.child("rev", d.Session, map[string]any{"lastTurnEndAt": ts(t0), "pendingPeers": pending(t0.Add(-time.Hour))})
+			// Queued long ago and refused on every try, but the session's turn ended later: the
+			// bound counts from the end. On the root, so no child's unread answer keeps it open.
+			agent.setRow(d.Session, map[string]any{"lastTurnEndAt": ts(t0), "pendingPeers": pending(t0.Add(-time.Hour))})
 			r := e.runner()
 			for i := 3; i >= 1; i-- {
 				r.settle(context.Background(), t0.Add(memoPeerHoldBound-time.Duration(i)*time.Second))

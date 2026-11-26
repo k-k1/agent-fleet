@@ -136,7 +136,7 @@ var peerDeliveryReady = func(m session.Meta) (ready, alive bool) {
 // flight across one does not write its message back.
 //
 // view is taken inside mu, around the two-step moves of a message between the spool and
-// inflight (the claim, the write-back, the clear), so fillPendingPeers sees each message in one
+// inflight (the claim, the write-back, the clear), so pendingPeersOf sees each message in one
 // place. The session list takes view alone: mu is held across enqueueDecision's pane checks,
 // which run tmux (up to 30 s), and the list must not wait for them.
 type pendingTarget struct {
@@ -544,7 +544,7 @@ func pendingInflightTouches(members map[string]bool) bool {
 	return false
 }
 
-// fillPendingPeers sets the peer messages still on their way to session name (#5270): the
+// pendingPeersOf is the peer messages still on their way to session name (#5270), nil for none: the
 // pending spool, the one claimed from it and in /input, and held peer input. The spool and the
 // claim are read under the target's view lock, which every move between them takes: read apart,
 // a message written back and released between the two reads would be in neither.
@@ -552,7 +552,7 @@ func pendingInflightTouches(members map[string]bool) bool {
 // A message being handed to a Managed runtime that queues it behind a turn can be counted twice
 // for the moment until /input returns: the runtime's held copy carries an id and a queue time of
 // its own. The count is an upper bound; the Control Plane reads only whether it is above zero.
-func fillPendingPeers(s *session.Session, name string) {
+func pendingPeersOf(name string) *session.PendingPeers {
 	t := pendingTargetOf(name)
 	t.view.Lock()
 	n, newest := agents.QueuedPeersTo(name)
@@ -563,7 +563,8 @@ func fillPendingPeers(s *session.Session, name string) {
 		}
 	}
 	t.view.Unlock()
-	if n > 0 {
-		s.PendingPeers = &session.PendingPeers{Count: n, NewestAt: newest.UTC().Format(time.RFC3339)}
+	if n == 0 {
+		return nil
 	}
+	return &session.PendingPeers{Count: n, NewestAt: newest.UTC().Format(time.RFC3339)}
 }

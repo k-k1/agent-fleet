@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -63,5 +64,34 @@ func TestQueuedPeersTo(t *testing.T) {
 	n, newest := QueuedPeersTo("kid")
 	if n != 2 || !newest.Equal(t0.Add(2*time.Minute)) {
 		t.Fatalf("got %d, %v; want 2 peer messages, newest %v", n, newest, t0.Add(2*time.Minute))
+	}
+}
+
+// A message whose file cannot be read this once still counts, at its modification time: read as
+// none, one failed read could close a run under it.
+func TestQueuedPeersToCountsAnUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	old := heldBase
+	heldBase = func() string { return dir }
+	t.Cleanup(func() { heldBase = old })
+
+	if err := PutPendingPeer("kid", PendingPeer{ID: "a", From: "parent", Message: "x", QueuedAt: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	f := spoolFile(pendingSubdir, "kid", "a")
+	mtime := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(f, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(f, 0o600) })
+	if _, err := os.ReadFile(f); err == nil {
+		t.Skip("the file is readable without permission (root)")
+	}
+	n, newest := QueuedPeersTo("kid")
+	if n != 1 || !newest.Equal(mtime) {
+		t.Fatalf("got %d, %v; want 1 at the file's time %v", n, newest, mtime)
 	}
 }
