@@ -746,6 +746,8 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	s := newScheduleAPI(cfg.mgr)
 	mux.HandleFunc("GET /internal/schedules", s.withScheduleToken(s.list))
 	mux.HandleFunc("POST /internal/schedules", s.withScheduleToken(s.create))
+	// The one token write that is not held: the CP builds the whole row (schedule_limit_resume.go).
+	mux.HandleFunc("POST /internal/schedules/limit-resume", s.withScheduleToken(s.createLimitResume))
 	mux.HandleFunc("PATCH /internal/schedules/{id}", s.withScheduleToken(s.update))
 	mux.HandleFunc("DELETE /internal/schedules/{id}", s.withScheduleToken(s.delete))
 	mux.HandleFunc("POST /internal/schedules/{id}/pause", s.withScheduleToken(s.pause))

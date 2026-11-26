@@ -189,3 +189,29 @@ func TestRateLimitMoveWriteFailureDropsTheNewBooking(t *testing.T) {
 		}
 	}
 }
+
+// A booking only minutes away is moved by the CP in place and answered with the same id: the old
+// booking must not be cancelled, or the episode is left with an id that no longer exists.
+func TestRateLimitEarlyMoveInPlaceKeepsTheBooking(t *testing.T) {
+	f := newEarlyFixture(t)
+	f.lifted = true
+	putRateLimitSchedule = func(_ session.Meta, at time.Time) (string, error) {
+		f.scheduled++
+		f.scheduleAt = at
+		return "sch_old", nil // the CP's dedupe answered with the live row
+	}
+	if err := RateLimitStates.Write(f.m.Name, rateLimitState{
+		At: f.now.Add(-time.Hour).Format(time.RFC3339), ResumeAt: f.now.Add(6 * time.Minute).Format(time.RFC3339),
+		Source: "codex:weekly", ScheduleID: "sch_old",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rateLimitFollowUp(f.m, stateOf(t, f.m.Name), f.now, false)
+	st := stateOf(t, f.m.Name)
+	if f.scheduled != 1 || st.ScheduleID != "sch_old" || st.MovedFrom != "" || len(f.deleted) != 0 {
+		t.Fatalf("episode = %+v scheduled=%d deleted=%v, want the same booking moved and nothing cancelled", st, f.scheduled, f.deleted)
+	}
+	if want := f.now.Add(rateLimitResumeLead).Format(time.RFC3339); st.ResumeAt != want || st.Source != rateLimitSourceResetEarly {
+		t.Errorf("ResumeAt = %s source %s, want %s", st.ResumeAt, st.Source, want)
+	}
+}

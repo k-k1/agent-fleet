@@ -122,6 +122,19 @@ type ScheduleStore interface {
 	CreateSchedule(ctx context.Context, s Schedule) error
 	GetSchedule(ctx context.Context, id string) (Schedule, bool, error)
 	ListSchedules(ctx context.Context, membershipID string) ([]Schedule, error)
+	// ListApprovalPendingSchedules returns every held schedule of every membership. It exists for
+	// the one-off release of held usage-limit resumes (#5212), which has no member in scope.
+	ListApprovalPendingSchedules(ctx context.Context) ([]Schedule, error)
+	// DeleteHeldSchedule deletes a schedule only while it is still the held version the caller read:
+	// same membership, approval_pending still set, same generation. false means something changed it.
+	DeleteHeldSchedule(ctx context.Context, id, membershipID string, generation int) (bool, error)
+	// MoveScheduleTime changes the instant of a live once-schedule in one conditional write: the row must
+	// still be enabled, approved, at the generation, spec and next_run the caller read, and not yet due
+	// (next_run after nowRFC). false means a fire or another write got there first.
+	MoveScheduleTime(ctx context.Context, id, membershipID string, generation int, oldSpec, oldNextRun, spec, nextRun, nowRFC, updatedAt string) (bool, error)
+	// ClaimOneOff atomically records that a start-time pass named name has begun on this database and
+	// reports whether this caller is the one that recorded it.
+	ClaimOneOff(ctx context.Context, name, at string) (bool, error)
 	// ListDueSchedules returns enabled schedules whose next_run is non-empty and at
 	// or before nowRFC (an RFC3339 UTC cutoff; RFC3339 sorts chronologically).
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
@@ -275,6 +288,23 @@ func (s *SQL) ListSchedules(ctx context.Context, membershipID string) ([]Schedul
 	return out, rows.Err()
 }
 
+func (s *SQL) ListApprovalPendingSchedules(ctx context.Context) ([]Schedule, error) {
+	rows, err := s.db.QueryContext(ctx, scheduleCols+` WHERE approval_pending=1 ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Schedule
+	for rows.Next() {
+		sc, err := scanSchedule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
 // ListDueSchedules returns enabled, approved rows with a non-empty next_run at or before
 // nowRFC. The empty-string guard matters: next_run=” (a paused/spent schedule)
 // must never look due, and ” sorts before any real RFC3339 stamp.
@@ -348,6 +378,38 @@ func (s *SQL) ApproveSchedule(ctx context.Context, id, membershipID string, gene
 		`UPDATE schedule SET approval_pending=0, next_run=?, updated_at=?, generation=generation+1
 		 WHERE id=? AND membership_id=? AND approval_pending=1 AND generation=?`,
 		nextRun, updatedAt, id, membershipID, generation)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *SQL) DeleteHeldSchedule(ctx context.Context, id, membershipID string, generation int) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM schedule WHERE id=? AND membership_id=? AND approval_pending=1 AND generation=?`,
+		id, membershipID, generation)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *SQL) MoveScheduleTime(ctx context.Context, id, membershipID string, generation int, oldSpec, oldNextRun, spec, nextRun, nowRFC, updatedAt string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET spec=?, next_run=?, updated_at=?, generation=generation+1
+		 WHERE id=? AND membership_id=? AND enabled=1 AND approval_pending=0 AND generation=? AND spec=? AND next_run=? AND next_run>?`,
+		spec, nextRun, updatedAt, id, membershipID, generation, oldSpec, oldNextRun, nowRFC)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *SQL) ClaimOneOff(ctx context.Context, name, at string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO cp_oneoff (name, done_at) VALUES (?, ?) ON CONFLICT (name) DO NOTHING`, name, at)
 	if err != nil {
 		return false, err
 	}

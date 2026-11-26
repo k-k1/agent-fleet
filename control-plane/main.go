@@ -31,6 +31,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/identitycheck"
 	"github.com/k-k1/agent-fleet/control-plane/internal/pushsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/schedlimit"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 	"github.com/k-k1/agent-fleet/control-plane/internal/writegate"
 )
@@ -317,6 +318,9 @@ func main() {
 	}
 	if err := mgr.backfill(ctx); err != nil {
 		log.Printf("backfill warning: %v", err)
+	}
+	if _, _, err := schedlimit.ReleaseHeld(ctx, st, time.Now().UTC()); err != nil {
+		log.Printf("WARNING: release held usage-limit resumes: %v", err)
 	}
 
 	// docs/log/20 M2 (egress, log-only): when a forward-proxy address is configured, route

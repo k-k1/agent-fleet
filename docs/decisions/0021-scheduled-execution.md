@@ -214,3 +214,19 @@ the gate puts an approved schedule back on hold; pause and resume do not. A gene
 only to the version the member looked at. The token-face answer carries `approval_pending` and a warning, and the
 operator persona and tool descriptions tell the user that the schedule waits. The Fleet Operator is not told apart from
 a session (same token), so its schedules wait too (#4853).
+
+**Note (2026-11-26, #5212):** one write on the token face is no longer held: the Agent's usage-limit auto-resume booking.
+Held, the resume of a limited session never fired on its own, and a queue run that reached the limit kept its slot
+until a person approved a card that was already past its time. The exemption is not a flag the caller sets. The Agent
+posts `session`, `resume_at`, `agent_kind`, `locale` and `tz` to `POST /internal/schedules/limit-resume`, and the CP
+builds the row itself: `once`, `reuse` into that session, `missing_target_policy=fail`, `overlap_policy=skip`, `wake`,
+no report, no gate, one of two fixed prompts picked by `locale`, and a time no more than eight days ahead. The token
+does not say which session its caller is, so "that session" can only be any session of the member's own membership.
+Every other token write, including the same shape sent to `POST /internal/schedules`, stays held; delete needed no change,
+and a token cannot run-now or resume such a row, so it fires once at its time. The resume text opens with
+`[agent-fleet:notice kind=limit-resume reply=none]`, like the other automatic inputs, and says it carries no new
+instruction. Held rows an earlier Agent left, with exactly that shape and label, never run or shown, and a time inside
+the window counted from their creation, are released at CP start by a pass that is attempted once per database (approved when still ahead, deleted
+when past, both conditional on the version read). The pass claims a marker row first and is never run again, even after a
+crash, so a row it did not reach stays held; only wordings an earlier Agent sent and rows that existed at the claim count. Anything else stays held. An older Agent keeps booking through the generic route, and a newer Agent falls back to
+it when the CP lacks the dedicated one, so in both mixes the booking is held as before.

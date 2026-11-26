@@ -62,6 +62,7 @@ var workspaceRoutes = map[string]bool{
 	// Schedules (AF_SCHEDULE_TOKEN).
 	"GET /internal/schedules":               true,
 	"POST /internal/schedules":              true,
+	"POST /internal/schedules/limit-resume": true,
 	"PATCH /internal/schedules/{id}":        true,
 	"DELETE /internal/schedules/{id}":       true,
 	"POST /internal/schedules/{id}/pause":   true,

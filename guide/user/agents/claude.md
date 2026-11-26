@@ -50,6 +50,7 @@ As the sign-in nears its expiry, the card shows "**Expires in N day(s)**". The C
 - **Streaming** is display only. What reaches the screen is finished lines, so a long paragraph arrives at once
 - **Idle compaction** applies to conversations of 200,000 tokens or more, about 54 minutes after the last action. The next turn costs less, but you come back to a summarised conversation
 - **Resume with AF** books one continuation when the reset time is known. The workspace can stop while it waits and wake for delivery
+  The message the session receives opens with `[agent-fleet:notice kind=limit-resume reply=none]`, which marks it as automatic. It carries no new instruction, only "continue where you stopped"
 - **Continue with Claude** uses Claude Code's own wait. Keep the session and workspace running until it continues. Claude may leave longer waits for you to handle
 - **Off** leaves continuation to you. Claude Code applies the selected mode on its next launch
 
