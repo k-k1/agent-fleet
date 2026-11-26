@@ -8,11 +8,54 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // gitTimeout bounds the one git call that decides a memo's repository. A memo is worth more
 // than the mapping: when git is slow the memo is relayed as named.
 var gitTimeout = 5 * time.Second
+
+// SpacePrefix marks a memo bucket that is a space (~/spaces/<folder>) rather than a repository;
+// the Control Plane reads the same prefix (memoSpacePrefix). A folder under ~/repos is one path
+// segment and never holds "/", so no repository's bucket collides with a space's.
+const SpacePrefix = "spaces/"
+
+// bucketFor is the bucket a memo from the session whose meta is m (nil for the operator) is
+// filed under for the `repo` the model named. A session in a space that names its own space's
+// folder means that space, never a repository that happens to share the folder name; anything
+// else goes through baseRepo. The name is trimmed first, as the Control Plane trims it before
+// storing: " app " is "app" there. m is the meta the caller's attribution was read from, so the
+// bucket and the check that the session exists cannot see two different reads.
+func bucketFor(m *session.Meta, repo string) string {
+	repo = strings.TrimSpace(repo)
+	if m != nil && NeedsCaller(repo) {
+		if f := spaceOf(*m); f != "" && repo == f {
+			return SpacePrefix + f
+		}
+	}
+	return baseRepo(repo)
+}
+
+// NeedsCaller reports whether the bucket for repo depends on who names it: only a bare name that
+// could be a space folder can mean the caller's own space. "", a worktree folder (app@one) or an
+// explicit spaces/<folder> is the same bucket whoever names it, so no session is read for it.
+func NeedsCaller(repo string) bool {
+	return spacex.ValidFolder(strings.TrimSpace(repo))
+}
+
+// spaceOf is the space folder the session of meta m runs in, "" when it runs in none. The place
+// stored at create decides; a meta written before places were stored falls back to the space
+// marker under its directory, which is what decided the place since.
+func spaceOf(m session.Meta) string {
+	if m.Place != nil {
+		if m.Place.Kind == session.PlaceSpace {
+			return m.Place.ID
+		}
+		return ""
+	}
+	return spacex.FolderOf(m.Dir)
+}
 
 // baseRepo is the repository bucket a memo is filed under for the folder `repo` the model
 // named: a worktree folder (`app@feature`) is filed under its base repository (`app`), so a

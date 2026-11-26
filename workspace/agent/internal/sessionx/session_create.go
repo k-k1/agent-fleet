@@ -59,6 +59,8 @@ type createRun struct {
 	// by the sender. A clash it meets later falls back to the throwaway branch instead of
 	// failing the delivery.
 	queueNamed bool
+	// queueRepo is a queue's create that names its repository by dir (queueDirIsRepository).
+	queueRepo bool
 	// defaultFixed is the member's default route when it is one the kind resolves by itself (a
 	// fixed route): the create stays empty and checkRoute requires the judged launch to be on it,
 	// and on its saved connection when it names one.
@@ -513,6 +515,10 @@ func (c *createRun) resolveWorkingCopy() bool {
 			c.req.Dir = made.Dir
 		}
 	}
+	c.queueRepo = c.req.QueueDelivery != nil && c.req.Space == nil && strings.TrimSpace(c.req.Dir) != ""
+	if !c.queueDirIsRepository() {
+		return false
+	}
 	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
 	// the parent) and use it as the CWD, so a decided task branches into its own dir +
 	// session without touching the parent's running sessions.
@@ -661,6 +667,9 @@ func (c *createRun) resolveWorkingCopy() bool {
 		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+c.req.Dir)
 		return false
 	}
+	if !c.queueDirIsRepository() {
+		return false
+	}
 	// Two agents in one working copy (ADR 0073 decision 7). Checked HERE, against the resolved
 	// req.Dir, because that is the directory the session will actually run in: an empty dir
 	// becomes home and a relative one is joined onto home a few lines above, so comparing the
@@ -697,6 +706,33 @@ func (c *createRun) resolveWorkingCopy() bool {
 	}
 	c.subdir = subdir
 	return true
+}
+
+// queueDirIsRepository refuses a queue's create whose dir is not a repository or a worktree
+// directly under ~/repos: a queue names a repository by folder, and a symlink or a nested folder
+// there could lead it into a space or anywhere else. A space is named by Space, never by dir, and
+// the common bucket sends no dir. It runs on the dir as named and again on the dir the session
+// will start in, so a link put in place while the working copy is resolved is caught too; a dir
+// that cannot be read is refused rather than let through to a later read that may follow a link.
+func (c *createRun) queueDirIsRepository() bool {
+	if !c.queueRepo {
+		return true
+	}
+	dir := c.req.Dir
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(homeDir(), dir)
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+dir)
+		return false
+	}
+	switch PlaceOf(dir).Kind {
+	case session.PlaceRepo, session.PlaceWorktree:
+		return true
+	}
+	httpx.WriteErr(c.w, http.StatusBadRequest, "queue_dir_not_repository",
+		"a queue runs in a repository directly under ~/repos, and this is not one: "+c.req.Dir)
+	return false
 }
 
 // identify is stage 7: the session's name, kind, title default, label, SSM target, studio and
@@ -777,6 +813,13 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		// From the member's setting only, never the request: a session can call create_session,
 		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
 		MuseContributorMode: contributorModeOn(c.kind),
+	}
+	if c.queueRepo && meta.Place.Kind != session.PlaceRepo && meta.Place.Kind != session.PlaceWorktree {
+		// The place stored here is read again after queueDirIsRepository: a working copy replaced
+		// by a link since is caught where it is seen, not launched into.
+		httpx.WriteErr(c.w, http.StatusBadRequest, "queue_dir_not_repository",
+			"a queue runs in a repository directly under ~/repos, and this is not one: "+req.Dir)
+		return session.Meta{}, false
 	}
 	if c.origin == session.OriginSchedule {
 		meta.ScheduleID = cleanScheduleID(req.ScheduleID)

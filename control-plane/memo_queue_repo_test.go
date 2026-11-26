@@ -356,6 +356,10 @@ func TestMemoRepoSettingsRefusals(t *testing.T) {
 	if rec, _ := e.repoSettings(e.category("", "loose")); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errCodeMemoQueueNoRepo) {
 		t.Errorf("no repo: %d %s", rec.Code, rec.Body.String())
 	}
+	// A space has no repository either, so nothing is asked of the workspace under its folder name.
+	if rec, _ := e.repoSettings(e.category("spaces/app", "notes")); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errCodeMemoQueueNoRepo) {
+		t.Errorf("space: %d %s", rec.Code, rec.Body.String())
+	}
 
 	for _, c := range []struct {
 		name, body string

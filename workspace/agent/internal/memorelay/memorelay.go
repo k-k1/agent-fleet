@@ -223,12 +223,13 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
-	producer, origin, msg := Producer(in.From)
+	caller, msg := callerMeta(in.From)
 	if msg != "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_from", msg)
 		return
 	}
-	in.Memo.Repo = baseRepo(in.Memo.Repo)
+	producer, origin := attribution(in.From, caller)
+	in.Memo.Repo = bucketFor(caller, in.Memo.Repo)
 	out := cpCreate{Fields: in.Memo, Producer: producer, ProducerOrigin: origin}
 	if in.Memo.Continuation {
 		if out.QueueDelivery = QueueDeliveryOf(in.From); out.QueueDelivery == "" {
@@ -246,25 +247,36 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 	relay(w, res, err)
 }
 
-// Producer is the attribution a create from `from` carries: the session's name and its origin
-// as its meta records it, or the operator for "". A name with no meta is refused rather than
-// stamped: the attribution must name a session that exists here.
-func Producer(from string) (producer, origin, refusal string) {
+// callerMeta reads the meta of the calling session `from`: nil for "" (the operator), a refusal
+// for a name that is not a session here. A create's attribution must name a session that exists
+// here, so a name with no meta is refused rather than stamped.
+func callerMeta(from string) (*session.Meta, string) {
 	from = strings.TrimSpace(from)
 	if from == "" {
-		return ProducerOperator, session.OriginOperator, ""
+		return nil, ""
 	}
 	if !session.ValidName(from) {
-		return "", "", "from is not a session name"
+		return nil, "from is not a session name"
 	}
 	m, ok := session.ReadMeta(from)
 	if !ok {
-		return "", "", "no session named " + from
+		return nil, "no session named " + from
 	}
-	return from, session.OriginOf(m), ""
+	return &m, ""
 }
 
-// HandleUpdate is PATCH /memos/{id}.
+// attribution is the producer and origin of a caller whose meta callerMeta read.
+func attribution(from string, m *session.Meta) (producer, origin string) {
+	if m == nil {
+		return ProducerOperator, session.OriginOperator
+	}
+	return strings.TrimSpace(from), session.OriginOf(*m)
+}
+
+// HandleUpdate is PATCH /memos/{id}. The query's from is the calling session, filled by the MCP
+// process from its own identity like a create's From, and absent for the operator and for a move
+// whose bucket does not depend on the caller: it decides only which bucket a repo the model names
+// is filed under (bucketFor).
 func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -277,7 +289,18 @@ func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Repo != nil {
-		base := baseRepo(*p.Repo)
+		// Only a move to a name that could be the caller's space reads the session (NeedsCaller):
+		// any other edit goes through whatever from says, so a meta that cannot be read stops
+		// nothing but such a move, which it could otherwise file under a same-named repository.
+		var caller *session.Meta
+		if NeedsCaller(*p.Repo) {
+			var msg string
+			if caller, msg = callerMeta(r.URL.Query().Get("from")); msg != "" {
+				httpx.WriteErr(w, http.StatusBadRequest, "bad_from", msg)
+				return
+			}
+		}
+		base := bucketFor(caller, *p.Repo)
 		p.Repo = &base
 	}
 	body, err := json.Marshal(p)

@@ -32,6 +32,7 @@ const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useQueueSettingsCache } = await import("./queueSettingsCache.ts");
+const { t } = await import("../../lib/i18n/index.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -185,6 +186,17 @@ describe("MemoQueueSettingsModal repository settings card", () => {
   it("is not shown for a category without a repository", async () => {
     await render("");
     expect(document.querySelector(".memo-reposet")).toBeNull();
+  });
+
+  // A space has no repository: no settings file to read, and its runs start in the space itself,
+  // so the worktree switch would claim something the Control Plane ignores.
+  it("is not shown for a space, and neither is the worktree switch", async () => {
+    await render("spaces/app");
+    expect(document.querySelector(".memo-reposet")).toBeNull();
+    expect(document.body.textContent).not.toContain(t("memo.q_worktree"));
+    await render("app");
+    expect(document.querySelector(".memo-reposet")).not.toBeNull();
+    expect(document.body.textContent).toContain(t("memo.q_worktree"));
   });
 
   it("does not save the dialog while an approval is on its way", async () => {

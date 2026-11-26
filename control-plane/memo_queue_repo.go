@@ -423,7 +423,7 @@ func (a memoAPI) loadRepoFile(ctx context.Context, res *resolved, categoryID str
 	if !ok || c.MembershipID != res.mv.MembershipID {
 		return memoRepoLoaded{}, &apiError{http.StatusNotFound, "not_found", "category not found"}
 	}
-	if c.Repo == "" {
+	if !memoHasRepository(c.Repo) {
 		return memoRepoLoaded{}, &apiError{http.StatusConflict, errCodeMemoQueueNoRepo, "this category belongs to no repository"}
 	}
 	if res.rt.State(ctx) != "running" {
@@ -1097,7 +1097,7 @@ func (m *manager) memoRepoRecord(ctx context.Context, membershipID string, rc st
 // was taken against another name or other settings.
 func memoRepoCheckOf(q store.MemoQueue, c store.MemoCategory) *memoRepoCheckWire {
 	rc := q.RepoCheck
-	if rc.State == "" || c.Repo == "" || rc.Basis != memoRepoBasis(c, q) {
+	if rc.State == "" || !memoHasRepository(c.Repo) || rc.Basis != memoRepoBasis(c, q) {
 		return nil
 	}
 	return &memoRepoCheckWire{State: rc.State, Commit: rc.Commit, Diffs: rc.Diffs, CheckedAt: rc.At}
@@ -1421,7 +1421,7 @@ func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID str
 		if err != nil {
 			complete = false
 		}
-		if err != nil || !ok || c.Repo == "" || c.MembershipID != membershipID {
+		if err != nil || !ok || !memoHasRepository(c.Repo) || c.MembershipID != membershipID {
 			continue
 		}
 		repos[c.Repo] = true
