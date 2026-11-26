@@ -30,7 +30,6 @@ func (ocGateway) CheckRoute(context.Context, agents.RouteSelection, string) *age
 
 func openOpencodeBedrock(t *testing.T) {
 	t.Helper()
-	t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", "1")
 	prev := agents.CurrentRouteGateway()
 	agents.SetRouteGateway(ocGateway{})
 	t.Cleanup(func() { agents.SetRouteGateway(prev) })

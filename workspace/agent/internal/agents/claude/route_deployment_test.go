@@ -27,13 +27,13 @@ func deploymentMeta(t *testing.T, name string) session.Meta {
 }
 
 // The deployment's route has a gate of its own: closed, it is refused at check, bind and launch
-// and not offered, whatever the member route's gate says; open, it is offered only while the
+// and not offered, while the member's own route (which has none) stays usable; open, it is offered only while the
 // gateway (the CP) says the member may use it.
 func TestBedrockDeploymentGate(t *testing.T) {
 	isolateSlot(t)
 	isolateClaudeConfig(t)
 	gw := &offeringGateway{offered: true}
-	withGateway(t, gw) // opens the member route's gate, not this one
+	withGateway(t, gw)
 	t.Setenv(deploymentGateEnv, "")
 	m := deploymentMeta(t, "dep-1")
 	gated := func(what string, ref *agents.RouteRefusal) {
@@ -55,6 +55,9 @@ func TestBedrockDeploymentGate(t *testing.T) {
 	if len(gw.issued)+len(gw.checked) != 0 {
 		t.Errorf("the gateway was asked with the gate closed: %d issued, %d checked", len(gw.issued), len(gw.checked))
 	}
+	if ref := (agentImpl{}).CheckRoute(context.Background(), *bedrockMeta(t, "b").Route, testBedrockModel); ref != nil {
+		t.Errorf("the deployment's closed gate refused the member's bedrock route: %v", ref)
+	}
 	t.Setenv(deploymentGateEnv, "1")
 	if !slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrockDeployment) {
 		t.Error("open and usable, but not offered")
@@ -63,13 +66,8 @@ func TestBedrockDeploymentGate(t *testing.T) {
 	if slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrockDeployment) {
 		t.Error("offered while the CP refuses it")
 	}
-	// The member route's gate does not open this one, and this one does not open that.
-	t.Setenv(bedrockGateEnv, "")
 	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, testBedrockModel); ref != nil {
 		t.Errorf("open: CheckRoute = %v", ref)
-	}
-	if ref := (agentImpl{}).CheckRoute(context.Background(), *bedrockMeta(t, "b").Route, testBedrockModel); ref == nil {
-		t.Error("the deployment gate opened the member's bedrock route")
 	}
 }
 

@@ -318,6 +318,9 @@ func (a agentImpl) UsableRoutes() []string {
 	for _, r := range a.OfferedRoutes() {
 		if agents.GatewayHolds(r) {
 			out = append(out, r)
+			if r == RouteBedrock {
+				warmRouteModels()
+			}
 		}
 	}
 	slices.Sort(out)

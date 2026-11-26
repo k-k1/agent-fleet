@@ -105,6 +105,14 @@ type ModelRouteLister interface {
 	ModelRoutes(model string) []string
 }
 
+// ExplicitRouteModels is an optional capability of a PerCallRouter: the route a model can run on
+// only by naming it in the selection (opencode's amazon-bedrock models), "" for any other model.
+// ResolveLaunch is empty for such a model, as it must be with no selection, so a policy filter of
+// the launch menu would drop it; the menu keeps it when the policy allows the route it names.
+type ExplicitRouteModels interface {
+	ExplicitRoute(model string) string
+}
+
 // LaunchBinder is an optional capability of a CredentialResolver: the launch record's binding of
 // an explicit selection, where the stored connection does not identify the credential instance
 // (a subscription selection names no connection) or is not fit to travel (a plain key

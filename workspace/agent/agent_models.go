@@ -240,9 +240,16 @@ func policyVisibleModels(kind string, p routepolicy.Policy, list []agents.ModelC
 	if !resolves || !perCall || oneRoute {
 		return list
 	}
+	explicit, _ := a.(agents.ExplicitRouteModels)
 	var out []agents.ModelChoice
 	for _, m := range list {
-		if l := cr.ResolveLaunch(session.Meta{Kind: kind, Model: m.ID}); l.Route != "" && p.Allows(l.Route) {
+		l := cr.ResolveLaunch(session.Meta{Kind: kind, Model: m.ID})
+		if l.Route == "" && explicit != nil {
+			// A model that runs only on a route named at the create (opencode's Bedrock models):
+			// no selection resolves it, so it stays when the policy allows that route.
+			l.Route = explicit.ExplicitRoute(m.ID)
+		}
+		if l.Route != "" && p.Allows(l.Route) {
 			out = append(out, m)
 		}
 	}

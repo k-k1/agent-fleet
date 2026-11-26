@@ -59,7 +59,6 @@ func (f *fakeGateway) CheckRoute(_ context.Context, sel agents.RouteSelection, _
 
 func withGateway(t *testing.T, g agents.RouteGateway) {
 	t.Helper()
-	t.Setenv(bedrockGateEnv, "1") // the release gate has its own test
 	prev := agents.CurrentRouteGateway()
 	agents.SetRouteGateway(g)
 	t.Cleanup(func() { agents.SetRouteGateway(prev) })
@@ -370,37 +369,28 @@ func TestBedrockBindRouteIsTheGateways(t *testing.T) {
 	}
 }
 
-// Until decision 14's acceptance run, the bedrock route is declared but closed: refused at check,
-// bind and launch, and not offered; AF_CLAUDE_BEDROCK_ROUTE=1 opens it.
-func TestBedrockReleaseGate(t *testing.T) {
+// The member's bedrock route has no release gate (ADR 0128 decision 14 passed): offered, checked,
+// bound and launched with no switch in the environment, and a leftover AF_CLAUDE_BEDROCK_ROUTE
+// from the acceptance run, whatever its value, changes nothing.
+func TestBedrockRouteHasNoReleaseGate(t *testing.T) {
 	isolateSlot(t)
 	isolateClaudeConfig(t)
 	withGateway(t, &fakeGateway{})
-	t.Setenv(bedrockGateEnv, "")
-	m := bedrockMeta(t, "gate-1")
-	m.Route.Connection += "#00112233aabbccdd"
-	gated := func(what string, ref *agents.RouteRefusal) {
-		t.Helper()
-		if ref == nil || !strings.Contains(ref.Message, bedrockGateEnv) {
-			t.Errorf("%s with the gate closed = %v", what, ref)
+	for _, v := range []string{"", "0", "1"} {
+		t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", v)
+		m := bedrockMeta(t, "nogate-"+v)
+		if !slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) {
+			t.Errorf("switch %q: not offered: %v", v, agentImpl{}.OfferedRoutes())
 		}
-	}
-	gated("CheckRoute", agentImpl{}.CheckRoute(context.Background(), *m.Route, testBedrockModel))
-	_, ref := agentImpl{}.BindRoute(*m.Route)
-	gated("BindRoute", ref)
-	_, err := launchOf(t, m)
-	var lref *agents.RouteRefusal
-	errors.As(err, &lref)
-	gated("the launch", lref)
-	if slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) || !slices.Contains(agentImpl{}.Routes(), RouteBedrock) {
-		t.Errorf("closed: offered %v, declared %v", agentImpl{}.OfferedRoutes(), agentImpl{}.Routes())
-	}
-	t.Setenv(bedrockGateEnv, "1")
-	if !slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) {
-		t.Error("open, but not offered")
-	}
-	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, testBedrockModel); ref != nil {
-		t.Errorf("open: CheckRoute = %v", ref)
+		if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, testBedrockModel); ref != nil {
+			t.Errorf("switch %q: CheckRoute = %v", v, ref)
+		}
+		if _, ref := (agentImpl{}).BindRoute(*m.Route); ref != nil {
+			t.Errorf("switch %q: BindRoute = %v", v, ref)
+		}
+		if _, err := launchOf(t, m); err != nil {
+			t.Errorf("switch %q: launch = %v", v, err)
+		}
 	}
 }
 
@@ -455,5 +445,22 @@ func TestBedrockModelIsRequiredAndPinned(t *testing.T) {
 	withAPIKey(t, "sk-ant-api03-test-0123456789abcdef", nil)
 	if ref := (agentImpl{}).CheckRoute(context.Background(), *sel(RouteAPI, ""), "opus"); ref != nil {
 		t.Errorf("anthropic-api with opus = %v", ref)
+	}
+}
+
+// The member's bedrock route is offered only while the route gateway runs: without it nothing can
+// serve the calls, and the launch dialog would offer an option that can only fail.
+func TestBedrockRouteIsNotOfferedWithoutAGateway(t *testing.T) {
+	isolateSlot(t)
+	isolateClaudeConfig(t)
+	prev := agents.CurrentRouteGateway()
+	agents.SetRouteGateway(nil)
+	t.Cleanup(func() { agents.SetRouteGateway(prev) })
+	if slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) {
+		t.Errorf("offered with no gateway: %v", agentImpl{}.OfferedRoutes())
+	}
+	withGateway(t, &fakeGateway{})
+	if !slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) {
+		t.Errorf("not offered with a gateway: %v", agentImpl{}.OfferedRoutes())
 	}
 }

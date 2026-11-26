@@ -291,9 +291,9 @@ exec '` + real + `' -L '` + socket + `' "$@"
 		"AGENT_TOKEN", "AGENT_ADDR", "AF_CP_BASE_URL", "AF_CP_INTERNAL_URL", "AF_MEMO_TOKEN", "AF_SCHEDULE_TOKEN"} {
 		_ = os.Unsetenv(k)
 	}
-	// Route acceptance gates (ADR 0128 decision 14): a workspace opened for an acceptance run sets
-	// them on the Agent, and a test that does not pin its own state would then see the open row.
-	// A test that needs a gate open sets it itself.
+	// Route acceptance gates still in force (the deployment's, ADR 0129 Q1): a workspace opened
+	// for an acceptance run sets them on the Agent, and a test that does not pin its own state
+	// would then see the open row. A test that needs a gate open sets it itself.
 	for _, k := range RouteGateEnvs {
 		_ = os.Unsetenv(k)
 	}
@@ -302,7 +302,7 @@ exec '` + real + `' -L '` + socket + `' "$@"
 }
 
 // RouteGateEnvs are the per-row acceptance gates the guard clears for every test binary.
-var RouteGateEnvs = []string{"AF_CLAUDE_BEDROCK_ROUTE", "AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE", "AF_OPENCODE_BEDROCK_ROUTE"}
+var RouteGateEnvs = []string{"AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE"}
 
 var isolatedSeq atomic.Int64
 

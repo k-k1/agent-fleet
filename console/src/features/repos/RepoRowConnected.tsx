@@ -32,7 +32,7 @@ import { liveSessionCount } from "./stopTree.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { RepoRailContext } from "./useRepoRail.ts";
 import { quickLaunchRoute } from "../../agents/launchAccess.ts";
-import { routeSelectionBody } from "./bedrockProfiles.ts";
+import { quickLaunchModel, routeSelectionBody } from "./bedrockProfiles.ts";
 import { policyRefusalKey, policyRefusalOf } from "./launchPolicy.ts";
 
 interface RepoRowConnectedProps {
@@ -212,7 +212,11 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, termChip, unrea
         // A quick launch defaults to managed like any new session (docs/log/27 §9.2 —
         // opencode). The CLI is reachable through the driver choice in the start-work modal.
         if (agentOf(kind).managedDriver) body.driver = "managed";
-        if (model) body.model = model;
+        // A remembered model that runs only on a route (a Bedrock one) is not sent with no route;
+        // the dialog opens instead so a model can be chosen.
+        const q = quickLaunchModel(kind, model, !!plan.route);
+        if (q === "dialog") return "dialog";
+        if (q.model) body.model = q.model;
         if (effort) body.effort = effort;
         body.mode = startMode;
         let res = await apiJSON("api/sessions", "POST", body);

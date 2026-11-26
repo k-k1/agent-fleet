@@ -95,6 +95,31 @@ func GatewayHolds(route string) bool {
 	return ok && h.Holds(route)
 }
 
+// RouteLoopback is an optional capability of the gateway: whether its loopback TCP listener is up.
+// A harness that can only speak TCP (opencode) is not offered the route without it; a gateway
+// without the capability is taken to have one.
+type RouteLoopback interface {
+	LoopbackReady() bool
+}
+
+// GatewayLoopbackReady is false without a gateway, and for a gateway that says it has no loopback
+// listener.
+func GatewayLoopbackReady() bool {
+	gw := CurrentRouteGateway()
+	if gw == nil {
+		return false
+	}
+	l, ok := gw.(RouteLoopback)
+	return !ok || l.LoopbackReady()
+}
+
+// GatewayLacks is true only when the gateway can say what the Workspace holds and says it holds
+// nothing for route: a listing made for a route nothing can run on is skipped.
+func GatewayLacks(route string) bool {
+	h, ok := CurrentRouteGateway().(RouteHolding)
+	return ok && !h.Holds(route)
+}
+
 // RuntimeRootsFunc names the root processes of a session's runtime that is not a launch pane: a
 // Managed harness that runs a private server for one session's route. The gateway serves a route
 // token only to a process in its owner's tree (routegw/peer.go), and a Managed session has no pane

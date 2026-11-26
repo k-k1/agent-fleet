@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"net/http"
@@ -10,6 +11,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
@@ -159,11 +163,12 @@ func TestCPManagedDefaultSnapshotMatchesRegistry(t *testing.T) {
 }
 
 // The live catalog (and only it) names the routes a harness accepts, so the Console offers a
-// route picker for claude and for no other kind; the checked-in snapshot stays free of them.
+// route picker for claude and for no other kind while no route gateway runs (opencode's only route
+// is the gateway's); the checked-in snapshot stays free of them.
 func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 	settleKindProbes(t)
-	// The route gates are this Agent's environment; a workspace running with them on must not
-	// change what this test sees.
+	// The route gate is this Agent's environment; a workspace running with it on must not change
+	// what this test sees.
 	for _, k := range testguard.RouteGateEnvs {
 		t.Setenv(k, "")
 	}
@@ -180,10 +185,28 @@ func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 	}
 }
 
-// Each kind's gate decides its own row of the live catalog: opencode's bedrock route appears
-// only with AF_OPENCODE_BEDROCK_ROUTE=1, and neither claude's gate nor an open opencode gate
-// changes the other kind.
-func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
+// kindsGateway is a running route gateway that serves everything: the catalog offers a route only
+// where something can serve it.
+type kindsGateway struct{}
+
+func (kindsGateway) Issue(session.Meta) (agents.RouteGrant, *agents.RouteRefusal) {
+	return agents.RouteGrant{}, nil
+}
+func (kindsGateway) IssueLoopback(session.Meta) (agents.RouteGrant, *agents.RouteRefusal) {
+	return agents.RouteGrant{}, nil
+}
+func (kindsGateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
+	return sel, nil
+}
+func (kindsGateway) CheckRoute(context.Context, agents.RouteSelection, string) *agents.RouteRefusal {
+	return nil
+}
+
+// Both harnesses offer the member's bedrock route with no switch in the environment (ADR 0128
+// decision 14 passed for each) while the route gateway runs, and a leftover acceptance switch
+// changes nothing. Without the gateway neither is offered. opencode's billing choice "off" (the
+// default) does not close its route.
+func TestKindCatalogOffersBedrockWithoutASwitch(t *testing.T) {
 	settleKindProbes(t)
 	routesOf := func(kind string) []string {
 		for _, e := range buildKindCatalog(true).Kinds {
@@ -194,41 +217,30 @@ func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
 		t.Fatalf("kind %q missing from the catalog", kind)
 		return nil
 	}
-	for _, k := range testguard.RouteGateEnvs {
-		t.Setenv(k, "")
-	}
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
+	prevGW := agents.CurrentRouteGateway()
+	t.Cleanup(func() { agents.SetRouteGateway(prevGW) })
+	prevPref := opencode.UsagePref
+	t.Cleanup(func() { opencode.UsagePref = prevPref })
+	opencode.UsagePref = func() string { return opencode.UsageOff }
+
+	agents.SetRouteGateway(nil)
 	if got := routesOf("opencode"); len(got) != 0 {
-		t.Errorf("gate closed: opencode routes %v", got)
-	}
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "")
-	t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", "1")
-	if got := routesOf("opencode"); !slices.Equal(got, []string{"bedrock"}) {
-		t.Errorf("gate open: opencode routes %v, want [bedrock]", got)
+		t.Errorf("no gateway: opencode routes %v", got)
 	}
 	if got := routesOf("claude"); slices.Contains(got, "bedrock") {
-		t.Errorf("opencode's gate opened claude's bedrock row: %v", got)
+		t.Errorf("no gateway: claude routes %v", got)
 	}
-}
 
-// A route declared but not yet offered (claude's bedrock, before decision 14's acceptance run) is
-// left out of the live catalog, so the launch dialog does not offer it; opening its gate adds it.
-func TestKindCatalogOffersOnlyReleasedRoutes(t *testing.T) {
-	settleKindProbes(t)
-	claudeRoutes := func() []string {
-		for _, e := range buildKindCatalog(true).Kinds {
-			if e.Kind == "claude" {
-				return e.Routes
-			}
+	agents.SetRouteGateway(kindsGateway{})
+	for _, v := range []string{"", "0", "1"} {
+		t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", v)
+		t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", v)
+		if got := routesOf("opencode"); !slices.Equal(got, []string{"bedrock"}) {
+			t.Errorf("switch %q: opencode routes %v, want [bedrock]", v, got)
 		}
-		return nil
+		if got := routesOf("claude"); !slices.Contains(got, "bedrock") || !slices.Contains(got, "anthropic-api") {
+			t.Errorf("switch %q: claude routes %v", v, got)
+		}
 	}
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "")
-	if got := claudeRoutes(); slices.Contains(got, "bedrock") || !slices.Contains(got, "anthropic-api") {
-		t.Errorf("gate closed: live routes %v", got)
-	}
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
-	if got := claudeRoutes(); !slices.Contains(got, "bedrock") {
-		t.Errorf("gate open: live routes %v", got)
-	}
+
 }
