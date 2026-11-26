@@ -885,10 +885,15 @@ func TestALateReadOfAColdKeyTakesTheNewestSnapshotOfItsPR(t *testing.T) {
 }
 
 // Two reads of the branch itself answering out of order: the one sent later says which PR the
-// branch names now.
+// branch names now, and the older one's newer news of the old PR still reaches that PR's number key.
 func TestABranchsOlderReadArrivingLateDoesNotRenameItsPR(t *testing.T) {
 	c := newTestCache("http://unused", "tok")
-	branch := Key{Repo: "o/r", Branch: "a"}
+	branch, old := Key{Repo: "o/r", Branch: "a"}, Key{Repo: "o/r", Number: 10}
+	c.mu.Lock() // a watch holds #10 by number, open, read a while ago
+	e := &entry{asked: time.Now()}
+	c.entries[old] = e
+	c.storeLocked(old, e, &PR{Number: 10, State: "open"}, time.Now().Add(-time.Hour))
+	c.mu.Unlock()
 	in, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
 	c.fetch = func(_ string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
@@ -896,7 +901,7 @@ func TestABranchsOlderReadArrivingLateDoesNotRenameItsPR(t *testing.T) {
 		if calls.Add(1) == 1 {
 			close(in)
 			<-release
-			n = &PR{Number: 10, State: "open"} // read before #10 was closed and #11 opened
+			n = &PR{Number: 10, State: "merged"} // read after #10 merged, before #11 opened
 		}
 		return map[Key]*PR{branch: n}, nil, 0, nil
 	}
@@ -911,5 +916,8 @@ func TestABranchsOlderReadArrivingLateDoesNotRenameItsPR(t *testing.T) {
 	<-done
 	if pr := c.Lookup([]Key{branch}, time.Now())[branch]; pr == nil || pr.Number != 11 {
 		t.Fatalf("branch answers %+v, want #11 kept over the older read of #10", pr)
+	}
+	if pr := c.Lookup([]Key{old}, time.Now())[old]; pr == nil || pr.State != "merged" {
+		t.Fatalf("#10 by number answers %+v, want the branch's late read of its merge", pr)
 	}
 }

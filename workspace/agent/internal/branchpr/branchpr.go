@@ -352,18 +352,16 @@ func (c *Cache) refresh(due []Key) {
 //
 // A background refresh and a Fetch can be in flight for one PR at once and answer out of order,
 // so two orders are kept apart. Which PR a key names (or that it names none) is the key's own
-// read to say: an answer from a call sent before the key's last direct read is dropped. What a PR
-// says is any read's: the answer takes the newest known snapshot of that PR, from whichever key
-// read it, so a late arrival never puts an older read back and a PR link never records it as a
-// change (session.PRFactsDue).
+// read to say: an answer from a call sent before the key's last direct read does not rename it.
+// What a PR says is any read's: the answer takes the newest known snapshot of that PR, from
+// whichever key read it, and is still handed to the other keys holding that PR when it no longer
+// names k's, so a late arrival never puts an older read back, a PR link never records one as a
+// change (session.PRFactsDue), and a newer read of the old PR still reaches its number key.
 func (c *Cache) storeLocked(k Key, e *entry, pr *PR, sent time.Time) {
 	// Stamped only while unset: the answer is new and unseen until its first store, and a second
 	// key answered by the same PR in one call stores it again, by then visible to Lookup's callers.
 	if pr != nil && pr.ObservedAt.IsZero() {
 		pr.ObservedAt = sent
-	}
-	if sent.Before(e.direct) {
-		return
 	}
 	at := sent
 	if pr != nil && pr.Number > 0 {
@@ -371,7 +369,9 @@ func (c *Cache) storeLocked(k Key, e *entry, pr *PR, sent time.Time) {
 			pr, at = newer, newerAt
 		}
 	}
-	e.pr, e.fetched, e.direct = pr, at, sent
+	if !sent.Before(e.direct) {
+		e.pr, e.fetched, e.direct = pr, at, sent
+	}
 	if pr == nil || pr.Number <= 0 {
 		return
 	}
