@@ -155,12 +155,13 @@ contract を `GITHUB_TOKEN` で dispatch し、そうして始まった実行は
   組にする（メジャーが 0 の間は、新しいマイナーもメジャー扱い）。受け付けるのは素の `x.y.z` だけで、
   それ以外は手で上げる。その CI は amd64 しかビルドしないので、`cli-pin-bump.sh` は先に、新しい版で
   Dockerfile が取りに行くアーキ別のダウンロードがすべて存在するかを確かめる（ツールごとの手順は
-  `assets_ready`。手順の無いツールは pin のまま）。L1 は `aws` と `mcp-grafana` の実物に版を聞く。
+  `assets_ready`。時間制限は短い。`bkt` はリリースの `checksums.txt` にアーキごとの sha256 が 1 行ずつ
+  あることも見る。手順の無いツールは pin のまま）。L1 は `aws` と `mcp-grafana` の実物に版を聞く。
   いまは `awscli`・`gh`・`bkt`・`confluence`・`mcp_grafana`。`awscli` では workflow が新しい版から
   `workspace/agent/internal/cloudruns/aws_commands.txt.gz` も作り直し（`TestAWSCommandsMatchPin`）、
   Dockerfile と一緒にコミットする。マニフェストの取得先は `2.*` のタグしか見ないので、aws-cli 3 は
   そもそも検知されない。取得元を読めなかった `pr-gated` の行は、その回だけ pin のままにし、contract の
-  ある種類の版上げは止めない。
+  ある種類の版上げは止めず、それを載せた開いている PR もそのせいで閉じない。
 - **チェックサム**は Dockerfile のコメントが名指しする取得元から取る。agy はアーキ別
   manifest（両アーカイブを落として manifest の sha512 と照合し、sha256 を計算する。release
   build id は manifest の URL から取る）。kiro は stable manifest、muse は版付き release

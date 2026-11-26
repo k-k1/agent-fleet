@@ -184,9 +184,14 @@ jobs:
         env:
           TOKEN: ${{ secrets.CLI_PIN_BUMP_TOKEN }}
           BODY_FILE: ${{ runner.temp }}/body.md
+          UNREADABLE: ${{ steps.bump.outputs.unreadable }}
         run: |
           set -euo pipefail
-          echo "No drifting kind can be bumped to its current latest; nothing to bump (why, per kind, is in the table below)." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "No drifting kind can be bumped to its current latest; nothing to bump. Why, per kind:"
+            echo
+            cat "$BODY_FILE"
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$TOKEN" ]; then
             echo "::warning::CLI_PIN_BUMP_TOKEN is not set, so an open bump PR (if any) was not checked."
             exit 0
@@ -195,7 +200,17 @@ jobs:
           num="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open \
             --json number --jq 'first | .number // empty')"
           [ -n "$num" ] || exit 0
-          gh pr view "$num" --repo "$GITHUB_REPOSITORY" --json body --jq .body |
+          # A pr-gated kind whose source failed this run is not "no longer bumpable": keep a PR
+          # that carries it rather than close it (and its review) over a blip.
+          body="$(gh pr view "$num" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          for kind in ${UNREADABLE//,/ }; do
+            # Its evidence row (`| gh | `pin` → `latest` |`), not a "left at its pin" row.
+            if grep -qE -- "^\| $kind \| \`[^\`]*\` → " <<< "$body"; then
+              echo "::notice::PR #$num carries $kind, whose release source could not be read this run; not closed."
+              exit 0
+            fi
+          done
+          printf '%s\n' "$body" |
             sed 's/<!-- cli-pin-bump edit=[^ ]* -->/<!-- cli-pin-bump superseded -->/' > "$RUNNER_TEMP/old.md"
           gh pr edit "$num" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/old.md"
           {

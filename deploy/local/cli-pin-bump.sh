@@ -156,8 +156,10 @@ resolve_npm() { NEW[$1]="$2"; }
 # makes for that version answers, using the Dockerfile's own URLs. A release is often
 # published before all its assets are uploaded, and the PR's CI never fetches arm64. A
 # flagged tool with no recipe here is refused, so flagging one means writing its URLs.
+# Short limits, one retry: a slow host must cost this row its bump, not the 30-minute job.
+PROBE=(curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 2)
 assets_ready() {
-  local kind="$1" v="$2" url urls=()
+  local kind="$1" v="$2" url urls=() a
   case "$kind" in
     awscli)      urls=("https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$v.zip"
                        "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$v.zip") ;;
@@ -171,8 +173,17 @@ assets_ready() {
     *) echo "no per-architecture asset check for $kind in cli-pin-bump.sh"; return 1 ;;
   esac
   for url in "${urls[@]}"; do
-    "${CURL[@]}" -I -o /dev/null "$url" 2>/dev/null || { echo "a release asset is not there yet: $url"; return 1; }
+    "${PROBE[@]}" -I -o /dev/null "$url" 2>/dev/null || { echo "a release asset is not there yet: $url"; return 1; }
   done
+  # The bkt build checks its tarball against the release's checksums.txt, one line per asset.
+  if [ "$kind" = bkt ]; then
+    url="https://github.com/avivsinai/bitbucket-cli/releases/download/v$v/checksums.txt"
+    "${PROBE[@]}" -o "$WORK/bkt-sums" "$url" 2>/dev/null || { echo "a release asset is not there yet: $url"; return 1; }
+    for a in "bkt_${v}_linux_x86_64.tar.gz" "bkt_${v}_linux_arm64.tar.gz"; do
+      awk -v a="$a" '$2 == a && $1 ~ /^[0-9a-f]{64}$/ { n++ } END { exit n != 1 }' "$WORK/bkt-sums" ||
+        { echo "checksums.txt has no single sha256 line for $a"; return 1; }
+    done
+  fi
 }
 
 resolve_agy() { # resolve_agy <version>
@@ -301,6 +312,7 @@ check_fragments() {
 }
 
 incomplete=false
+unreadable=()  # pr-gated kinds whose release source could not be read
 bumped=()    # kind
 evidence=()  # table rows
 left=()      # "kind|pin|latest|reason"
@@ -312,15 +324,15 @@ for row in "${KINDS[@]}"; do
   if [ -z "$latest" ] || case ",$FAILED," in *",$kind,"*) true ;; *) false ;; esac; then
     left+=("$kind|$pin|?|its release source could not be read")
     # A pr-gated tool's source (often a rate-limited GitHub API) must not hold the contract
-    # kinds' bump: it only stays at its pin this run. The cost is that it drops out of an
-    # open PR for one run.
-    manifest_has_flag "$kind" pr-gated || incomplete=true
+    # kinds' bump: it only stays at its pin this run. `unreadable` lets the workflow keep an
+    # open PR that carries it instead of closing it over the blip.
+    if manifest_has_flag "$kind" pr-gated; then unreadable+=("$kind"); else incomplete=true; fi
     continue
   fi
   [ "$pin" != "$latest" ] || continue
   [[ "$latest" =~ $VALUE_RE ]] || { left+=("$kind|$pin|$latest|the published version has an unexpected shape"); continue; }
   if [ "$workflow" = - ] && ! manifest_plain_version "$latest"; then
-    left+=("$kind|$pin|$latest|not a plain x.y.z, which is all a pr-gated bump takes; bump \`$arg\` by hand")
+    left+=("$kind|$pin|$latest|not a plain x.y.z, which is all a pr-gated bump takes; check the tag, the asset names and what the binary prints, and adjust the Dockerfile install and the L1 version check with \`$arg\` by hand")
     continue
   fi
 
@@ -484,6 +496,7 @@ edit_id=""
   printf 'count=%s\n' "${#bumped[@]}"
   printf 'edit_id=%s\n' "$edit_id"
   printf 'incomplete=%s\n' "$incomplete"
+  printf 'unreadable=%s\n' "$(IFS=,; printf '%s' "${unreadable[*]-}")"
   printf 'fragment_error=%s\n' "$fragment_error"
   printf 'bumped=%s\n' "$(IFS=,; printf '%s' "${bumped[*]-}")"
   printf 'title=%s\n' "$title"

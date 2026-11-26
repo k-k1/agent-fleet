@@ -585,6 +585,7 @@ code_is 0
 expect_changed "+ARG CLAUDE_CODE_VERSION=$L_CLAUDE"
 out_has "incomplete=false"
 out_has "bumped=claude"
+out_has "unreadable=awscli"
 body_has "| awscli | \`$P_AWSCLI\` | \`?\` | its release source could not be read |"
 
 echo "== case 16c: a release missing its arm64 asset is left at its pin =="
@@ -611,11 +612,32 @@ out_has "count=0"
 body_has "| bkt | \`$P_BKT\` | \`$B_MINOR\` | a new major ($B_LINE -> ${B_MINOR%.*}): the cut-over is manual, never an automatic bump |"
 B_PATCH="$B_LINE.99"
 serve_assets bkt "$B_PATCH" ""
+# bkt_sums <version> [arch to leave out]: the release's checksums.txt the bkt build reads.
+bkt_sums() {
+  local a
+  for a in x86_64 arm64; do
+    [ "$a" = "${2:-}" ] || printf '%064d  bkt_%s_linux_%s.tar.gz\n' 0 "$1" "$a"
+  done > "$WORK/sums"
+  serve "https://github.com/avivsinai/bitbucket-cli/releases/download/v$1/checksums.txt" "$WORK/sums"
+}
+bkt_sums "$B_PATCH"
 STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
   STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
   STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_PATCH" run_bump
 code_is 0
 expect_changed "+ARG BKT_VERSION=$B_PATCH"
+
+echo "== case 16f: a bkt release whose checksums.txt lacks the arm64 line is left at its pin =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+B_NOSUM="$B_LINE.98"
+serve_assets bkt "$B_NOSUM" ""
+bkt_sums "$B_NOSUM" arm64
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_NOSUM" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a bkt release without its arm64 checksum was bumped"
+body_has "| bkt | \`$P_BKT\` | \`$B_NOSUM\` | checksums.txt has no single sha256 line for bkt_${B_NOSUM}_linux_arm64.tar.gz |"
 
 echo "== case 16e: a pr-gated release that is not a plain x.y.z is left, and says so =="
 cp "$ROOT/workspace/Dockerfile" "$DF"
@@ -624,6 +646,6 @@ STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_
   STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$G_MINOR-rc1" run_bump
 code_is 0
 out_has "count=0"
-body_has "| gh | \`$P_GH\` | \`$G_MINOR-rc1\` | not a plain x.y.z, which is all a pr-gated bump takes; bump \`GH_VERSION\` by hand |"
+body_has "| gh | \`$P_GH\` | \`$G_MINOR-rc1\` | not a plain x.y.z, which is all a pr-gated bump takes; check the tag, the asset names and what the binary prints, and adjust the Dockerfile install and the L1 version check with \`GH_VERSION\` by hand |"
 
 echo "OK: cli-pin-bump.sh bumps only tested kinds, refuses bad checksums, and is idempotent"

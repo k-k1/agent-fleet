@@ -170,7 +170,10 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
       cmd="$(dispatch_cmd "$kind")" ;;
     manual)
       title="$kind CLI: bump the pin to $latest"
-      next="No contract covers \`$kind\`. Bump \`${M_arg[$kind]}\` in \`workspace/Dockerfile\` to \`$latest\` by hand (\`docs/build/10-development.md\` §10.2.1) in a PR that closes this issue." ;;
+      next="No contract covers \`$kind\`. Bump \`${M_arg[$kind]}\` in \`workspace/Dockerfile\` to \`$latest\` by hand (\`docs/build/10-development.md\` §10.2.1) in a PR that closes this issue."
+      if manifest_has_flag "$kind" pr-gated && ! manifest_plain_version "$latest"; then
+        next="\`$latest\` is not a plain x.y.z, so the pin-bump PR does not carry it. Check the tag, the asset names and what the binary prints for its version, then bump \`${M_arg[$kind]}\` by hand together with whatever the Dockerfile install and the L1 version check (\`deploy/local/e2e-smoke.sh\`) need, in a PR that closes this issue."
+      fi ;;
     merge)
       local pr; pr="$(bump_pr_for "$kind" "$latest")"
       title="$kind CLI: merge the pin bump to $latest"

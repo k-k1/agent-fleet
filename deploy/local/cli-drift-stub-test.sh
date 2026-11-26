@@ -957,6 +957,8 @@ echo "== case 30h: a pr-gated release that is not a plain x.y.z is a hand bump, 
 releases gh=2.105.0:2.106.0-rc1
 sync_ok gh
 title_is gh "gh CLI: bump the pin to 2.106.0-rc1"
+has gh 'is not a plain x.y.z'
+has gh 'the L1 version check'
 
 echo "== case 31: a red row for latest names the fix, keeps the section, and the dispatch fits the kind =="
 releases muse=1.4.4:1.4.7 codex=0.162.1:0.163.1

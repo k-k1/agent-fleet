@@ -173,14 +173,16 @@ It is not triggered by `workflow_run`: the watcher dispatches the contracts with
   major is 0, a new minor counts as one). Only a plain `x.y.z` is taken; anything else stays
   a hand bump. Because that CI builds amd64 only, `cli-pin-bump.sh` first checks that every
   per-architecture download the Dockerfile makes for the new version exists (a recipe per
-  tool in `assets_ready`; a flagged tool without one is left at its pin), and L1 asks the
+  tool in `assets_ready`, with short time limits; for `bkt` also one sha256 line per
+  architecture in the release's `checksums.txt`; a flagged tool without a recipe is left at
+  its pin), and L1 asks the
   `aws` and `mcp-grafana` binaries themselves for their version. Today: `awscli`, `gh`,
   `bkt`, `confluence`, `mcp_grafana`. For `awscli` the workflow also regenerates
   `workspace/agent/internal/cloudruns/aws_commands.txt.gz` from the new release
   (`TestAWSCommandsMatchPin`) and commits it with the Dockerfile; its manifest locator
   watches `2.*` tags only, so an aws-cli 3 would not be seen at all. A `pr-gated` row whose
   release source could not be read stays at its pin for that run without holding the
-  contract kinds' bump.
+  contract kinds' bump, and an open PR that carries it is not closed over it.
 - **Checksums** come from the sources the Dockerfile comments name: agy's per-arch
   manifests (both archives are downloaded, checked against the manifest's sha512 and
   hashed to sha256; the release build id comes from the manifest URL); kiro's stable
