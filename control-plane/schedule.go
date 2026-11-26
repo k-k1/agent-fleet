@@ -1190,11 +1190,21 @@ func (a scheduleAPI) createLimitResume(w http.ResponseWriter, r *http.Request, m
 				// The same booking, asked again or moved by a few minutes: keep its id and set its time
 				// to the one asked for, so the Agent's record of the time and the row agree.
 				if old.Spec != s.Spec {
-					old.Spec, old.NextRun, old.UpdatedAt = s.Spec, next, store.NowTS()
-					if uerr := a.store.UpdateSchedule(r.Context(), old); uerr != nil {
+					// One conditional write: a booking the scheduler may already hold, or one it has fired,
+					// is neither moved nor answered as live, and no second enabled row is made for it.
+					nowTS := store.NowTS()
+					ok, uerr := a.store.MoveScheduleTime(r.Context(), old.ID, mv.MembershipID, old.Generation, old.Spec, old.NextRun, s.Spec, next, nowTS, nowTS)
+					if uerr != nil {
 						writeAPIErr(w, internalErr(uerr))
 						return
 					}
+					if !ok {
+						writeAPIErr(w, &apiError{http.StatusConflict, "booking_due",
+							"the booking for this session is due or already fired; read it again before booking"})
+						return
+					}
+					old.Spec, old.NextRun, old.UpdatedAt = s.Spec, next, nowTS
+					old.Generation++
 				}
 				writeJSON(w, http.StatusOK, withSchedulerWarning(scheduleToDTO(old)))
 				return

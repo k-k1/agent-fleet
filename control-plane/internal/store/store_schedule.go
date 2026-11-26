@@ -128,6 +128,10 @@ type ScheduleStore interface {
 	// DeleteHeldSchedule deletes a schedule only while it is still the held version the caller read:
 	// same membership, approval_pending still set, same generation. false means something changed it.
 	DeleteHeldSchedule(ctx context.Context, id, membershipID string, generation int) (bool, error)
+	// MoveScheduleTime changes the instant of a live once-schedule in one conditional write: the row must
+	// still be enabled, approved, at the generation, spec and next_run the caller read, and not yet due
+	// (next_run after nowRFC). false means a fire or another write got there first.
+	MoveScheduleTime(ctx context.Context, id, membershipID string, generation int, oldSpec, oldNextRun, spec, nextRun, nowRFC, updatedAt string) (bool, error)
 	// ClaimOneOff atomically records that a start-time pass named name has begun on this database and
 	// reports whether this caller is the one that recorded it.
 	ClaimOneOff(ctx context.Context, name, at string) (bool, error)
@@ -385,6 +389,18 @@ func (s *SQL) DeleteHeldSchedule(ctx context.Context, id, membershipID string, g
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM schedule WHERE id=? AND membership_id=? AND approval_pending=1 AND generation=?`,
 		id, membershipID, generation)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *SQL) MoveScheduleTime(ctx context.Context, id, membershipID string, generation int, oldSpec, oldNextRun, spec, nextRun, nowRFC, updatedAt string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET spec=?, next_run=?, updated_at=?, generation=generation+1
+		 WHERE id=? AND membership_id=? AND enabled=1 AND approval_pending=0 AND generation=? AND spec=? AND next_run=? AND next_run>?`,
+		spec, nextRun, updatedAt, id, membershipID, generation, oldSpec, oldNextRun, nowRFC)
 	if err != nil {
 		return false, err
 	}

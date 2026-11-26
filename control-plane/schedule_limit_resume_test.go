@@ -406,10 +406,50 @@ func TestLimitResumeResendWithDriftedTimeReturnsTheLiveRow(t *testing.T) {
 	// An earlier time within the window (a move by a few minutes) is the same booking moved in place.
 	var m scheduleDTO
 	_ = json.Unmarshal(doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at.Add(-2*time.Minute)), "").Body.Bytes(), &m)
-	if m.ID != a.ID {
-		t.Fatalf("a move of two minutes made a new row %q", m.ID)
+	wantEarly := at.Add(-2 * time.Minute).UTC().Format(time.RFC3339)
+	if got, _, _ := api.store.GetSchedule(ctx, a.ID); m.ID != a.ID || m.Spec != wantEarly || got.Spec != wantEarly || got.NextRun != wantEarly {
+		t.Fatalf("a move of two minutes: id %q spec %q, row spec %q next %q, want %q on one row", m.ID, m.Spec, got.Spec, got.NextRun, wantEarly)
 	}
 	if rows, _ := api.store.ListSchedules(ctx, mv.MembershipID); len(rows) != 2 {
 		t.Fatalf("%d rows", len(rows))
+	}
+}
+
+// A move racing the scheduler: a booking that is due, or whose fire has completed since it was read,
+// is neither moved nor answered as live, and no second enabled row appears.
+func TestLimitResumeMoveRacingAFireIsRefused(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	at := time.Now().Add(2 * time.Minute)
+	var a scheduleDTO
+	_ = json.Unmarshal(doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at), "").Body.Bytes(), &a)
+	read, _, _ := api.store.GetSchedule(ctx, a.ID)
+
+	// The fire completes after the read: the once-row is spent (disabled, no next run).
+	if err := api.store.RecordScheduleFire(ctx, a.ID, store.NowTS(), "ok", "", false, store.NowTS()); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := api.store.MoveScheduleTime(ctx, a.ID, mv.MembershipID, read.Generation, read.Spec, read.NextRun,
+		at.Add(time.Minute).UTC().Format(time.RFC3339), at.Add(time.Minute).UTC().Format(time.RFC3339), store.NowTS(), store.NowTS())
+	if err != nil || moved {
+		t.Fatalf("a spent row was moved: ok=%v err=%v", moved, err)
+	}
+	if got, _, _ := api.store.GetSchedule(ctx, a.ID); got.Enabled || got.NextRun != "" {
+		t.Fatalf("the spent row came back: %+v", got)
+	}
+
+	// A booking already due is not moved through the route either.
+	due := legacyHeld(mv, "due", time.Now().Add(-time.Minute), func(s *store.Schedule) {
+		s.ApprovalPending, s.ReuseTarget, s.SpecLabel = false, "t", schedlimit.Label("ja", "t")
+		s.CreatedAt = time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	})
+	if err := api.store.CreateSchedule(ctx, due); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"session": "t", "resume_at": time.Now().Add(90 * time.Second).UTC().Format(time.RFC3339), "locale": "ja"})
+	if r := doTokenJSON(api.createLimitResume, mv, "POST", string(b), ""); r.Code != http.StatusConflict {
+		t.Fatalf("move of a due booking: %d %s", r.Code, r.Body.String())
+	}
+	if rows, _ := api.store.ListSchedules(ctx, mv.MembershipID); len(rows) != 2 {
+		t.Fatalf("%d rows, want no new one", len(rows))
 	}
 }
