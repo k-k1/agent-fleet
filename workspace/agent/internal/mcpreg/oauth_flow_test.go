@@ -285,20 +285,25 @@ func TestStartValidatesTheServerSelectedScope(t *testing.T) {
 func TestSelectScope(t *testing.T) {
 	cases := []struct {
 		name      string
+		def       []string
 		challenge string
 		prm, as   []string
 		want      string
 	}{
-		{"challenge wins over prm", "a b", []string{"x", "y"}, nil, "a b"},
-		{"prm when no challenge", "", []string{"x", "y"}, nil, "x y"},
-		{"offline_access added when the AS lists it", "a", nil, []string{"a", "offline_access"}, "a offline_access"},
-		{"not added when the AS does not", "a", nil, []string{"a"}, "a"},
-		{"not duplicated", "a offline_access", nil, []string{"offline_access"}, "a offline_access"},
-		{"found beyond the report's cap", "a", nil, append(make([]string, 100), "offline_access"), "a offline_access"},
-		{"nothing at all", "", nil, nil, ""},
+		{"challenge wins over prm", nil, "a b", []string{"x", "y"}, nil, "a b"},
+		{"prm when no challenge", nil, "", []string{"x", "y"}, nil, "x y"},
+		{"definition wins over the challenge", []string{"d1", "d2"}, "a b", []string{"x"}, nil, "d1 d2"},
+		{"definition wins over the prm", []string{"d1"}, "", []string{"x", "y"}, nil, "d1"},
+		{"an empty definition list is no list", []string{}, "", []string{"x"}, nil, "x"},
+		{"offline_access added to the definition's when the AS lists it", []string{"d1"}, "", nil, []string{"offline_access"}, "d1 offline_access"},
+		{"offline_access added when the AS lists it", nil, "a", nil, []string{"a", "offline_access"}, "a offline_access"},
+		{"not added when the AS does not", nil, "a", nil, []string{"a"}, "a"},
+		{"not duplicated", nil, "a offline_access", nil, []string{"offline_access"}, "a offline_access"},
+		{"found beyond the report's cap", nil, "a", nil, append(make([]string, 100), "offline_access"), "a offline_access"},
+		{"nothing at all", nil, "", nil, nil, ""},
 	}
 	for _, c := range cases {
-		if got := selectScope(c.challenge, c.prm, c.as); got != c.want {
+		if got := selectScope(c.def, c.challenge, c.prm, c.as); got != c.want {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
 		}
 	}

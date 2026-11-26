@@ -11,7 +11,8 @@ package mcpreg
 //     about some other resource and nothing in it is used;
 //   - the authorization server's metadata is fetched in the fixed order (RFC 8414 path
 //     insertion, OIDC path insertion, OIDC path appending) and a document whose `issuer`
-//     differs byte-for-byte from the issuer the URL was built from is refused.
+//     differs byte-for-byte from the issuer the URL was built from is refused, with the one
+//     allowance issuerEquivalent names.
 //
 // Every metadata request is a bare GET: the definition's static headers go to the MCP server
 // only, never to a host the server's own documents point at.
@@ -88,7 +89,9 @@ type OAuthReport struct {
 type OAuthServer struct {
 	Issuer      string `json:"issuer"`
 	MetadataURL string `json:"metadataUrl,omitempty"`
-	// Valid means the document was fetched, its issuer matched and it offers S256.
+	// Valid means the document was fetched, its issuer matched and it offers S256. Once the
+	// document is fetched, Issuer is the issuer it states: that is what the authorization
+	// response's iss is compared with, and what the grant is stored under.
 	Valid bool `json:"valid"`
 	// Registration lists the client registration paths on offer: "cimd" (client ID metadata
 	// documents), "dcr" (a registration endpoint). Empty means neither.
@@ -309,6 +312,29 @@ func issuerUsable(issuer string) (*url.URL, bool) {
 	return nil, false
 }
 
+// issuerEquivalent reports whether the issuer an authorization server's metadata states is the
+// issuer it was fetched for (ADR 0146 decision 2). It is byte equality with one allowance: an
+// http(s) URL whose path is exactly "/" equals the same URL with an empty path (RFC 3986 §6.2.3).
+// Google's protected resource metadata names "https://accounts.google.com/" while its OIDC
+// document says "https://accounts.google.com". Nothing else is normalized: case, ports,
+// percent-encoding and a "/" after a longer path stay significant, so "https://as/t/" is not
+// "https://as/t".
+func issuerEquivalent(a, b string) bool {
+	if a == b {
+		return true
+	}
+	short, long := a, b
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+	if long != short+"/" || strings.ContainsAny(short, "?#") {
+		return false
+	}
+	u, err := url.Parse(short)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" &&
+		u.User == nil && u.Opaque == "" && u.Path == "" && u.RawPath == ""
+}
+
 // metadataURLUsable is the gate before any metadata request leaves the process: https, or
 // plain http for a loopback host only, and no userinfo. A plain-http document could be altered
 // on the path, and the PRM or AS metadata is exactly what decides which server gets trusted.
@@ -443,10 +469,11 @@ func capList(l []string) []string {
 	return l
 }
 
-// probeOAuth runs the discovery for a 401 answer from the server at serverURL. ok is false
-// when the answer does not look like an OAuth challenge at all (no Bearer challenge naming
-// metadata and no protected-resource metadata at the well-known URLs), in which case the
-// caller reports the plain 401 as before.
+// probeOAuth runs the discovery for a 401 answer from the server at serverURL, or for a server
+// that answered without credentials (an empty header). ok is false when the answer does not
+// look like an OAuth challenge at all (no Bearer challenge naming metadata and no
+// protected-resource metadata at the well-known URLs), in which case the caller reports the
+// plain 401, or the plain success, as before.
 func probeOAuth(ctx context.Context, serverURL string, header http.Header) (OAuthReport, bool) {
 	canon, ok := canonicalResource(serverURL)
 	if !ok {
@@ -540,12 +567,13 @@ func discoverAuthServer(ctx context.Context, g metadataGetter, issuer string) (O
 			continue
 		}
 		srv.MetadataURL = cand
-		if m.Issuer != issuer {
+		if !issuerEquivalent(m.Issuer, issuer) {
 			return srv, []OAuthProblem{{
 				Code: OAuthProblemASIssuerMismatch, Issuer: issuer,
 				Detail: fmt.Sprintf("metadata at %s says issuer %q", cand, m.Issuer),
 			}}
 		}
+		srv.Issuer = m.Issuer
 		if m.CIMDSupported {
 			srv.Registration = append(srv.Registration, OAuthRegCIMD)
 		}

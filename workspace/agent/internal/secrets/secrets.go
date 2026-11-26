@@ -382,6 +382,12 @@ type MCPServer struct {
 	// 0119 decision 9); never set on a user row. It carries no secret: a confidential client's
 	// secret stays in the CP, which then runs the token and revocation requests.
 	OAuthClient *MCPTenantClient `json:"oauthClient,omitempty"`
+	// Scopes, when set, is the scope list of the first authorization request: it replaces the
+	// 401 challenge's scope and the protected resource's scopes_supported (ADR 0146 decision 2).
+	// A server whose tool list is public never challenges, and its scopes_supported can include
+	// full mailbox control. Tenant rows only, like OAuthClient: the member's form neither shows
+	// nor keeps it, so an edit would silently drop it from a user row.
+	Scopes []string `json:"scopes,omitempty"`
 
 	Enabled   bool       `json:"enabled"`
 	Targets   MCPTargets `json:"targets"`

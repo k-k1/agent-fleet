@@ -184,7 +184,10 @@ type ProbeResult struct {
 	// and shown verbatim to the user — a broken command usually explains itself there.
 	Detail string `json:"detail,omitempty"`
 	// OAuth is set when the server answered 401 as an OAuth-protected resource. OK stays
-	// false (nothing was listed), but the Console shows the report instead of a failure.
+	// false (nothing was listed), but the Console shows the report instead of a failure. It is
+	// also set next to OK when the server listed its tools without credentials but publishes
+	// protected-resource metadata: Google's Workspace servers answer tools/list to anyone and
+	// need a token for tool calls, so the form can still offer OAuth (ADR 0146 decision 2).
 	OAuth     *OAuthReport `json:"oauth,omitempty"`
 	ElapsedMS int64        `json:"elapsedMs"`
 }
@@ -600,6 +603,20 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		return res, true
 	}
 
+	// withPublicOAuth adds the OAuth findings to a test that succeeded without credentials.
+	// Only a protected-resource metadata document at the well-known URLs counts: a server
+	// without one costs a GET or two and keeps its plain result. A definition with static
+	// headers is left alone, since its success says nothing about what is public.
+	withPublicOAuth := func(res ProbeResult) ProbeResult {
+		if len(d.Headers) > 0 {
+			return res
+		}
+		if rep, ok := probeOAuth(ctx, d.URL, nil); ok {
+			res.OAuth = &rep
+		}
+		return res
+	}
+
 	reqCtx := ctx
 	post := func(m rpcMsg, stateless bool) (httpExchange, error) {
 		b, err := json.Marshal(m)
@@ -685,7 +702,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		}
 		res := okResult(dr.info(), ex.msg.Result)
 		res.Revision, res.SupportedVersions = ProtocolVersion, dr.SupportedVersions
-		return res
+		return withPublicOAuth(res)
 	}
 
 	// Legacy era.
@@ -756,7 +773,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	ex = first
 	res := okResult(ir.ServerInfo, ex.msg.Result)
 	res.Revision = ProtocolVersionLegacy
-	return res
+	return withPublicOAuth(res)
 }
 
 // sessionRejected reports whether ex is a server refusing a session id it issued: 404, or

@@ -322,11 +322,34 @@ func TestProbeOAuthIssuerMismatchRejected(t *testing.T) {
 	f := newOAuthFake(t)
 	f.challenge = `Bearer resource_metadata="%PRM%"`
 	f.docs["/prm"] = f.prm(f.url(""))
-	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url("")+"/", nil) // trailing slash: not byte-equal
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url("/tenant"), nil)
 	res := f.probe()
 	o := res.OAuth
 	if o == nil || strings.Join(codes(o), ",") != OAuthProblemASIssuerMismatch || o.Selected != "" || o.Servers[0].Valid {
 		t.Fatalf("a differing issuer must be refused: %+v", o)
+	}
+}
+
+// The root-path allowance is the only one: a "/" after a longer path still differs.
+func TestProbeOAuthIssuerSlashAfterAPathRejected(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/tenant/"))
+	f.docs["/.well-known/oauth-authorization-server/tenant"] = asDoc(f.url("/tenant"), nil)
+	o := f.probe().OAuth
+	if o == nil || strings.Join(codes(o), ",") != OAuthProblemASIssuerMismatch || o.Selected != "" {
+		t.Fatalf("a trailing slash after a path must be refused: %+v", o)
+	}
+}
+
+func TestProbeOAuthIssuerRootSlashAccepted(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/"))
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url(""), nil)
+	o := f.probe().OAuth
+	if o == nil || len(o.Problems) != 0 || o.Selected != f.url("") || !o.Servers[0].Valid {
+		t.Fatalf("a root \"/\" must match the issuer without it: %+v", o)
 	}
 }
 

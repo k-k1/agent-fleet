@@ -113,6 +113,8 @@ const (
 	CodeOAuthUserSecret = "mcp_oauth_user_secret"
 	CodeOAuthClient     = "mcp_oauth_client_invalid"
 	CodeOAuthClientUser = "mcp_oauth_client_tenant_only"
+	CodeOAuthScopes     = "mcp_oauth_scopes_invalid"
+	CodeOAuthScopesUser = "mcp_oauth_scopes_tenant_only"
 )
 
 // AuthOAuth marks a definition whose server is signed in to with OAuth.
@@ -146,6 +148,17 @@ func validTenantClient(c secrets.MCPTenantClient) bool {
 		}
 	}
 	return true
+}
+
+// validDefScopes: each entry a single RFC 6749 scope token, and the joined list within what
+// StartOAuth accepts. An empty list means no scopes of the definition's own.
+func validDefScopes(scopes []string) bool {
+	for _, s := range scopes {
+		if s == "" || len(strings.Fields(s)) != 1 || strings.TrimSpace(s) != s {
+			return false
+		}
+	}
+	return validScope(strings.Join(scopes, " "))
 }
 
 // Validate checks a definition for internal consistency. It does NOT check
@@ -187,6 +200,14 @@ func Validate(d ServerDef) error {
 	}
 	if d.Auth != AuthOAuth && d.OAuthClient != nil {
 		return invalid(CodeOAuthClient, "a pre-registered client belongs to an OAuth server")
+	}
+	if len(d.Scopes) > 0 {
+		if d.Auth != AuthOAuth || !validDefScopes(d.Scopes) {
+			return invalid(CodeOAuthScopes, "scopes belong to an OAuth server and must be valid scope tokens, %d bytes at most together", maxScopeLen)
+		}
+		if d.Origin != OriginTenant {
+			return invalid(CodeOAuthScopesUser, "only a tenant-distributed definition carries its own scopes")
+		}
 	}
 	switch d.Transport {
 	case TransportStdio:
