@@ -146,7 +146,8 @@ const WRAPPER: Record<string, RegExp> = {
 // introduce another run, and "--" hands the remaining arguments to the child.
 const AWS_OPTION_VALUE = String.raw`(?:[^\s'"\\$\x60;&|()<>#*?\[\]{}~]+|'[^'\r\n]*'|"[^"\\$\x60\r\n]*")`;
 const AWS_OPTION = String.raw`[ \t]+(?:--(?:profile|region|account)(?:=|[ \t]+)${AWS_OPTION_VALUE}|--(?:login|no-login|keep-aws-config|quiet)|-q)`;
-const AWS_WRAPPER = String.raw`(?:"(?:[^"\\$\x60\r\n]*/)?af-aws-exec"|'(?:[^'\r\n]*/)?af-aws-exec'|(?:[^\s'"\\$\x60;&|()<>#*?\[\]{}~]+/)?af-aws-exec)`;
+// Tilde expansion keeps the path in one shell word. Parameter expansion can split it.
+const AWS_WRAPPER = String.raw`(?:"(?:[^"\\$\x60\r\n]*/)?af-aws-exec"|'(?:[^'\r\n]*/)?af-aws-exec'|(?:[^\s'"\\$\x60;&|()<>#*?\[\]{}]+/)?af-aws-exec)`;
 const AWS_PROBE = new RegExp(
   String.raw`^(?:sudo[ \t]+)?${AWS_WRAPPER}(?:${AWS_OPTION})*[ \t]+(?:--list|-h|--help|--version)(?:${AWS_OPTION})*$`,
 );

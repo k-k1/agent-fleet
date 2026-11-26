@@ -171,6 +171,7 @@ describe("placeRuns", () => {
   });
   it.each([
     '"/opt/af-aws-exec" --list',
+    "~/bin/af-aws-exec --list",
     "af-aws-exec --profile prod-admin --list",
     "af-aws-exec --list --profile prod-admin",
     "af-aws-exec --account=123456789012 --profile='prod-admin' --quiet --list",
@@ -182,6 +183,7 @@ describe("placeRuns", () => {
     expect(p.loose.map((r) => r.id)).toEqual(["r2", "r3"]);
   });
   it.each([
+    "$HOME/bin/af-aws-exec --list",
     "af-aws-exec --profile prod-admin -- --list",
     "af-aws-exec --profile --list -- true",
     "af-aws-exec --list; af-aws-exec --profile prod-admin -- aws s3 ls",
