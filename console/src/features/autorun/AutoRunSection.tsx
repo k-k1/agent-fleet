@@ -161,6 +161,7 @@ function RunItem({ run, now, onDialog, openMenu, activeName }: { run: RunRow; no
   // The delivery's hold is a tree-wide snapshot. A newer session row can clear it
   // before the next queue poll, and a different child can still be holding the run.
   const limits = run.state === "ended" ? [] : [root, ...children].flatMap((s) => {
+    if (s.movedTo) return [];
     const kind = usageLimitState(s, s.state, now);
     if (!kind) return [];
     const at = kind === "limited" && Date.parse(s.rateLimitResumeAt ?? "") > now
@@ -183,11 +184,7 @@ function RunItem({ run, now, onDialog, openMenu, activeName }: { run: RunRow; no
         {...menuHandlers(root, openMenu)}
         title={tr("autorun.open", { name: root.name })}
       >
-        {limitLabel ? (
-          <span className="autorun-dot is-waiting" aria-hidden="true" />
-        ) : (
-          <span className={"autorun-dot is-" + run.state} role="img" aria-label={tr(STATE_KEY[run.state])} title={tr(STATE_KEY[run.state])} />
-        )}
+        <span className={"autorun-dot is-" + (limitLabel ? "waiting" : run.state)} role="img" aria-label={tr(STATE_KEY[run.state])} title={tr(STATE_KEY[run.state])} />
         <span className="autorun-title">{title}</span>
         {limitLabel && <span className="ui-badge ui-badge-warn autorun-limit">{limitLabel}</span>}
         {run.resumed && (

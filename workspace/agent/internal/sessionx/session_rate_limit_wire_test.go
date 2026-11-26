@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -355,5 +356,25 @@ func TestWireSessionStoppedLimitWithoutBooking(t *testing.T) {
 			t.Errorf("%s: state = %q, alive = %t, stoppedLimit = %q, rateLimitResumeAt = %q; want empty, false, %q, empty",
 				c.name, s.State, s.Alive, s.StoppedLimit, s.RateLimitResumeAt, c.want)
 		}
+	}
+}
+
+func TestWireSessionStoppedCodexReadsRolloutLimit(t *testing.T) {
+	isolateAgentState(t)
+	m := session.Meta{Name: "rlwire-cx-stopped", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	const thread = "01a0ee31-0000-7000-8000-00000000005a"
+	codex.RememberSid(session.UUID(m.Dir, m.Name), thread)
+	const failed = `{"type":"event_msg","payload":{"type":"task_complete","error":{"message":"You've hit your usage limit.","codex_error_info":"usage_limit_exceeded"}}}`
+	writeCodexRollout(t, thread, failed)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{At: time.Now().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if s := wireSession(m, false); s.StoppedLimit != agents.StateLimited || s.RateLimitResumeAt != "" || s.Alive {
+		t.Errorf("stoppedLimit = %q, rateLimitResumeAt = %q, alive = %t; want limited, empty, false",
+			s.StoppedLimit, s.RateLimitResumeAt, s.Alive)
+	}
+	writeCodexRollout(t, thread, failed, `{"type":"event_msg","payload":{"type":"task_started"}}`)
+	if s := wireSession(m, false); s.StoppedLimit != "" {
+		t.Errorf("stoppedLimit = %q after a newer turn started, want empty", s.StoppedLimit)
 	}
 }

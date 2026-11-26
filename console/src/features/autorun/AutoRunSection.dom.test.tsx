@@ -134,7 +134,10 @@ describe("AutoRunSection", () => {
     memoQueueDeliveries.mockResolvedValue([{ id: "d1", session: "run-a", state: "open", heldBy: "limit", heldSession: holder }]);
     await mount();
     expect(row().getAttribute("data-autorun-state")).toBe("running");
-    expect(row().querySelector(".autorun-run-main .autorun-dot")?.classList.contains("is-running")).toBe(false);
+    const dot = row().querySelector(".autorun-run-main .autorun-dot");
+    expect(dot?.classList.contains("is-running")).toBe(false);
+    expect(dot?.getAttribute("role")).toBe("img");
+    expect(dot?.getAttribute("aria-label")).toBe(t("autorun.state_running"));
     const label = booked ? t("state.rate_limited_at", { at: resumeClock(rateLimitResumeAt) }) : t("state.rate_limited");
     expect(badge()?.textContent).toBe(label);
 
@@ -144,6 +147,21 @@ describe("AutoRunSection", () => {
     }));
     expect(badge()).toBeNull();
     expect(row().querySelector(".autorun-run-main .autorun-dot")?.classList.contains("is-running")).toBe(true);
+  });
+
+  it("drops the limit badge when the move commits, even before the hold observation clears", async () => {
+    const sessions = useSessionsStore.getState().sessions;
+    const setMove = (move: Pick<Session, "moving" | "movedTo">) =>
+      useSessionsStore.setState({
+        sessions: sessions.map((s) => s.name === "run-a"
+          ? { ...s, alive: false, state: "stopped", stoppedLimit: "limited", ...move }
+          : s),
+      });
+    setMove({ moving: "replacement" });
+    await mount();
+    expect(host.querySelector(".autorun-limit")).not.toBeNull();
+    await act(async () => setMove({ movedTo: "replacement" }));
+    expect(host.querySelector(".autorun-limit")).toBeNull();
   });
 
   it.each([
