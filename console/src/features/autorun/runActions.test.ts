@@ -3,6 +3,7 @@ import type { Session } from "../../types/session.ts";
 import type { Repo } from "../repos/store.ts";
 import { buildRuns, type RunDelivery } from "./runs.ts";
 import { ancestorNames, planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
+import { planStopTree } from "../repos/stopTree.ts";
 
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, kind: "claude", alive: true, ...extra });
 const closed: RunDelivery = { id: "d", categoryId: "c", state: "closed", outcome: "clean", turnOutcome: "clean", sentAt: "", createdAt: "", closedAt: "", heldBy: "" };
@@ -32,6 +33,42 @@ describe("runStopScope", () => {
   it("is null once nothing of the run is alive", () => {
     const [stopped] = buildRuns(sessions.map((x) => ({ ...x, alive: false })), new Map());
     expect(runStopScope(stopped, repos)).toBeNull();
+  });
+});
+
+// #5277: the shared queue bucket starts a run in home, and a home session has no folder since the
+// stored place decides. The run still gets a head of its own, and never a same-named copy's.
+describe("runStopScope outside a working copy", () => {
+  const home = { kind: "home" as const };
+  const withDev: Repo[] = [...repos, { name: "dev" }, { name: "notes" }];
+  const plan = (sessions: Session[]) => {
+    const [run] = buildRuns(sessions, new Map());
+    const scope = runStopScope(run, withDev)!;
+    return planStopTree(scope.node, sessions, 0, new Set(), false, scope.only).map((g) => [g.repo.name, g.rows.map((r) => r.session.name)]);
+  };
+
+  it("stops a run that only works in home, and not a session of the repository named like home", () => {
+    const sessions = [
+      sess("run", { origin: "queue", repo: "", dir: "/home/dev", place: home }),
+      sess("mine", { origin: "user", repo: "dev", dir: "/home/dev/repos/dev", place: { kind: "repo", id: "dev" } }),
+    ];
+    expect(plan(sessions)).toEqual([["~", ["run"]]]);
+  });
+
+  it("stops a home parent with its children in a repository, each under its own place", () => {
+    const sessions = [
+      sess("run", { origin: "queue", repo: "", dir: "/home/dev", place: home }),
+      sess("rev", { origin: "session", originSession: "run", repo: "base@wip-b", place: { kind: "worktree", id: "base@wip-b", parent: "base" } }),
+    ];
+    expect(plan(sessions)).toEqual([["~", ["run"]], ["base@wip-b", ["rev"]]]);
+  });
+
+  it("keeps a run in a space apart from the repository of the same name", () => {
+    const sessions = [
+      sess("run", { origin: "queue", repo: "", space: "notes", place: { kind: "space", id: "notes" } }),
+      sess("mine", { origin: "user", repo: "notes", place: { kind: "repo", id: "notes" } }),
+    ];
+    expect(plan(sessions)).toEqual([["~/spaces/notes", ["run"]]]);
   });
 });
 

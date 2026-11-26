@@ -136,6 +136,19 @@ export function sessionsInFolder(sessions: Session[], folderName: string): Sessi
     .sort((a, b) => compareText(b.createdAt || "", a.createdAt || ""));
 }
 
+/** Where a session runs, as one key for grouping a caller's own explicit list of sessions (an
+ *  Auto-run's stop plan): its working copy's folder; else "~" for home, "~/spaces/<folder>" for a
+ *  space, or the directory itself. None of those can be a folder name under ~/repos, so a home or
+ *  space session never joins a same-named repository's group. */
+export function sessionPlaceKey(s: Session): string {
+  const folder = sessionFolder(s);
+  if (folder) return folder;
+  const space = sessionSpace(s);
+  if (space) return "~/spaces/" + space;
+  if (s.place?.kind === "home") return "~";
+  return s.dir || s.path || s.name;
+}
+
 // The folder a session was matched by before places were stored: none in a space, else `repo`,
 // else the dir's base name.
 function recordedFolder(s: Session): string {

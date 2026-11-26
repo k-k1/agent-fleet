@@ -3,7 +3,7 @@
 // builds, plus a filter that keeps a member's own session in a shared copy out of the scope.
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
-import { sessionFolder, sessionsInFolder, worktreeOwners, type RepoTreeNode } from "../../lib/project.ts";
+import { sessionFolder, sessionPlaceKey, sessionsInFolder, worktreeOwners, type RepoTreeNode } from "../../lib/project.ts";
 import { runRootName, type RunRow } from "./runs.ts";
 
 const node = (repo: Repo, children: RepoTreeNode[] = []): RepoTreeNode => ({ repo, children, spine: "" });
@@ -15,14 +15,17 @@ export const runSessions = (run: RunRow): Session[] => [run.root, ...run.childre
  *  bare stand-in so the plan still finds the sessions by folder. */
 const repoOf = (folder: string, repos: Repo[]): Repo => repos.find((r) => r.name === folder) ?? { name: folder };
 
-/** The live sessions of a run and the copies they run in, for the stop plan; null when none is
- *  alive. The head is the run's own copy, any other copy a reviewer uses hangs under it. */
+/** The live sessions of a run and where they run, for the stop plan; null when none is alive. The
+ *  head is the run's own place, any other a reviewer uses hangs under it. A place that is no
+ *  working copy (home, where the shared queue bucket starts a run; a space) is a group of its own
+ *  (sessionPlaceKey), so a run there can be stopped and never takes a same-named copy's sessions:
+ *  the plan is limited to the run's own sessions by name. */
 export function runStopScope(run: RunRow, repos: Repo[]): { node: RepoTreeNode; only: Set<string> } | null {
   const live = runSessions(run).filter((s) => s.alive);
   if (live.length === 0) return null;
   const only = new Set(live.map((s) => s.name));
-  const rootFolder = sessionFolder(run.root);
-  const folders = [...new Set(live.map(sessionFolder))].filter(Boolean);
+  const rootFolder = sessionPlaceKey(run.root);
+  const folders = [...new Set(live.map(sessionPlaceKey))].filter(Boolean);
   const head = folders.includes(rootFolder) ? rootFolder : folders[0];
   if (!head) return null;
   return { node: node(repoOf(head, repos), folders.filter((f) => f !== head).map((f) => node(repoOf(f, repos)))), only };
