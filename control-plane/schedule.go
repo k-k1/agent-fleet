@@ -22,6 +22,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
+	"github.com/k-k1/agent-fleet/control-plane/internal/schedlimit"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -1100,3 +1101,72 @@ func (a scheduleAPI) deleteWake(w http.ResponseWriter, r *http.Request, mv store
 	}
 	writeJSON(w, http.StatusOK, wakeDeletedResp{Deleted: true, ID: id})
 }
+
+// --- usage-limit resume (internal/schedlimit) ------------------------------------
+
+type limitResumeIn struct {
+	Session   string `json:"session"`
+	ResumeAt  string `json:"resume_at"`
+	AgentKind string `json:"agent_kind"`
+	Locale    string `json:"locale"`
+	TZ        string `json:"tz"`
+}
+
+// createLimitResume is POST /internal/schedules/limit-resume. The body names no field of the row
+// beyond the target session, the instant and the kind; everything else is fixed here.
+func (a scheduleAPI) createLimitResume(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
+	var in limitResumeIn
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	session := strings.TrimSpace(in.Session)
+	if session == "" || len(session) > 128 {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_session", "session is required"})
+		return
+	}
+	at, err := time.Parse(time.RFC3339, strings.TrimSpace(in.ResumeAt))
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", "resume_at must be RFC3339"})
+		return
+	}
+	if at.After(time.Now().UTC().Add(schedlimit.MaxAhead)) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", "resume_at is further ahead than any usage-limit window"})
+		return
+	}
+	s, aerr := validateScheduleDTO(mv, scheduleDTO{
+		SpecKind: "once", Spec: at.UTC().Format(time.RFC3339), SpecLabel: schedlimit.Label(in.Locale, session),
+		TZ: in.TZ, WakePolicy: "wake", SessionMode: "reuse", ReuseTarget: session,
+		AgentKind: in.AgentKind, Prompt: schedlimit.PromptFor(in.Locale), OverlapPolicy: "skip",
+		MissingTargetPolicy: "fail", Report: false,
+	})
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if !schedlimit.IsShape(s) { // defence: the builder above and the matcher must agree
+		writeAPIErr(w, internalErr(errLimitResumeShape))
+		return
+	}
+	next, err := initialNextRun(s, time.Now().UTC())
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", err.Error()})
+		return
+	}
+	s.ID = "sch_" + store.NewID()
+	s.Enabled = true
+	s.NextRun = next
+	s.CreatedAt = store.NowTS()
+	s.UpdatedAt = s.CreatedAt
+	if err := a.store.CreateSchedule(r.Context(), s); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusCreated, withSchedulerWarning(scheduleToDTO(s)))
+}
+
+type limitResumeShapeError struct{}
+
+func (limitResumeShapeError) Error() string { return "limit-resume row does not match its own shape" }
+
+var errLimitResumeShape error = limitResumeShapeError{}

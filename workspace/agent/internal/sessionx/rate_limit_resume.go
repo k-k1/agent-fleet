@@ -745,26 +745,18 @@ func episodeSpent(st rateLimitState, now time.Time) bool {
 	return err == nil && now.After(t.Add(rateLimitRebookSettle))
 }
 
-// createRateLimitSchedule books the resume with the CP scheduler (docs/log/38).
-//
-//	spec_kind=once           - fires once, then disables itself.
-//	session_mode=reuse       - injects into the session that stopped, not into a new one.
-//	reuse_target=<name>      - pinned reuse; rotation does not apply to a user's session.
-//	missing_target_policy=fail - do not recreate a session that is gone. Spawning some other
-//	                           session that cannot carry on the interrupted work does more harm.
-//	overlap_policy=skip      - if a person is already driving it at that instant, skip silently.
-//	wake_policy=wake         - deliver even if the workspace stopped during the wait, which is
-//	                           the whole reason this is a CP schedule and not an in-process timer.
-//	report=false             - do not report this injection to an operator conversation: there
-//	                           is none to report to (owner_conv is empty). The resumed turn
-//	                           still raises the usual "answer ready" notice when it ends, so it
-//	                           does not become invisible to the user.
+// createRateLimitSchedule books the resume with the CP scheduler (docs/log/38) through the one
+// route whose rows the CP builds itself and does not hold for approval (#5212): the CP makes it a
+// once-schedule, injected into this session by name (pinned reuse; never recreated if the session
+// is gone; skipped if a person is driving it at that instant; waking a stopped workspace, which is
+// the whole reason this is a CP schedule and not an in-process timer), with the fixed resume
+// prompt and no operator report. The body names only the pieces the CP cannot know.
 func createRateLimitSchedule(m session.Meta, at time.Time) (string, error) {
 	body, err := rateLimitScheduleBody(m, at)
 	if err != nil {
 		return "", err
 	}
-	out, err := mcpx.CPScheduleDo(http.MethodPost, "/internal/schedules", body)
+	out, err := mcpx.CPScheduleDo(http.MethodPost, "/internal/schedules/limit-resume", body)
 	if err != nil {
 		return "", err
 	}
@@ -783,23 +775,16 @@ func createRateLimitSchedule(m session.Meta, at time.Time) (string, error) {
 
 // rateLimitScheduleBody is the request itself, kept apart from the call so a test can read
 // what would be sent without a CP. agent_kind follows the session rather than being a constant:
-// it is the kind the CP would create a session with, and although missing_target_policy=fail
-// means it can never do so here, a schedule row that names the wrong agent is a lie in the
-// Console's scheduled-execution list.
+// it is the kind the CP would create a session with, and although the CP never recreates a missing
+// target here, a schedule row that names the wrong agent is a lie in the Console's scheduled list.
+// locale picks which of the CP's two fixed prompts is booked; the prompt text itself is not sent.
 func rateLimitScheduleBody(m session.Meta, at time.Time) ([]byte, error) {
 	return json.Marshal(map[string]any{
-		"spec_kind":             "once",
-		"spec":                  at.UTC().Format(time.RFC3339),
-		"spec_label":            rateLimitScheduleLabel(m.Name),
-		"tz":                    scheduleTZName(),
-		"session_mode":          "reuse",
-		"reuse_target":          m.Name,
-		"missing_target_policy": "fail",
-		"overlap_policy":        "skip",
-		"wake_policy":           "wake",
-		"agent_kind":            NormalizeKind(m.Kind),
-		"prompt":                rateLimitResumePrompt(),
-		"report":                false,
+		"session":    m.Name,
+		"resume_at":  at.UTC().Format(time.RFC3339),
+		"agent_kind": NormalizeKind(m.Kind),
+		"locale":     uiprefs.Locale(),
+		"tz":         scheduleTZName(),
 	})
 }
 

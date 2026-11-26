@@ -122,6 +122,9 @@ type ScheduleStore interface {
 	CreateSchedule(ctx context.Context, s Schedule) error
 	GetSchedule(ctx context.Context, id string) (Schedule, bool, error)
 	ListSchedules(ctx context.Context, membershipID string) ([]Schedule, error)
+	// ListApprovalPendingSchedules returns every held schedule of every membership. It exists for
+	// the one-off release of held usage-limit resumes (#5212), which has no member in scope.
+	ListApprovalPendingSchedules(ctx context.Context) ([]Schedule, error)
 	// ListDueSchedules returns enabled schedules whose next_run is non-empty and at
 	// or before nowRFC (an RFC3339 UTC cutoff; RFC3339 sorts chronologically).
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
@@ -260,6 +263,23 @@ func (s *SQL) GetSchedule(ctx context.Context, id string) (Schedule, bool, error
 
 func (s *SQL) ListSchedules(ctx context.Context, membershipID string) ([]Schedule, error) {
 	rows, err := s.db.QueryContext(ctx, scheduleCols+` WHERE membership_id=? ORDER BY created_at`, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Schedule
+	for rows.Next() {
+		sc, err := scanSchedule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQL) ListApprovalPendingSchedules(ctx context.Context) ([]Schedule, error) {
+	rows, err := s.db.QueryContext(ctx, scheduleCols+` WHERE approval_pending=1 ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}

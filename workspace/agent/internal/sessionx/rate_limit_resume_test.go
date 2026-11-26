@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -667,9 +668,10 @@ func TestRateLimitScheduleBodyNamesTheSessionsKind(t *testing.T) {
 		if got["agent_kind"] != tc.want {
 			t.Errorf("agent_kind = %v, want %q", got["agent_kind"], tc.want)
 		}
-		if got["reuse_target"] != tc.m.Name || got["session_mode"] != "reuse" ||
-			got["missing_target_policy"] != "fail" || got["wake_policy"] != "wake" {
-			t.Errorf("body = %v, want a pinned reuse of %s that is never recreated and wakes the workspace", got, tc.m.Name)
+		// The CP builds the rest of the row; a body that named policy fields would be the
+		// caller choosing what the CP is meant to fix (#5212).
+		if got["session"] != tc.m.Name || got["resume_at"] == "" || len(got) != 5 {
+			t.Errorf("body = %v, want exactly session, resume_at, agent_kind, locale, tz for %s", got, tc.m.Name)
 		}
 	}
 }
@@ -861,4 +863,45 @@ func TestIsRateLimitResumePromptAcceptsBookedWordings(t *testing.T) {
 	if isRateLimitResumePrompt("利用上限がリセットされました。続けてください。") {
 		t.Error("an unrelated scheduled prompt was taken for the resume prompt")
 	}
+}
+
+// TestRateLimitResumePromptsMatchTheCP: the CP books the resume prompt itself (#5212) from its own
+// copy of the wording, and this Agent recognises its resume by the exact text. A copy that drifts
+// would drop the "resumed" notice, so every wording is looked for in the CP's source.
+func TestRateLimitResumePromptsMatchTheCP(t *testing.T) {
+	src, err := os.ReadFile("../../../../control-plane/internal/schedlimit/schedlimit.go")
+	if err != nil {
+		t.Skipf("control-plane source not beside the agent: %v", err)
+	}
+	for _, p := range append([]string{rateLimitResumePromptFor("ja"), rateLimitResumePromptFor("en")}, legacyRateLimitResumePrompts...) {
+		if !cpSourceHasPrompt(string(src), p) {
+			t.Errorf("control-plane/internal/schedlimit/schedlimit.go lacks the prompt %q", p)
+		}
+	}
+}
+
+// cpSourceHasPrompt joins the CP's string-literal pieces (a literal per source line, "+" between)
+// back into prompts and looks for p among them.
+func cpSourceHasPrompt(src, p string) bool {
+	var cur strings.Builder
+	var all []string
+	for _, line := range strings.Split(src, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "\"") {
+			if cur.Len() > 0 {
+				all = append(all, cur.String())
+				cur.Reset()
+			}
+			continue
+		}
+		end := strings.LastIndex(line, "\"")
+		if end > 0 {
+			cur.WriteString(line[1:end])
+		}
+		if !strings.HasSuffix(line, "+") {
+			all = append(all, cur.String())
+			cur.Reset()
+		}
+	}
+	return slices.Contains(all, p)
 }
