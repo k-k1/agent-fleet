@@ -112,6 +112,12 @@ func TestOutputCap(t *testing.T) {
 		{OpInvoke, `{"max_tokens":1.5}`, 0, CodeOutputCap},
 		{OpInvoke, `{"max_tokens":"100"}`, 0, CodeOutputCap},
 		{OpInvoke, `{"max_tokens":100,"service_tier":"priority"}`, 0, CodeRequestRefused},
+		{OpInvoke, `{"max_tokens":100,"inference_geo":"us"}`, 0, CodeRequestRefused},
+		// The model is the path's alone (ADR 0129 D7): a body model is refused whatever it names.
+		{OpInvoke, `{"max_tokens":100,"model":"anthropic.claude-other-x","messages":[]}`, 0, CodeRequestRefused},
+		{OpInvokeStream, `{"max_tokens":100,"model":"us.anthropic.claude-opus-5-5","messages":[]}`, 0, CodeRequestRefused},
+		{OpInvoke, `{"max_tokens":100,"model":null}`, 0, CodeRequestRefused},
+		{OpConverse, `{"messages":[],"inferenceConfig":{"maxTokens":10},"modelId":"anthropic.claude-other-x"}`, 0, CodeRequestRefused},
 		{OpInvoke, `[1]`, 0, CodeRequestRefused},
 		{OpInvoke, `{"max_tokens":1} {"max_tokens":2}`, 0, CodeRequestRefused},
 		{OpConverseStream, `{"messages":[],"inferenceConfig":{"maxTokens":4096}}`, 4096, ""},
