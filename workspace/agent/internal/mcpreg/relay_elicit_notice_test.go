@@ -1,9 +1,14 @@
 package mcpreg
 
 import (
+	"context"
+	"encoding/json"
+	"net/url"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -28,6 +33,20 @@ func captureNotices(t *testing.T) func() []PendingElicitation {
 	}
 }
 
+func waitNotices(t *testing.T, notices func() []PendingElicitation, n int) []PendingElicitation {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if got := notices(); len(got) >= n {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("notices: %d, want %d", len(notices()), n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestElicitRelayNotifiesOncePerHeldCall(t *testing.T) {
 	resetElicitations(t)
 	notices := captureNotices(t)
@@ -38,8 +57,9 @@ func TestElicitRelayNotifiesOncePerHeldCall(t *testing.T) {
 	ch := e.startCall(elicitCallBody, sseHeaders)
 
 	p := waitPending(t, 1)[0]
-	got := notices()
-	if len(got) != 1 || got[0].ID != p.ID || got[0].Session != "fix-mail" {
+	// The notice is filed just after the call is listed, on the relay's goroutine.
+	got := waitNotices(t, notices, 1)
+	if got[0].ID != p.ID || got[0].Session != "fix-mail" {
 		t.Fatalf("notices %+v for held call %s", got, p.ID)
 	}
 	if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
@@ -70,6 +90,7 @@ func TestElicitRelayDoesNotNotifyARefusedCall(t *testing.T) {
 func TestHeldNoticeCarriesOnlyTheIDAndAKnownSession(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	session.WriteMeta(session.Meta{Name: "fix-mail", Kind: session.KindShell, Dir: "/w", CreatedAt: "2026-11-27T00:00:00Z"})
+	session.WriteMeta(session.Meta{Name: "shelved", Kind: session.KindShell, Dir: "/w", CreatedAt: "2026-11-27T00:00:00Z", Archived: true})
 	for _, tc := range []struct {
 		name, session, wantTarget, wantSession string
 	}{
@@ -78,6 +99,8 @@ func TestHeldNoticeCarriesOnlyTheIDAndAKnownSession(t *testing.T) {
 		// point the notification at a session the Console cannot open.
 		{"unknown session", "gone", "workspace", ""},
 		{"unattributed", "", "workspace", ""},
+		// The Console's session list leaves archived sessions out, so it could not open one.
+		{"archived session", "shelved", "workspace", ""},
 		{"malformed name", "../fix-mail", "workspace", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,5 +121,33 @@ func TestHeldNoticeCarriesOnlyTheIDAndAKnownSession(t *testing.T) {
 				t.Fatalf("payload %v: the outbox is writable by every agent, so it carries the id alone", ev.Payload)
 			}
 		})
+	}
+}
+
+func TestOriginOfKeepsNoPathQueryOrUser(t *testing.T) {
+	u, err := url.Parse("https://user:secret@mcp.example.com:8443/mcp/v1?key=k#f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := originOf(u); got != "https://mcp.example.com:8443" {
+		t.Fatalf("origin %q", got)
+	}
+	if got := originOf(nil); got != "" {
+		t.Fatalf("origin of nil %q", got)
+	}
+}
+
+// The list hands the arguments to the browser as text, which cannot carry bytes that are not
+// UTF-8: such a call is refused instead of being shown as something else.
+func TestElicitRelayRefusesArgumentsThatAreNotUTF8(t *testing.T) {
+	resetElicitations(t)
+	_, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", elicitCall{params: map[string]json.RawMessage{
+		"arguments": json.RawMessage("{\"to\":\"a\xff\"}"),
+	}}, inputRequired{})
+	if err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("err %v", err)
+	}
+	if n := len(PendingElicitations()); n != 0 {
+		t.Fatalf("%d held", n)
 	}
 }

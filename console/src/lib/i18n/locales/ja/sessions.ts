@@ -1086,7 +1086,7 @@ export const sessions = {
   "mcpelicit.title_unattributed": "エージェントが <1/> の <0/> を実行しようとしています。確認が必要です",
   "mcpelicit.arguments": "サーバーが実行する内容:",
   "mcpelicit.optional": "（任意）",
-  "mcpelicit.no_choice": "選ばない",
+  "mcpelicit.clear_choice": "選択を取り消す",
   "mcpelicit.deadline": "{time} までに答えがなければ自動で断ります",
   "mcpelicit.send": "回答を送る",
   "mcpelicit.decline": "断る",

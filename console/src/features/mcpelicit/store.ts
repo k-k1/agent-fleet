@@ -32,6 +32,8 @@ export interface McpElicitation {
   serverId: string;
   server: string;
   serverLabel?: string;
+  /** Where the call went: the scheme, host and port of the server's URL, nothing else. */
+  origin?: string;
   tool: string;
   session?: string;
   /** The call's arguments as the exact JSON text the server will run. */
@@ -46,7 +48,7 @@ export type McpElicitChoices = Record<string, Record<string, string>>;
 
 interface McpElicitState {
   items: McpElicitation[];
-  /** Calls answered from this tab, whose card stays off until the list drops them. */
+  /** Calls answered from this tab: their card stays, disabled, until the list drops them. */
   answering: Record<string, true>;
   refresh(): Promise<void>;
   reset(): void;
@@ -54,18 +56,26 @@ interface McpElicitState {
   answer(e: McpElicitation, choices: McpElicitChoices | null): Promise<ApiError | null>;
 }
 
+// Reads can overlap (start, a notification, the poll, an answer): only a read issued after the
+// last one applied may replace the list, or a late empty answer would take a held call's card
+// away. reset() moves `applied` up so a read from before a tenant switch lands nowhere.
+let issued = 0;
+let applied = 0;
+
 export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
   items: [],
   answering: {},
   async refresh() {
     const tenant = getTenant();
+    const seq = ++issued;
     let d: { elicitations?: McpElicitation[]; error?: unknown } | null = null;
     try {
       d = await api("api/mcp-elicitations");
     } catch {
       return; // a dropped connection proves nothing; the next poll asks again
     }
-    if (!d || d.error || !Array.isArray(d.elicitations) || getTenant() !== tenant) return;
+    if (!d || d.error || !Array.isArray(d.elicitations) || getTenant() !== tenant || seq <= applied) return;
+    applied = seq;
     const ids = new Set(d.elicitations.map((e) => e.id));
     set((s) => ({
       items: d!.elicitations!,
@@ -73,6 +83,7 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
     }));
   },
   reset() {
+    applied = issued;
     set({ items: [], answering: {} });
   },
   async answer(e, choices) {

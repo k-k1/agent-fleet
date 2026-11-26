@@ -428,7 +428,7 @@ func serveElicitingCall(w http.ResponseWriter, r *http.Request, def ServerDef, t
 		}
 		var responses json.RawMessage
 		if len(ir.inputs) > 0 {
-			if responses, ok = holdForAnswer(ctx, out, def, call, ir); !ok {
+			if responses, ok = holdForAnswer(ctx, out, def, target, call, ir); !ok {
 				return
 			}
 		}
@@ -1299,12 +1299,12 @@ func cut(s string, n int) string {
 
 // holdForAnswer files the call for a person and waits for the answer, the time limit, or the
 // CLI going away. ok=false means the call is over (the CLI left, or was told why not).
-func holdForAnswer(ctx context.Context, out *elicitOut, def ServerDef, call elicitCall, ir inputRequired) (json.RawMessage, bool) {
+func holdForAnswer(ctx context.Context, out *elicitOut, def ServerDef, target *url.URL, call elicitCall, ir inputRequired) (json.RawMessage, bool) {
 	if !out.attributed {
 		out.session, out.attributed = callerSession(out.r), true
 	}
 	call.session = out.session
-	p, err := elicitations.add(ctx, def, call, ir)
+	p, err := elicitations.add(ctx, def, originOf(target), call, ir)
 	if err != nil {
 		out.result(errorResult(err.Error()))
 		return nil, false
@@ -1384,7 +1384,10 @@ type PendingElicitation struct {
 	ServerID    string `json:"serverId"`
 	ServerName  string `json:"server"`
 	ServerLabel string `json:"serverLabel,omitempty"`
-	Tool        string `json:"tool"`
+	// Origin is where the call went (scheme, host and port of the definition's URL). The label is
+	// the member's own text and any session can change it, so the card shows this beside it.
+	Origin string `json:"origin,omitempty"`
+	Tool   string `json:"tool"`
 	// Session is the session whose process made the call, "" when it cannot be told
 	// (callerSession). It says where to show the call, never whether it may be answered.
 	Session string `json:"session,omitempty"`
@@ -1449,7 +1452,7 @@ const elicitItemCost = 96
 
 // heldSize is what a held call keeps for the Console, roughly as it is copied and listed.
 func (p PendingElicitation) heldSize() int {
-	n := len(p.Arguments) + len(p.Tool) + len(p.ServerName) + len(p.ServerLabel)
+	n := len(p.Arguments) + len(p.Tool) + len(p.ServerName) + len(p.ServerLabel) + len(p.Origin)
 	for _, in := range p.Inputs {
 		n += elicitItemCost + len(in.Key) + len(in.Message)
 		for _, f := range in.Fields {
@@ -1464,7 +1467,21 @@ func (p PendingElicitation) heldSize() int {
 
 var elicitations = &elicitStore{pending: map[string]*pendingElicit{}}
 
-func (s *elicitStore) add(ctx context.Context, def ServerDef, call elicitCall, ir inputRequired) (*pendingElicit, error) {
+// originOf is u's scheme, host and port: never its path, query or user information, which can
+// carry a key.
+func originOf(u *url.URL) string {
+	if u == nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func (s *elicitStore) add(ctx context.Context, def ServerDef, origin string, call elicitCall, ir inputRequired) (*pendingElicit, error) {
+	// The list carries the arguments as text: bytes that are not UTF-8 would reach the person
+	// replaced, and the server would run something other than what was shown.
+	if !utf8.Valid(call.params["arguments"]) {
+		return nil, errors.New("the call's arguments are not valid UTF-8, so they cannot be shown to a person for confirmation; the call was not completed")
+	}
 	var b [12]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return nil, err
@@ -1472,7 +1489,7 @@ func (s *elicitStore) add(ctx context.Context, def ServerDef, call elicitCall, i
 	now := time.Now()
 	p := &pendingElicit{
 		PendingElicitation: PendingElicitation{
-			ID: hex.EncodeToString(b[:]), ServerID: def.ID, ServerName: def.Name, ServerLabel: def.Label, Tool: call.tool,
+			ID: hex.EncodeToString(b[:]), ServerID: def.ID, ServerName: def.Name, ServerLabel: def.Label, Origin: origin, Tool: call.tool,
 			Session: call.session, Arguments: call.params["arguments"], Inputs: ir.inputs, CreatedAt: now, Deadline: now.Add(elicitWait),
 		},
 		gone:   ctx.Done(),

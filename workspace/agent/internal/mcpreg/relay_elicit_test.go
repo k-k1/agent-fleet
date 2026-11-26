@@ -384,7 +384,9 @@ func TestElicitRelayHoldsAndRetriesWithThePersonsChoice(t *testing.T) {
 	ch := e.startCall(elicitCallBody, sseHeaders)
 
 	p := waitPending(t, 1)[0]
-	if p.Tool != "send_mail" || p.ServerID != relayTestID || p.ServerName != "hosted" || string(p.Arguments) != elicitArgs {
+	// The origin is the server's scheme, host and port alone: the card names where the call went.
+	if p.Tool != "send_mail" || p.ServerID != relayTestID || p.ServerName != "hosted" || string(p.Arguments) != elicitArgs ||
+		p.Origin != up.srv.URL {
 		t.Fatalf("pending %+v (arguments %s)", p, p.Arguments)
 	}
 	want := []ElicitInput{{Key: "approval_choice", Message: "Send **mail** to a@example.com", Fields: []ElicitField{{
@@ -545,7 +547,7 @@ func TestElicitAnswerAfterTheDeadlineOrTheCLIIsRefused(t *testing.T) {
 	ok := ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": "ALLOW_ONCE"}}}
 
 	setElicitTimes(t, 20*time.Millisecond, time.Hour)
-	late, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
+	late, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", elicitCall{params: map[string]json.RawMessage{}}, ir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +558,7 @@ func TestElicitAnswerAfterTheDeadlineOrTheCLIIsRefused(t *testing.T) {
 
 	setElicitTimes(t, time.Hour, time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())
-	left, _ := elicitations.add(ctx, ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
+	left, _ := elicitations.add(ctx, ServerDef{ID: "s"}, "", elicitCall{params: map[string]json.RawMessage{}}, ir)
 	cancel() // the CLI went away, before the relay removed the entry
 	if _, err := AnswerElicitation(left.ID, ok); !errors.Is(err, ErrElicitationNotFound) {
 		t.Fatalf("an answer after the CLI left: %v", err)
@@ -943,7 +945,7 @@ func TestElicitRelayCapsTheHeldCalls(t *testing.T) {
 	resetElicitations(t)
 	ir := inputRequired{inputs: []ElicitInput{{Key: "a"}}}
 	for i := 0; i < elicitMaxPending; i++ {
-		if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir); err != nil {
+		if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", elicitCall{params: map[string]json.RawMessage{}}, ir); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -968,7 +970,7 @@ func TestAnswerElicitationChecksTheChoices(t *testing.T) {
 	if got := ir.inputs[0].Fields[1]; got.Name != "o" || got.Required || !reflect.DeepEqual(got.Options, []ElicitOption{{"x", "Ex"}}) {
 		t.Fatalf("oneOf field %+v", got)
 	}
-	p, err := elicitations.add(context.Background(), ServerDef{ID: "s", Name: "n"}, elicitCall{tool: "t", params: map[string]json.RawMessage{}}, ir)
+	p, err := elicitations.add(context.Background(), ServerDef{ID: "s", Name: "n"}, "", elicitCall{tool: "t", params: map[string]json.RawMessage{}}, ir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1004,7 +1006,7 @@ func TestAnswerElicitationChecksTheChoices(t *testing.T) {
 func TestElicitTimeLimitYieldsToAnAnswerThatWon(t *testing.T) {
 	resetElicitations(t)
 	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Required: true, Options: []ElicitOption{{"ALLOW_ONCE", "Allow"}}}}}}}
-	p, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
+	p, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", elicitCall{params: map[string]json.RawMessage{}}, ir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1017,7 +1019,7 @@ func TestElicitTimeLimitYieldsToAnAnswerThatWon(t *testing.T) {
 	if got := <-p.answer; got.Decline {
 		t.Fatalf("delivered %+v", got)
 	}
-	q, _ := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
+	q, _ := elicitations.add(context.Background(), ServerDef{ID: "s"}, "", elicitCall{params: map[string]json.RawMessage{}}, ir)
 	if !elicitations.take(q.ID) {
 		t.Fatal("an unanswered call was not taken")
 	}
@@ -1026,7 +1028,7 @@ func TestElicitTimeLimitYieldsToAnAnswerThatWon(t *testing.T) {
 func TestPendingElicitationsAreCopies(t *testing.T) {
 	resetElicitations(t)
 	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Options: []ElicitOption{{"ALLOW_ONCE", "Allow"}}}}}}}
-	_, _ = elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{"arguments": json.RawMessage(`{"a":1}`)}}, ir)
+	_, _ = elicitations.add(context.Background(), ServerDef{ID: "s"}, "", elicitCall{params: map[string]json.RawMessage{"arguments": json.RawMessage(`{"a":1}`)}}, ir)
 	got := PendingElicitations()[0]
 	got.Arguments[2] = 'X'
 	got.Inputs[0].Fields[0].Options[0].Value = "ALLOW_EVERYTHING"

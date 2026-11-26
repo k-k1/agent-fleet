@@ -217,8 +217,11 @@ install and a wrapper in `af-gcloud-exec`'s shape when MCP is in use and someone
   payload is the call's id alone (the outbox is writable by every agent); it targets the attributed
   session, or the workspace when there is none. The Console shows the call as a card above that
   session's composer while its pane is on screen, and as a sticky toast otherwise. A call nobody
-  is attributed to is always a toast. The list sends the arguments as their exact text, and the
-  card lays them out without parsing them, so a member written twice or a long number shows as the
-  server will read it. Two options whose labels read the same also show their values (#5282).
+  is attributed to is always a toast, and closing it declines the call. The card names the server's
+  origin beside its label, which any session can change. The list sends the arguments as their
+  exact text (a call whose arguments are not UTF-8 is refused), and the card lays them out without
+  parsing them, so a member written twice or a long number shows as the server will read it.
+  Hidden characters, direction controls included, show as markers. Two options whose labels read
+  the same also show their values, and are numbered if they still read the same (#5282).
 - **Not verified:** whether Google accepts or ignores RFC 8707 `resource`; the setup guide's line
   that the Developer Preview Program is required, which may predate GA.

@@ -564,6 +564,8 @@ export function App() {
             open the same instance (#1659). */}
         <WorkItemModalHost />
         <WsStartingDialog />
+        {/* Held MCP calls for this pane's mirror; their toasts stay in the main window. */}
+        <McpElicitHost toasts={false} />
         <AuthExpiredModal />
         <ProviderRequiredModal />
         <DirtyGuardHost />

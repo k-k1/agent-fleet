@@ -218,7 +218,7 @@ func agentContractFamilies() []contractFamily {
 			binding: pendingElicitationBinding,
 			tsPath:  "../../console/src/features/mcpelicit/store.ts",
 			tsName:  "McpElicitation",
-			tsKeys: keySet("id", "serverId", "server", "serverLabel", "tool", "session", "arguments", "inputs",
+			tsKeys: keySet("id", "serverId", "server", "serverLabel", "origin", "tool", "session", "arguments", "inputs",
 				"createdAt", "deadline"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{},
@@ -472,7 +472,7 @@ var confirmRequestBinding = map[string]string{
 }
 
 var pendingElicitationBinding = map[string]string{
-	"ID": "id", "ServerID": "serverId", "ServerName": "server", "ServerLabel": "serverLabel", "Tool": "tool",
+	"ID": "id", "ServerID": "serverId", "ServerName": "server", "ServerLabel": "serverLabel", "Origin": "origin", "Tool": "tool",
 	"Session": "session", "Arguments": "arguments", "Inputs": "inputs", "CreatedAt": "createdAt", "Deadline": "deadline",
 }
 
