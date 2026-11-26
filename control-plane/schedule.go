@@ -1187,6 +1187,15 @@ func (a scheduleAPI) createLimitResume(w http.ResponseWriter, r *http.Request, m
 		}
 		if ot, oerr := time.Parse(time.RFC3339, old.Spec); oerr == nil {
 			if d := ot.Sub(at); d < 5*time.Minute && d > -5*time.Minute {
+				// The same booking, asked again or moved by a few minutes: keep its id and set its time
+				// to the one asked for, so the Agent's record of the time and the row agree.
+				if old.Spec != s.Spec {
+					old.Spec, old.NextRun, old.UpdatedAt = s.Spec, next, store.NowTS()
+					if uerr := a.store.UpdateSchedule(r.Context(), old); uerr != nil {
+						writeAPIErr(w, internalErr(uerr))
+						return
+					}
+				}
 				writeJSON(w, http.StatusOK, withSchedulerWarning(scheduleToDTO(old)))
 				return
 			}

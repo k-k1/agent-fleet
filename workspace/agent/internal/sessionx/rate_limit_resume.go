@@ -536,12 +536,20 @@ func rateLimitMoveEarly(m session.Meta, st rateLimitState, now time.Time) rateLi
 		return st
 	}
 	next := st
-	next.MovedFrom, next.ScheduleID = st.ScheduleID, id
+	// The CP moves a booking that is only minutes away in place and answers with the same id: there
+	// is no old row to cancel, and cancelling it would remove the only booking.
+	inPlace := id == st.ScheduleID
+	if !inPlace {
+		next.MovedFrom = st.ScheduleID
+	}
+	next.ScheduleID = id
 	next.ResumeAt, next.Source = at.Format(time.RFC3339), rateLimitSourceResetEarly
 	if err := RateLimitStates.Write(m.Name, next); err != nil {
 		// The new id is not recorded anywhere, so it would be an orphan: drop it and keep the old one.
 		log.Printf("rate-limit: could not record the moved auto-resume of %s: %v", m.Name, err)
-		cancelRateLimitSchedule(m.Name, id)
+		if !inPlace {
+			cancelRateLimitSchedule(m.Name, id)
+		}
 		return st
 	}
 	st = settleMovedFrom(m, next)

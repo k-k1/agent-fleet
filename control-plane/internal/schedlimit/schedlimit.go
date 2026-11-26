@@ -113,9 +113,9 @@ const oneOffName = "limit-resume-release-5212"
 // member renamed, or anything else that cannot be shown to have that origin, stays held.
 func legacyBooking(s store.Schedule, boundary string) bool {
 	// DeliverTo is empty: an earlier Agent never sent it, so an explicit "operator" is someone else's row.
-	// Only the wordings an earlier Agent sent (no notice line), and only rows that existed when the
-	// pass was claimed: what any CP writes through the generic route afterwards is not a candidate.
-	if !IsBooking(s) || !slices.Contains(Prompts[currentPrompts:], strings.TrimSpace(s.Prompt)) || s.CreatedAt > boundary || s.DeliverTo != "" || s.ShowInSessions || s.ReuseSession != "" || s.LastRun != "" || s.LastStatus != "" {
+	// Only the wordings an earlier Agent sent (no notice line), and only rows created and last edited
+	// strictly before the pass was claimed (timestamps are whole seconds, so the same second does not count): what any CP writes through the generic route afterwards is not a candidate.
+	if !IsBooking(s) || !slices.Contains(Prompts[currentPrompts:], strings.TrimSpace(s.Prompt)) || s.CreatedAt >= boundary || s.UpdatedAt >= boundary || s.DeliverTo != "" || s.ShowInSessions || s.ReuseSession != "" || s.LastRun != "" || s.LastStatus != "" {
 		return false
 	}
 	created, cerr := time.Parse(time.RFC3339, s.CreatedAt)

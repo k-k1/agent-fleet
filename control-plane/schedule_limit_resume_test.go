@@ -111,7 +111,7 @@ func legacyHeld(mv store.MembershipView, id string, spec time.Time, mut func(*st
 		SpecLabel:           schedlimit.Label("ja", "s"),
 		MissingTargetPolicy: "fail", OverlapPolicy: "skip", WakePolicy: "wake", AgentKind: "claude",
 		Prompt: schedlimit.Prompts[2], Enabled: true, ApprovalPending: true,
-		NextRun: spec.UTC().Format(time.RFC3339), CreatedAt: time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339), UpdatedAt: "x"}
+		NextRun: spec.UTC().Format(time.RFC3339), CreatedAt: time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339), UpdatedAt: time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339)}
 	if mut != nil {
 		mut(&s)
 	}
@@ -144,6 +144,8 @@ func TestReleaseHeldLimitResumes(t *testing.T) {
 	mk("noticed", future, func(s *store.Schedule) { s.Prompt = schedlimit.Prompts[0] }) // the new wording is never an old Agent's
 	mk("noticed-past", past, func(s *store.Schedule) { s.Prompt = schedlimit.Prompts[1]; s.SpecLabel = schedlimit.Label("en", "s") })
 	mk("after-claim", future, func(s *store.Schedule) { s.CreatedAt = now.Add(time.Second).Format(time.RFC3339) })
+	mk("same-second", future, func(s *store.Schedule) { s.CreatedAt = now.UTC().Format(time.RFC3339) })
+	mk("edited-after", future, func(s *store.Schedule) { s.UpdatedAt = now.UTC().Format(time.RFC3339) })
 	mk("shown", future, func(s *store.Schedule) { s.ShowInSessions = true })
 	mk("ran", past, func(s *store.Schedule) { s.LastRun = "2026-11-01T00:00:00Z"; s.LastStatus = "ok" })
 	mk("adopted", future, func(s *store.Schedule) { s.ReuseSession = "other-session" })
@@ -164,7 +166,7 @@ func TestReleaseHeldLimitResumes(t *testing.T) {
 	if ok, _ := state("past"); ok {
 		t.Error("past row kept")
 	}
-	for _, id := range []string{"renamed", "past-renamed", "other-prompt", "other-mode", "beyond-window", "noticed", "noticed-past", "after-claim", "before-creation", "operator", "shown", "ran", "adopted"} {
+	for _, id := range []string{"renamed", "past-renamed", "other-prompt", "other-mode", "beyond-window", "noticed", "noticed-past", "after-claim", "same-second", "edited-after", "before-creation", "operator", "shown", "ran", "adopted"} {
 		if ok, p := state(id); !ok || !p {
 			t.Errorf("%s: ok=%v pending=%v, want kept and held", id, ok, p)
 		}
@@ -396,6 +398,16 @@ func TestLimitResumeResendWithDriftedTimeReturnsTheLiveRow(t *testing.T) {
 	_ = json.Unmarshal(doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at.Add(3*time.Hour)), "").Body.Bytes(), &c)
 	if a.ID == "" || b.ID != a.ID || c.ID == a.ID || c.ID == "" {
 		t.Fatalf("ids %q %q %q", a.ID, b.ID, c.ID)
+	}
+	// The row now carries the time the resend asked for, so the Agent's record and the CP agree.
+	if got, _, _ := api.store.GetSchedule(ctx, a.ID); got.Spec != at.Add(40*time.Second).UTC().Format(time.RFC3339) || got.NextRun != got.Spec {
+		t.Fatalf("row time %s next %s, want the resend's %s", got.Spec, got.NextRun, at.Add(40*time.Second).UTC().Format(time.RFC3339))
+	}
+	// An earlier time within the window (a move by a few minutes) is the same booking moved in place.
+	var m scheduleDTO
+	_ = json.Unmarshal(doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at.Add(-2*time.Minute)), "").Body.Bytes(), &m)
+	if m.ID != a.ID {
+		t.Fatalf("a move of two minutes made a new row %q", m.ID)
 	}
 	if rows, _ := api.store.ListSchedules(ctx, mv.MembershipID); len(rows) != 2 {
 		t.Fatalf("%d rows", len(rows))
