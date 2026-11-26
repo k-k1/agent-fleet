@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // Session steering (ADR 0073): the ten tools opened by `--self-report --fleet-spawn`.
@@ -1020,5 +1023,145 @@ func TestCreateSessionRefusesUnregisteredKind(t *testing.T) {
 		if hits != 1 {
 			t.Errorf("create_session(kind=%q) reached the Agent %d time(s), want 1", kind, hits)
 		}
+	}
+}
+
+// A session that runs in a space (ADR 0142) cannot take the worktree default: a space is no git
+// working copy, so `git worktree add` fails there and the create answered 502 worktree_failed. Its
+// default is a NEW space instead, an existing one is named by `space`, and the refusals say so
+// before anything is created.
+func TestCreateSessionFromASpace(t *testing.T) {
+	withFleetSpawn(t, true)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	own, err := spacex.Create("notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := spacex.Create("scratch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "inspace", Kind: session.KindClaude, Origin: session.OriginUser, Dir: own.Dir})
+	session.WriteMeta(session.Meta{Name: "inrepo", Kind: session.KindClaude, Origin: session.OriginUser, Dir: "/repos/app"})
+
+	var body map[string]any
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		body = nil
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"name":"slot09"}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	call := func(parent string, args map[string]any) string {
+		t.Helper()
+		mcpSourceSession = parent
+		t.Cleanup(func() { mcpSourceSession = "" })
+		a, _ := json.Marshal(args)
+		params, _ := json.Marshal(map[string]any{"name": "create_session", "arguments": json.RawMessage(a)})
+		return string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+	}
+	refused := func(parent string, args map[string]any, want string) {
+		t.Helper()
+		before := hits
+		resp := call(parent, args)
+		if !strings.Contains(resp, `"isError":true`) || !strings.Contains(resp, want) || hits != before {
+			t.Fatalf("args %v: want a refusal naming %q before any create (hits %d -> %d), got %s", args, want, before, hits, resp)
+		}
+	}
+	ok := func(parent string, args map[string]any) map[string]any {
+		t.Helper()
+		if resp := call(parent, args); strings.Contains(resp, `"isError":true`) {
+			t.Fatalf("args %v failed: %s", args, resp)
+		}
+		return body
+	}
+
+	// The default from a space: a new space, named after the title, and no worktree.
+	got := ok("inspace", map[string]any{"initial_prompt": "x", "title": "Review notes"})
+	if sp, _ := got["space"].(map[string]any); sp["name"] != "Review notes" || sp["folder"] != nil || got["worktree"] != false || got["dir"] != "" {
+		t.Fatalf("default from a space = space %v worktree %v dir %q, want a new space named by the title", got["space"], got["worktree"], got["dir"])
+	}
+	// A title that is no valid space name only costs the name; the space is still new.
+	got = ok("inspace", map[string]any{"initial_prompt": "x", "title": strings.Repeat("あ", 500)})
+	if sp, ok := got["space"].(map[string]any); !ok || sp["name"] != nil {
+		t.Fatalf("an over-long title: space = %v, want a nameless new space", got["space"])
+	}
+	// The same launch twice is one child (a retry collapses); another title is another one.
+	first := ok("inspace", map[string]any{"initial_prompt": "x", "title": "a"})["idempotency_key"]
+	if again := ok("inspace", map[string]any{"initial_prompt": "x", "title": "a"})["idempotency_key"]; again != first {
+		t.Fatalf("a retry of the new-space create changed the key: %v vs %v", first, again)
+	}
+	if other := ok("inspace", map[string]any{"initial_prompt": "x", "title": "b"})["idempotency_key"]; other == first {
+		t.Fatalf("a launch into another new space reused the key %v", first)
+	}
+
+	// An existing space by folder: forwarded as such, never a worktree.
+	got = ok("inspace", map[string]any{"initial_prompt": "x", "space": other.Folder})
+	if sp, _ := got["space"].(map[string]any); sp["folder"] != other.Folder || sp["name"] != nil || got["worktree"] != false {
+		t.Fatalf("space=%s = space %v worktree %v", other.Folder, got["space"], got["worktree"])
+	}
+	// ... and from a session that is not in a space, too.
+	if got = ok("inrepo", map[string]any{"initial_prompt": "x", "space": other.Folder}); got["worktree"] != false {
+		t.Fatalf("space from a repository session: worktree = %v", got["worktree"])
+	}
+	// The key follows the space, and the shared opt-in for the parent's own space still goes through.
+	k1 := ok("inspace", map[string]any{"initial_prompt": "x", "space": other.Folder})["idempotency_key"]
+	k2 := ok("inspace", map[string]any{"initial_prompt": "x", "space": own.Folder})["idempotency_key"]
+	if k1 == k2 {
+		t.Fatalf("two spaces share the key %v", k1)
+	}
+	got = ok("inspace", map[string]any{"initial_prompt": "x", "space": own.Folder, "allow_shared_working_copy": true})
+	if got["allow_shared_working_copy"] != true || got["worktree"] != false {
+		t.Fatalf("shared opt-in with space: shared=%v worktree=%v", got["allow_shared_working_copy"], got["worktree"])
+	}
+	// worktree=false with dir = the parent's own space keeps working as before: no space object.
+	got = ok("inspace", map[string]any{"initial_prompt": "x", "dir": own.Dir, "worktree": false, "allow_shared_working_copy": true})
+	if _, has := got["space"]; has || got["dir"] != own.Dir || got["allow_shared_working_copy"] != true {
+		t.Fatalf("dir + worktree=false + shared = %v", got)
+	}
+	// An explicit worktree=false with no dir is the caller's own choice, not the new-space default.
+	got = ok("inspace", map[string]any{"initial_prompt": "x", "worktree": false})
+	if _, has := got["space"]; has {
+		t.Fatalf("worktree=false was turned into a new space: %v", got["space"])
+	}
+
+	// The shared-copy opt-in with no dir means the parent's own working copy: its space, named,
+	// rather than home.
+	got = ok("inspace", map[string]any{"initial_prompt": "x", "worktree": false, "allow_shared_working_copy": true})
+	if sp, _ := got["space"].(map[string]any); sp["folder"] != own.Folder || got["allow_shared_working_copy"] != true || got["worktree"] != false {
+		t.Fatalf("shared opt-in without dir = space %v shared %v worktree %v, want the parent's own space", got["space"], got["allow_shared_working_copy"], got["worktree"])
+	}
+	// A parent outside a space keeps the old meaning (no dir = home, decided by the Agent).
+	got = ok("inrepo", map[string]any{"initial_prompt": "x", "worktree": false, "allow_shared_working_copy": true})
+	if _, has := got["space"]; has {
+		t.Fatalf("a repository parent got a space: %v", got["space"])
+	}
+
+	// Refusals, each before anything is created, and each pointing at `space`.
+	refused("inspace", map[string]any{"initial_prompt": "x", "worktree": true}, "pass space=")
+	refused("inspace", map[string]any{"initial_prompt": "x", "dir": own.Dir}, "pass space=")
+	refused("inrepo", map[string]any{"initial_prompt": "x", "dir": other.Dir, "worktree": true}, "pass space=")
+	refused("inspace", map[string]any{"initial_prompt": "x", "dir": "spaces/" + other.Folder}, "pass space=")
+	// A symlink to a space is still a space: git would follow it, so the guard has to as well.
+	link := filepath.Join(os.Getenv("HOME"), "scratch-link")
+	if err := os.Symlink(other.Dir, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	refused("inrepo", map[string]any{"initial_prompt": "x", "dir": link, "worktree": true}, "pass space=")
+	refused("inrepo", map[string]any{"initial_prompt": "x", "dir": "scratch-link"}, "pass space=")
+	refused("inspace", map[string]any{"initial_prompt": "x", "space": other.Folder, "dir": own.Dir}, "space cannot be combined with dir")
+	refused("inspace", map[string]any{"initial_prompt": "x", "space": other.Folder, "worktree": true}, "space cannot be combined with worktree=true")
+	// The shared opt-in with the default worktree is still the caller's mistake, in a space too.
+	refused("inspace", map[string]any{"initial_prompt": "x", "allow_shared_working_copy": true}, "pass space=")
+
+	// Outside a space nothing changes: the default is a worktree, with no space object.
+	got = ok("inrepo", map[string]any{"initial_prompt": "x", "dir": "/repos/app"})
+	if _, has := got["space"]; has || got["worktree"] != true {
+		t.Fatalf("repository session: space=%v worktree=%v, want no space and worktree=true", got["space"], got["worktree"])
 	}
 }

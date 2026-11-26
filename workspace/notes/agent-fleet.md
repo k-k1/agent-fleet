@@ -135,6 +135,9 @@ work you could simply do.
   commit explicitly by path. It works only while you are live in a canonical path (a parent started
   through a symlink is refused; the child's `dir` may be an alias). Another session's working copy
   is still refused, and a repeated refusal with the flag means it cannot work: use a worktree.
+- From a **space** (`~/spaces/<folder>`, no git repository) the default is a **new space**, not a
+  worktree: leave `worktree` and `dir` unset. Name an existing one with `space=<folder>` (never with
+  `dir` or `worktree=true`). `worktree=true` from a space is refused with that hint.
 - **You are not told when it finishes.** Poll `get_session_status`, or leave `report_back` on and
   the child sends you one message when it is done.
 - **You may only steer what you started** — list them, read their output, stop one, book a stop,

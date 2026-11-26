@@ -47,9 +47,17 @@ A session starts a child on its own when it judges the work splits. You can also
 | Model | Any model you have not hidden |
 | Effort | The parent can choose. When it also names the model, it picks from that model's effort levels |
 | Permission mode | The parent cannot choose. It follows the per-kind default in Settings > Agents |
-| Working copy | A new worktree. A working copy another session is using cannot be given |
+| Working copy | A new worktree, or a new space when the parent runs in a space. A working copy another session is using cannot be given |
 
 Which agents can start children is in the "Starts child sessions and messages other sessions" row of the [agents reference](../../ref/agents.md).
+
+### When the parent runs in a space
+
+A space is a folder with no git repository, so a worktree cannot be made from it. A parent that runs in a space and gives no working copy starts the child in a new space of its own, so two sessions still never share one folder.
+
+- To start the child in a space that already exists, the parent names its folder (the `space` argument). A space that does not exist or is being deleted is refused, as in the Console
+- A space where another session is running is refused, like any other working copy in use
+- Asking for a worktree from a space is refused with a message that names the `space` argument
 
 ### Share the parent's working copy with the child
 
