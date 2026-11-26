@@ -173,9 +173,10 @@ It is not triggered by `workflow_run`: the watcher dispatches the contracts with
   major is 0, a new minor counts as one). Only a plain `x.y.z` is taken; anything else stays
   a hand bump. Because that CI builds amd64 only, `cli-pin-bump.sh` first checks that every
   per-architecture download the Dockerfile makes for the new version exists (a recipe per
-  tool in `assets_ready`, with short time limits; for `bkt` also one sha256 line per
-  architecture in the release's `checksums.txt`; a flagged tool without a recipe is left at
-  its pin), and L1 asks the
+  tool in `assets_ready`, with short limits and no retry; for `bkt` also exactly one line
+  per asset name in the release's `checksums.txt`, counted as the build counts them; a flagged
+  tool without a recipe is left at its pin). A probe that cannot tell (timeout, 5xx) leaves
+  the row like an unreadable source; a 404 means the asset is not there yet. L1 asks the
   `aws` and `mcp-grafana` binaries themselves for their version. Today: `awscli`, `gh`,
   `bkt`, `confluence`, `mcp_grafana`. For `awscli` the workflow also regenerates
   `workspace/agent/internal/cloudruns/aws_commands.txt.gz` from the new release

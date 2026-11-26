@@ -106,13 +106,22 @@ FAKE
 # --- curl: every release source is a file under $WWW --------------------------------
 cat > "$STUB/curl" <<'FAKE'
 #!/usr/bin/env bash
-out=""; url=""; prev=""
+out=""; url=""; prev=""; wcode=""
 for a in "$@"; do
   case "$prev" in -o) out="$a" ;; esac
   case "$a" in http*) url="$a" ;; esac
+  [ "$a" != "-w" ] || wcode=1
   prev="$a"
 done
+# STUB_CURL_HANG: a URL containing it times out (curl exit 28).
+[ -z "${STUB_CURL_HANG:-}" ] || case "$url" in *"$STUB_CURL_HANG"*) exit 28 ;; esac
 key="$(printf '%s' "$url" | sed 's|[^A-Za-z0-9._-]|_|g')"
+if [ -n "$wcode" ]; then
+  # `-w %{http_code}` without -f: a missing file is a 404 answer, exit 0.
+  [ -f "$STUB_WWW/$key" ] || { printf 404; exit 0; }
+  [ -z "$out" ] || cp "$STUB_WWW/$key" "$out"
+  printf 200; exit 0
+fi
 [ -f "$STUB_WWW/$key" ] || exit 22
 if [ -n "$out" ]; then cp "$STUB_WWW/$key" "$out"; else cat "$STUB_WWW/$key"; fi
 FAKE
@@ -613,10 +622,13 @@ body_has "| bkt | \`$P_BKT\` | \`$B_MINOR\` | a new major ($B_LINE -> ${B_MINOR%
 B_PATCH="$B_LINE.99"
 serve_assets bkt "$B_PATCH" ""
 # bkt_sums <version> [arch to leave out]: the release's checksums.txt the bkt build reads.
+# With a third argument `dup`, the left-out arch gets a valid line plus a broken duplicate.
 bkt_sums() {
   local a
   for a in x86_64 arm64; do
-    [ "$a" = "${2:-}" ] || printf '%064d  bkt_%s_linux_%s.tar.gz\n' 0 "$1" "$a"
+    if [ "$a" != "${2:-}" ]; then printf '%064d  bkt_%s_linux_%s.tar.gz\n' 0 "$1" "$a"
+    elif [ "${3:-}" = dup ]; then printf '%064d  bkt_%s_linux_%s.tar.gz\nnot-a-hash  bkt_%s_linux_%s.tar.gz\n' 0 "$1" "$a" "$1" "$a"
+    fi
   done > "$WORK/sums"
   serve "https://github.com/avivsinai/bitbucket-cli/releases/download/v$1/checksums.txt" "$WORK/sums"
 }
@@ -638,6 +650,25 @@ STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_
 code_is 0
 cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a bkt release without its arm64 checksum was bumped"
 body_has "| bkt | \`$P_BKT\` | \`$B_NOSUM\` | checksums.txt has no single sha256 line for bkt_${B_NOSUM}_linux_arm64.tar.gz |"
+# Counted the way the Dockerfile counts: a valid line plus a broken one of the same name is two.
+bkt_sums "$B_NOSUM" arm64 dup
+grep -c "bkt_${B_NOSUM}_linux_arm64" "$WORK/sums" | grep -qx 2 || fail "the dup fixture is not two lines"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_NOSUM" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a bkt release with a duplicate arm64 checksum line was bumped"
+
+echo "== case 16g: an asset probe that times out is 'could not tell': left, and reported as unreadable =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+STUB_CURL_HANG=aarch64 STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_AWSCLI="$L_AWSCLI" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a timed-out asset probe still bumped awscli"
+out_has "incomplete=false"
+out_has "unreadable=awscli"
+body_has "| awscli | \`$P_AWSCLI\` | \`$L_AWSCLI\` | could not check a release asset: https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$L_AWSCLI.zip |"
 
 echo "== case 16e: a pr-gated release that is not a plain x.y.z is left, and says so =="
 cp "$ROOT/workspace/Dockerfile" "$DF"
@@ -646,6 +677,14 @@ STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_
   STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$G_MINOR-rc1" run_bump
 code_is 0
 out_has "count=0"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="v$G_MINOR/preview" run_bump
+code_is 0
+body_has "| gh | \`$P_GH\` | \`v$G_MINOR/preview\` | not a plain x.y.z"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$G_MINOR-rc1" run_bump
 body_has "| gh | \`$P_GH\` | \`$G_MINOR-rc1\` | not a plain x.y.z, which is all a pr-gated bump takes; check the tag, the asset names and what the binary prints, and adjust the Dockerfile install and the L1 version check with \`GH_VERSION\` by hand |"
 
 echo "OK: cli-pin-bump.sh bumps only tested kinds, refuses bad checksums, and is idempotent"

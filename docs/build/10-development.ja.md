@@ -155,8 +155,9 @@ contract を `GITHUB_TOKEN` で dispatch し、そうして始まった実行は
   組にする（メジャーが 0 の間は、新しいマイナーもメジャー扱い）。受け付けるのは素の `x.y.z` だけで、
   それ以外は手で上げる。その CI は amd64 しかビルドしないので、`cli-pin-bump.sh` は先に、新しい版で
   Dockerfile が取りに行くアーキ別のダウンロードがすべて存在するかを確かめる（ツールごとの手順は
-  `assets_ready`。時間制限は短い。`bkt` はリリースの `checksums.txt` にアーキごとの sha256 が 1 行ずつ
-  あることも見る。手順の無いツールは pin のまま）。L1 は `aws` と `mcp-grafana` の実物に版を聞く。
+  `assets_ready`。時間制限は短く、再試行しない。`bkt` はリリースの `checksums.txt` に資産名ごとの行が
+  ちょうど 1 行あることも、ビルドと同じ数え方で見る。手順の無いツールは pin のまま）。判定できなかった確認
+  （タイムアウト・5xx）は、取得元を読めなかった行と同じ扱い。404 は資産がまだ無いという意味。L1 は `aws` と `mcp-grafana` の実物に版を聞く。
   いまは `awscli`・`gh`・`bkt`・`confluence`・`mcp_grafana`。`awscli` では workflow が新しい版から
   `workspace/agent/internal/cloudruns/aws_commands.txt.gz` も作り直し（`TestAWSCommandsMatchPin`）、
   Dockerfile と一緒にコミットする。マニフェストの取得先は `2.*` のタグしか見ないので、aws-cli 3 は

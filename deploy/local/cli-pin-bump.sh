@@ -156,8 +156,23 @@ resolve_npm() { NEW[$1]="$2"; }
 # makes for that version answers, using the Dockerfile's own URLs. A release is often
 # published before all its assets are uploaded, and the PR's CI never fetches arm64. A
 # flagged tool with no recipe here is refused, so flagging one means writing its URLs.
-# Short limits, one retry: a slow host must cost this row its bump, not the 30-minute job.
-PROBE=(curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 2)
+# probe <url> [file]: 0 = answers (the body goes to file, else a HEAD request), 1 = the
+# release lacks it (404 / 410), 2 = could not tell (timeout, 5xx, network). No retry inside
+# curl and an outer timeout: a slow or rate-limiting host (Retry-After waits outside
+# --max-time) must cost this row its bump, not the 30-minute job; the next run retries.
+probe() {
+  local code rc=0
+  # `|| rc=$?`, not set +e/-e: the caller may be running with errexit off on purpose.
+  if [ -n "${2:-}" ]; then
+    code="$(timeout 40 curl -sSL --connect-timeout 10 --max-time 30 -o "$2" -w '%{http_code}' "$1" 2>/dev/null)" || rc=$?
+  else
+    code="$(timeout 40 curl -sSL --connect-timeout 10 --max-time 30 -I -o /dev/null -w '%{http_code}' "$1" 2>/dev/null)" || rc=$?
+  fi
+  [ "$rc" = 0 ] || return 2
+  case "$code" in 2??) return 0 ;; 404|410) return 1 ;; *) return 2 ;; esac
+}
+
+# assets_ready <kind> <version>: 0 ready, 1 refused (printed why), 2 could not tell.
 assets_ready() {
   local kind="$1" v="$2" url urls=() a
   case "$kind" in
@@ -172,15 +187,27 @@ assets_ready() {
     confluence)  return 0 ;;  # an npm package: one tarball for every architecture
     *) echo "no per-architecture asset check for $kind in cli-pin-bump.sh"; return 1 ;;
   esac
+  local prc
   for url in "${urls[@]}"; do
-    "${PROBE[@]}" -I -o /dev/null "$url" 2>/dev/null || { echo "a release asset is not there yet: $url"; return 1; }
+    probe "$url" && prc=0 || prc=$?
+    case "$prc" in
+      0) ;;
+      1) echo "a release asset is not there yet: $url"; return 1 ;;
+      *) echo "could not check a release asset: $url"; return 2 ;;
+    esac
   done
-  # The bkt build checks its tarball against the release's checksums.txt, one line per asset.
+  # The bkt build checks its tarball against the release's checksums.txt and needs exactly
+  # one line per asset name; count them the way it does, then check that line's hash.
   if [ "$kind" = bkt ]; then
     url="https://github.com/avivsinai/bitbucket-cli/releases/download/v$v/checksums.txt"
-    "${PROBE[@]}" -o "$WORK/bkt-sums" "$url" 2>/dev/null || { echo "a release asset is not there yet: $url"; return 1; }
+    probe "$url" "$WORK/bkt-sums" && prc=0 || prc=$?
+    case "$prc" in
+      0) ;;
+      1) echo "a release asset is not there yet: $url"; return 1 ;;
+      *) echo "could not check a release asset: $url"; return 2 ;;
+    esac
     for a in "bkt_${v}_linux_x86_64.tar.gz" "bkt_${v}_linux_arm64.tar.gz"; do
-      awk -v a="$a" '$2 == a && $1 ~ /^[0-9a-f]{64}$/ { n++ } END { exit n != 1 }' "$WORK/bkt-sums" ||
+      awk -v a="$a" '$2 == a { n++; h = $1 } END { exit !(n == 1 && h ~ /^[0-9a-f]{64}$/) }' "$WORK/bkt-sums" ||
         { echo "checksums.txt has no single sha256 line for $a"; return 1; }
     done
   fi
@@ -330,11 +357,13 @@ for row in "${KINDS[@]}"; do
     continue
   fi
   [ "$pin" != "$latest" ] || continue
-  [[ "$latest" =~ $VALUE_RE ]] || { left+=("$kind|$pin|$latest|the published version has an unexpected shape"); continue; }
+  # Before the generic shape check, so a pr-gated tag like `v2.106.0/preview` gets the same
+  # hand-bump steps its update issue gives.
   if [ "$workflow" = - ] && ! manifest_plain_version "$latest"; then
     left+=("$kind|$pin|$latest|not a plain x.y.z, which is all a pr-gated bump takes; check the tag, the asset names and what the binary prints, and adjust the Dockerfile install and the L1 version check with \`$arg\` by hand")
     continue
   fi
+  [[ "$latest" =~ $VALUE_RE ]] || { left+=("$kind|$pin|$latest|the published version has an unexpected shape"); continue; }
 
   check_fragments "$kind" "$pin" "$latest"
 
@@ -355,6 +384,8 @@ for row in "${KINDS[@]}"; do
     set -e
     if [ "$rrc" != 0 ]; then
       left+=("$kind|$pin|$latest|$(tr '\n' ' ' < "$WORK/reason" | sed 's/ *$//')")
+      # Could not tell is not "refused": keep an open PR that carries it (the close step).
+      [ "$rrc" != 2 ] || unreadable+=("$kind")
       continue
     fi
     NEW[$arg]="$latest"
