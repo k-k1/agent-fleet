@@ -93,6 +93,18 @@ describe("handoffLaunchTarget", () => {
       expect(handoffLaunchTarget(inSpace({ worktree: true }), [GIT, WT], true)).toMatchObject({ space: "research-aaa" });
     });
 
+    it("prefers the Agent's current space over a stale stored place (#5278)", () => {
+      const row = sess({ space: "notes-b", place: { kind: "space", id: "notes-a" }, dir: "/home/dev/links/current/.." });
+      expect(handoffLaunchTarget(row, [], false)).toMatchObject({ space: "notes-b" });
+    });
+
+    it("keeps a stored repo place, and the stored space for a session started in a subdir (#5278)", () => {
+      const repo = sess({ space: "x", place: { kind: "repo", id: "r" }, repo: "r", dir: "/home/dev/repos/r" });
+      expect("space" in handoffLaunchTarget(repo, [GIT], false)).toBe(false);
+      const sub = sess({ space: "notes-b", subdir: "src", place: { kind: "space", id: "notes-a" }, dir: "/home/dev/spaces/notes-a/current/.." });
+      expect(handoffLaunchTarget(sub, [], false)).toMatchObject({ space: "notes-a" });
+    });
+
     it("takes the space from the stored place on a row that carries no space (#5219)", () => {
       const clash: Repo = { name: "research-aaa", path: "/home/dev/repos/research-aaa", branch: "main" };
       const stopped = sess({ repo: "research-aaa", place: { kind: "space", id: "research-aaa" }, dir: "/home/dev/spaces/research-aaa" });

@@ -84,6 +84,18 @@ describe("sessions store", () => {
     expect(useSessionsStore.getState().sessions.map((s) => s.name)).toEqual([name]);
   });
 
+  it("does not let an older fetch that resolves late put its list over a newer one", async () => {
+    let releaseA!: (r: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((res) => (releaseA = res))); // A: sent while the workspace ran
+    fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [row("s1", false)] })); // B: sent after the stop
+    const a = useSessionsStore.getState().refresh();
+    await useSessionsStore.getState().refresh(); // B resolves first
+    expect(useSessionsStore.getState().sessions.map((s) => s.alive)).toEqual([false]);
+    releaseA(jsonResponse({ sessions: [row("s1", true)] }));
+    await a;
+    expect(useSessionsStore.getState().sessions.map((s) => s.alive)).toEqual([false]);
+  });
+
   it("reports a failed resume instead of swallowing it", async () => {
     fetchMock
       .mockRejectedValueOnce(new Error("502")) // POST …/start

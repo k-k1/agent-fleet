@@ -242,6 +242,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// captured a cause. A clean quit (exited) or a deliberate stop (empty reason) leaves
 	// the fields unset so the row shows the plain stopped chip.
 	if !alive {
+		s.StoppedAt = m.StoppedAt
 		if e, ok := status.ReadExit(m.Name); ok && e.Reason != "" && e.Reason != "exited" && e.Reason != "stopped" {
 			s.ExitReason = e.Reason
 			s.ExitCode = e.Code

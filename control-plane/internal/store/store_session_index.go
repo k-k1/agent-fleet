@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -28,14 +29,37 @@ type SessionRow struct {
 	// QueueCategoryID is the message-queue category whose delivery started the session (origin
 	// queue), "" otherwise.
 	QueueCategoryID string
+	Move            SessionMove
 	// Place is where the session runs as the Agent stored it at create (#5219); nil when the
 	// Agent reported none. Without it a stopped Workspace's list files a space session under the
 	// repository that shares its folder name.
 	Place *SessionPlace
+	// StoppedAt is when the Agent first saw the session stopped (RFC3339), "" for a live row or
+	// one the Agent reported without it. The Console's Active view lists a stopped session for a
+	// day after it, so a stopped Workspace's list has to carry it.
+	StoppedAt string
 	// Links are the work items and PRs the session is linked to (#3134), in the Agent's order.
 	// Written to session_work_link with the row; ListSessions does not fill it (ListSessionLinks
 	// does), so a reader that only counts sessions does not read every link title.
 	Links []SessionLink
+}
+
+// SessionMove keeps the queue lineage and move gate in the stopped workspace mirror.
+type SessionMove struct {
+	Moving         string   `json:"moving,omitempty"`
+	MovedTo        string   `json:"movedTo,omitempty"`
+	QueueReplaces  []string `json:"queueReplaces,omitempty"`
+	QueueSuccessor string   `json:"queueSuccessor,omitempty"`
+	PromptPending  bool     `json:"promptPending,omitempty"`
+	StoppedLimit   string   `json:"stoppedLimit,omitempty"`
+}
+
+func (m SessionMove) column() string {
+	if m.Moving == "" && m.MovedTo == "" && m.QueueSuccessor == "" && len(m.QueueReplaces) == 0 && !m.PromptPending && m.StoppedLimit == "" {
+		return ""
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
 }
 
 // SessionPlace is a mirrored session's place: Kind is repo, worktree, space, home or other, ID
@@ -45,6 +69,17 @@ type SessionPlace struct {
 	Kind   string `json:"kind"`
 	ID     string `json:"id,omitempty"`
 	Parent string `json:"parent,omitempty"`
+}
+
+// stoppedAtColumn is the value to store in session.stopped_at: the Agent's RFC3339 stop time, or ""
+// for anything else. The Agent is the writer, but the row is replaced wholesale: one value the
+// column refuses (a NUL byte in Postgres TEXT) would roll back the whole swap and leave every
+// session on the previous mirror, so a value that is not a time is dropped instead.
+func stoppedAtColumn(v string) string {
+	if _, err := time.Parse(time.RFC3339, v); err != nil {
+		return ""
+	}
+	return v
 }
 
 // placeColumn encodes p for session.place: NULL for no place.
@@ -112,9 +147,9 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID), dropNUL(r.QueueCategoryID), placeColumn(r.Place)); err != nil {
+			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place, queue_move, stopped_at)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID), dropNUL(r.QueueCategoryID), placeColumn(r.Place), r.Move.column(), stoppedAtColumn(r.StoppedAt)); err != nil {
 			return err
 		}
 		if err := insertSessionLinks(ctx, tx, workspaceID, r.Name, r.Links); err != nil {
@@ -167,7 +202,7 @@ func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session str
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place
+		`SELECT name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place, queue_move, stopped_at
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -177,10 +212,14 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 	for rows.Next() {
 		r := SessionRow{WorkspaceID: workspaceID}
 		var place sql.NullString
-		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession, &r.ScheduleID, &r.QueueCategoryID, &place); err != nil {
+		var move string
+		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen, &r.Carried, &r.Studio, &r.Origin, &r.OriginSession, &r.ScheduleID, &r.QueueCategoryID, &place, &move, &r.StoppedAt); err != nil {
 			return nil, err
 		}
 		r.Place = placeOfColumn(place)
+		if move != "" {
+			_ = json.Unmarshal([]byte(move), &r.Move)
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()

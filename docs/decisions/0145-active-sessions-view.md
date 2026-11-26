@@ -2,7 +2,7 @@
 
 English | [日本語](0145-active-sessions-view.ja.md)
 
-- Status: **accepted** (2026-11-25). Scope, the 24-hour window and the folded default chosen with the owner. Decisions 1 to 7 are implemented in #5156, which lands after this record; decision 8 waits on the wire field.
+- Status: **accepted** (2026-11-25). Scope, the 24-hour window and the folded default chosen with the owner. Decisions 1 to 7 are implemented in #5156, which lands after this record; decision 8 is implemented in #5155.
 - Tracking: #5154 (the view). Follow-ups: #5155 (recently stopped sessions).
 - Related: [0140](0140-console-activity-bar.md) (the activity bar this adds a view to) /
   [0078](0078-sessions-overview-pane.md) (the overview pane whose grouping and card this reuses, and whose rejected alternative this revisits) /
@@ -65,16 +65,20 @@ nor the Console has it.
    in the focused pane, as a row of the Sessions view does.
 6. **A waiting session is counted on one icon.** The two views list the same waiting sessions.
    While the Active icon is in the bar it carries the count; when it is turned off the Sessions
-   icon does, as before; so does it while the workspace is not running, when Active lists
-   nothing. Only running sessions are counted. The unread dot stays on Sessions, the only view that lists every
+   icon does, as before; so does it while the workspace is not running (decision 8 lists recent
+   stops then, but the badge rule is only about where the count goes). Only running sessions are counted. The unread dot stays on Sessions, the only view that lists every
    session a notice can be about.
 7. **Reveals are unchanged.** The existing reveal signals name a working copy, not a session, and
    a working copy's row is in the tree.
 8. **A stopped session stays for 24 hours** after it stopped (fixed, not a setting), and the rows
    that left the window are counted in one line at the foot of their group. This needs
    `stoppedAt` on the session DTO, the Control Plane's relay and the Console type (#5155). For a
-   stopped workspace the view is then drawn from the Control Plane's mirror; until then it shows
-   the placeholder the other views show.
+   stopped workspace the view is drawn from the Control Plane's mirror (the `session.stopped_at`
+   column) instead of the placeholder. A missing `stoppedAt` (an older Agent, or a stop the Agent
+   did not stamp) is never the reason a row is listed as recent: such a row is counted in the foot
+   line, unless it is listed for another reason (it needs the member, or descends from a listed session).
+   The icon badge rule of decision 6 is unchanged: while the workspace is stopped the Sessions icon
+   still carries the count.
 
 ## Why 24 hours
 

@@ -166,6 +166,18 @@ func HandleSessionRetire(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	graph := session.ReadQueueGraph()
+	if _, queue := graph.Lineage(name); queue {
+		if graph.Current(name) != name {
+			httpx.WriteErr(w, http.StatusConflict, "retire_move_changed", "the run's session has been replaced")
+			return
+		}
+		if m.Moving != "" {
+			httpx.WriteErr(w, http.StatusConflict, "retire_move_changed", "the run's session is moving")
+			return
+		}
+		m = graph.Project(m)
+	}
 	// Retire is for roots only: the tree of a root is fixed (a session's parent never changes), so
 	// the trees of two roots are disjoint and an intent never meets a mark or a release written by
 	// a retire of another root. Ask for the root of a session that another session started.
@@ -232,8 +244,12 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 		if listErr != nil {
 			doubts = appendNew(doubts, "the sessions could not be listed ("+listErr.Error()+"), so the tree may be incomplete; retire again")
 		}
-		for _, d := range spendDescendants(root, metas) {
-			if !underReleased(d, metas, seen, in.ID) {
+		projected, graph := queueRetireMetas(metas, root)
+		if graph != nil && graph.Current(root) != root {
+			doubts = appendNew(doubts, "the run's root was moved. Retire its replacement.")
+		}
+		for _, d := range spendDescendants(root, projected) {
+			if !underReleased(d, projected, seen, in.ID) {
 				names = append(names, d.Name)
 			}
 		}
@@ -254,7 +270,7 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 			break
 		}
 		for _, rep := range fresh {
-			retireOne(ctx, rep, in)
+			retireWithQueueGraph(ctx, rep, in, graph)
 		}
 		if !waitSpawns(ctx, order) {
 			order[0].Unended = appendNew(order[0].Unended, "a child create was still in flight; retire again once it has finished")
@@ -296,6 +312,10 @@ func retireTree(ctx context.Context, root string, in *retireIntent) []retireRepo
 // tombstone in the same checked write (HandleStartSession). A released session's new children
 // therefore always have a released ancestor when the walk finds them.
 func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
+	retireWithQueueGraph(ctx, rep, in, nil)
+}
+
+func retireWithQueueGraph(ctx context.Context, rep *retireReport, in *retireIntent, graph *session.QueueGraph) {
 	g := retireGate(rep.Name)
 	g.Lock()
 	defer g.Unlock()
@@ -311,7 +331,11 @@ func retireOne(ctx context.Context, rep *retireReport, in *retireIntent) {
 		}
 		return
 	}
-	above, doubt := ancestorState(cur, in.ID)
+	if graph != nil && (cur.Moving != "" || cur.MovedTo != "" || graph.Current(rep.Name) != rep.Name) {
+		rep.Unended = appendNew(rep.Unended, "the session is moving or has been replaced")
+		return
+	}
+	above, doubt := ancestorStateWithQueue(cur, in.ID, graph)
 	if doubt != "" {
 		rep.Unended = appendNew(rep.Unended, "the meta of "+doubt+" (above this session) could not be read, so this session was neither marked nor stopped; retire again")
 		return
@@ -668,6 +692,13 @@ func releasedAncestor(m session.Meta, id string) bool {
 // read (doubt names it): the climb cannot tell whether that one was released, so a destructive step
 // must not go on.
 func ancestorState(m session.Meta, id string) (released bool, doubt string) {
+	return ancestorStateWithQueue(m, id, nil)
+}
+
+func ancestorStateWithQueue(m session.Meta, id string, graph *session.QueueGraph) (released bool, doubt string) {
+	if graph != nil {
+		m = graph.Project(m)
+	}
 	seen := map[string]bool{m.Name: true}
 	for session.OriginOf(m) == session.OriginSession && m.OriginSession != "" && !seen[m.OriginSession] {
 		parent, ok := readMetaStable(m.OriginSession)
@@ -681,6 +712,9 @@ func ancestorState(m session.Meta, id string) (released bool, doubt string) {
 			return true, ""
 		}
 		seen[parent.Name] = true
+		if graph != nil {
+			parent = graph.Project(parent)
+		}
 		m = parent
 	}
 	return false, ""

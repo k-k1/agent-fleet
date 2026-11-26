@@ -330,6 +330,9 @@ func checkMoveRequest(ctx context.Context, src session.Meta, req moveRequest) er
 	}
 	// The target is a new launch; its create judges it again, but a refused one must not cost
 	// the source either.
+	// A default model the target's folder would prove is not judged here: the target's create runs
+	// under the move's operation lock, where a probe would hold the source's input closed. Such a
+	// target stays route_required, as before.
 	if ref, _ := newLaunchPolicyRefusal(req.Kind, req.Route, session.Meta{Kind: req.Kind, Model: req.Model, Driver: req.Driver}); ref != nil {
 		return &moveError{Status: ref.Status, Code: ref.Code, Message: ref.Message}
 	}
@@ -441,6 +444,7 @@ const errCodeMetaWriteFailed = "meta_write_failed"
 // leaves the move pending: the target exists, so retry commits it.
 func finishMove(mv *sourceMove, rec moveRecord, target []byte) (*sessionMoveWire, error) {
 	if m, ok := session.ReadMeta(mv.source); !ok || m.MovedTo != rec.Target {
+		markQueueMoveTarget(mv.source, rec.Target)
 		if err := mv.commit(); err != nil {
 			rec.State, rec.Error = moveUncertain, err.Error()
 			_ = moveRecords.Write(mv.source, rec)
@@ -470,8 +474,18 @@ func completeMove(source string, rec moveRecord, target []byte) *sessionMoveWire
 			log.Printf("move: %s: moved to %s but could not be stopped: %v", source, rec.Target, err)
 		}
 	}
-	moveRecords.Remove(source)
-	releaseMoveTarget(rec.Target)
+	var lineageErr error
+	WithSessionMetaLock(func() {
+		if m, ok := session.ReadMeta(source); ok {
+			lineageErr = keepQueueMove(m)
+		}
+	})
+	if lineageErr != nil {
+		log.Printf("move: %s: retaining recovery record for queue ownership: %v", source, lineageErr)
+	} else {
+		moveRecords.Remove(source)
+		releaseMoveTarget(rec.Target)
+	}
 	res.Delivery = moveDeliveryState(rec.Target)
 	return res
 }
@@ -626,7 +640,7 @@ func moveCreateReq(src session.Meta, rec moveRecord) CreateReq {
 	return CreateReq{
 		// Route is the one the request chose for the target, never the source's (decision 13).
 		name: rec.Target, Kind: rec.Kind, Model: rec.Model, Driver: rec.Driver, Route: rec.Route,
-		Dir: src.Dir, Subdir: src.Subdir, Title: src.Title, Color: src.Color,
+		Dir: src.Dir, Subdir: src.Subdir, Title: src.Title, Color: src.Color, noProbe: true,
 		InitialPrompt: moveInitialPrompt(src, rec.File),
 		// The target continues the same work, so it keeps the tickets and PRs the source was
 		// linked to (#3134), the launch item included.
@@ -637,15 +651,17 @@ func moveCreateReq(src session.Meta, rec moveRecord) CreateReq {
 // moveInitialPrompt is the target's first prompt (decisions 1 and 15): where the file is, what it
 // is, to read its head first, and never to open the source's own files.
 func moveInitialPrompt(src session.Meta, file string) string {
+	// A retry can reuse a file rendered before the display language changed.
 	return fmt.Sprintf("This session continues work moved here from the session %s (%s), which has stopped.\n\n"+
 		"Its whole record is the handover file %s. Before doing anything else, read the head of that "+
-		"file, everything before its \"# Conversation\" heading: where the work stopped, the working "+
-		"copy's state, the changed files and what is still open. Read further into the conversation "+
+		"file, stopping before the first line outside fenced code blocks that exactly matches %q or %q. "+
+		"The head records where the work stopped, the working copy's state, the changed files "+
+		"and what is still open. Read further into the conversation "+
 		"only when you need it.\n\n"+
 		"That file is the only record. Never open the source session's own transcript or its CLI's "+
 		"state directories.\n\n"+
 		"Then continue from where it stopped. If what to do next is unclear, ask the user.",
-		src.Name, src.Kind, file)
+		src.Name, src.Kind, file, handoverLabelsEn.conversationHeading(), handoverLabelsJa.conversationHeading())
 }
 
 // --- retry, cancel, reopen ---------------------------------------------------------------

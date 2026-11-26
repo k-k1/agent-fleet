@@ -1402,7 +1402,7 @@ func (r *memoQueueRunner) readPRSnapshot(ctx context.Context, res *resolved, d s
 		if d.PRState != "" {
 			return // a waiting snapshot that lists nothing cannot be: nothing is decided on it
 		}
-		req.Session = d.Session
+		req.Session = d.CurrentSession()
 	}
 	status, body, ok := r.askPRSnapshot(ctx, res, req)
 	if !ok {

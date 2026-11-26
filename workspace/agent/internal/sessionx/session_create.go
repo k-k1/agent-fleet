@@ -52,6 +52,9 @@ type createRun struct {
 	// judgedLaunch is the launch the credential policy resolved and judged (checkRoute), nil when
 	// it resolved none; armMeta records it rather than resolving again.
 	judgedLaunch *routes.Launch
+	// deferredDefault is set by checkRoute when the policy's judgement waits for the working
+	// directory (judgeDeferredDefault).
+	deferredDefault bool
 	// fromDefault: req.Route is the member's default route (applyDefaultRoute), not one the
 	// request named, so a refusal of it is route_required.
 	fromDefault bool
