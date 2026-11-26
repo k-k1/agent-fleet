@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // sharedCopyEnv stands up a live parent in repo and a live unrelated session in other, and
@@ -364,4 +366,74 @@ func TestSharedWorkingCopyLaunchesInTheCheckedDirNotAReResolvedAlias(t *testing.
 	if m, _ := session.ReadMeta(created.Name); m.Dir != realRepo {
 		t.Fatalf("child Dir = %q, want the checked %q (the alias was resolved again)", m.Dir, realRepo)
 	}
+}
+
+// A session raising a child in a space (ADR 0142) goes through the same working-copy guard as
+// any directory: a NEW space is free, an existing one with a live session is busy unless it is
+// the parent's own and the opt-in is set, and one that does not exist is the Console's 404.
+func TestSpawnIntoSpaces(t *testing.T) {
+	env := spawnServer(t)
+	own, err := spacex.Create("own")
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere, err := spacex.Create("elsewhere")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.fixture(session.Meta{Name: "parent1", Kind: session.KindClaude, Dir: own.Dir, Origin: session.OriginUser})
+	env.fixture(session.Meta{Name: "stranger", Kind: session.KindClaude, Dir: elsewhere.Dir, Origin: session.OriginUser})
+	alive := sessionAliveFn
+	sessionAliveFn = func(m session.Meta) bool { return m.Name == "parent1" || m.Name == "stranger" }
+	t.Cleanup(func() { sessionAliveFn = alive })
+	deliver := deliverInitialPromptFn
+	deliverInitialPromptFn = func(_, _ string) {}
+	t.Cleanup(func() { deliverInitialPromptFn = deliver })
+
+	body := func(space map[string]any, extra map[string]any) map[string]any {
+		b := map[string]any{"space": space, "initial_prompt": "go", "idempotency_key": "sp-" + strings.Join(spaceKeyParts(space, extra), "-")}
+		for k, v := range extra {
+			b[k] = v
+		}
+		return spawnBody(b)
+	}
+	busy := func(code int, raw []byte) bool {
+		return code == http.StatusConflict && strings.Contains(string(raw), "spawn_working_copy_busy")
+	}
+
+	// A new space is nobody's working copy: the child starts, in a space of its own.
+	code, raw := env.create(body(map[string]any{"name": "fresh"}, nil))
+	if code != http.StatusCreated {
+		t.Fatalf("new space = %d %s, want 201", code, raw)
+	}
+	if got := len(spaceFolders(t)); got != 3 {
+		t.Fatalf("spaces = %d, want the two fixtures and one new", got)
+	}
+	// An existing space somebody is working in is busy, the parent's own included without the opt-in.
+	for _, sp := range []spacex.Space{own, elsewhere} {
+		if code, raw := env.create(body(map[string]any{"folder": sp.Folder}, nil)); !busy(code, raw) {
+			t.Fatalf("space %s = %d %s, want 409 spawn_working_copy_busy", sp.Folder, code, raw)
+		}
+	}
+	// The opt-in is honoured for the parent's own space and for no other.
+	if code, raw := env.create(body(map[string]any{"folder": elsewhere.Folder}, map[string]any{"allow_shared_working_copy": true})); !busy(code, raw) {
+		t.Fatalf("a stranger's space with the opt-in = %d %s, want 409 spawn_working_copy_busy", code, raw)
+	}
+	if code, raw := env.create(body(map[string]any{"folder": own.Folder}, map[string]any{"allow_shared_working_copy": true})); code != http.StatusCreated {
+		t.Fatalf("the parent's own space with the opt-in = %d %s, want 201", code, raw)
+	}
+	// A space that is not there is refused before anything is created.
+	if code, raw := env.create(body(map[string]any{"folder": "nowhere-abc123"}, nil)); code != http.StatusNotFound || !strings.Contains(string(raw), "space_not_found") {
+		t.Fatalf("missing space = %d %s, want 404 space_not_found", code, raw)
+	}
+}
+
+// spaceKeyParts makes one idempotency key per distinct request of TestSpawnIntoSpaces, so a
+// replayed answer never stands in for a fresh check.
+func spaceKeyParts(space, extra map[string]any) []string {
+	parts := []string{fmt.Sprint(space["folder"]), fmt.Sprint(space["name"])}
+	for k := range extra {
+		parts = append(parts, k)
+	}
+	return parts
 }

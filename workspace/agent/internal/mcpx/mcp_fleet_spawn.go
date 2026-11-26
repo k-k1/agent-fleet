@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // stoppedChildExpiryClause is the part of create_session's limits sentence that promises a
@@ -106,10 +109,13 @@ type createSessionArgs struct {
 	Worktree *bool `json:"worktree"`
 	// AllowSharedWorkingCopy is a session's explicit opt-in to share its own working copy
 	// with the child (needs worktree=false; the Agent enforces which directory).
-	AllowSharedWorkingCopy bool   `json:"allow_shared_working_copy"`
-	Branch                 string `json:"branch"`
-	NewBranch              string `json:"new_branch"`
-	Subdir                 string `json:"subdir"`
+	AllowSharedWorkingCopy bool `json:"allow_shared_working_copy"`
+	// Space is the folder name of an EXISTING space (ADR 0142) to start the child in. A space
+	// replaces dir, so it is refused together with dir and with worktree=true.
+	Space     string `json:"space"`
+	Branch    string `json:"branch"`
+	NewBranch string `json:"new_branch"`
+	Subdir    string `json:"subdir"`
 	// Route / RouteConnection are the explicit model route (ADR 0128): a route id and a stable
 	// reference to its connection. Empty keeps the kind's own default. Plain strings, so a value
 	// of another type fails the decode instead of being read as "no route".
@@ -249,6 +255,9 @@ func fleetSpawnTools() []toolSpec {
 						"Tell the user you are starting one, and what for. " +
 						"It starts in a NEW worktree by default, so it never shares your working copy; pass " +
 						"worktree=false only for a directory nobody is working in. " +
+						"A space (~/spaces/<folder>) is no git working copy: when you run in one and leave worktree and dir unset, " +
+						"the child starts in a NEW space of its own; pass space=<folder> to start it in an existing one " +
+						"(never together with dir or worktree=true). " +
 						"To run a child in YOUR OWN working copy on purpose (e.g. a reviewer on what you are implementing), " +
 						"pass worktree=false and allow_shared_working_copy=true: it shares your checkout, index and branch, so tell it " +
 						"(and keep to) no checkout/switch/stash/branch changes and stage and commit explicitly by path. " +
@@ -274,7 +283,8 @@ func fleetSpawnTools() []toolSpec {
 							"model":                     map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
 							"effort":                    map[string]any{"type": "string", "description": "Reasoning effort (optional; default: the model's defaultEffort). Needs model: use one of that model's efforts from list_models; anything else, or an effort without model, is refused. opencode and kiro list none: their value is not checked here, and a wrong one fails the child's first turn. agy and cursor fold effort into the model id instead"},
 							"initial_prompt":            map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like. If it has to wait for a message (from you or another session), tell it to end its turn while it waits: a message to a busy session can be held until its turn ends, and waiting inside a tool (a sleep loop, a blocking wait) keeps that turn from ending"},
-							"worktree":                  map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
+							"worktree":                  map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work. From a session that runs in a space the default is a new space instead (a space is not a git working copy), and worktree=true there is refused"},
+							"space":                     map[string]any{"type": "string", "description": "Folder name of an EXISTING space to start the child in (optional; the folder shown on a session that runs in one). Replaces dir: refused together with dir or worktree=true, and when the space does not exist or is being deleted. A space where a session is live is refused like any busy working copy; the space you run in yourself is shared only with allow_shared_working_copy=true. Leave it out to get a new space when you run in one"},
 							"allow_shared_working_copy": map[string]any{"type": "boolean", "description": "Opt in to starting the child in YOUR OWN working copy while you are running in it (default false). Needs worktree=false, dir = your working copy (an alias spelling of it is fine) and that you were started in a canonical path (no symlink); any other directory in use is still refused, and a repeated refusal means it cannot work - do not retry. You and the child then share one checkout, index and branch: no checkout/switch/stash/branch changes, stage and commit explicitly by path"},
 							"branch":                    map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
 							"new_branch":                map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
@@ -346,6 +356,16 @@ func fleetSpawnTools() []toolSpec {
 				if parent != "" && a.Worktree == nil {
 					worktree = true
 				}
+				// A space is no git working copy, so the worktree default cannot apply to it. Its
+				// counterpart is a NEW space, which keeps the same rule (two agents never share one
+				// folder unless asked); naming an existing space is the `space` argument.
+				spaceTarget, spaceErr := createSpaceTarget(a, parent, worktree)
+				if spaceErr != "" {
+					return mcpToolErr(req.ID, spaceErr)
+				}
+				if spaceTarget != nil {
+					worktree = false
+				}
 				// The opt-in only means something against a worktree=false launch from a session; with
 				// the default worktree it would be silently ignored, so say so instead.
 				shared := parent != "" && a.AllowSharedWorkingCopy
@@ -389,6 +409,10 @@ func fleetSpawnTools() []toolSpec {
 					// The same launch for another ticket is another child, not a retry of this one.
 					idemKey = CreateSessionKey(idemKey, "work_item", wi.Provider, wi.Key, "", "", "", false, "", "", false)
 				}
+				if spaceTarget != nil {
+					// The same launch in another space, or in a new one, is another child.
+					idemKey = CreateSessionKey(idemKey, "space", spaceTarget["folder"], spaceTarget["name"], "", "", "", false, "", "", false)
+				}
 				route := strings.TrimSpace(a.Route)
 				conn := strings.TrimSpace(a.RouteConnection)
 				if route == "" && conn != "" {
@@ -423,6 +447,9 @@ func fleetSpawnTools() []toolSpec {
 				}
 				if shared {
 					body["allow_shared_working_copy"] = true
+				}
+				if spaceTarget != nil {
+					body["space"] = spaceTarget
 				}
 				if a.SpendCapUSD != nil {
 					body["spend_cap_usd"] = *a.SpendCapUSD
@@ -545,6 +572,67 @@ func fleetSpawnTools() []toolSpec {
 			}),
 		},
 	}
+}
+
+// createSpaceTarget decides whether a create_session starts in a space (ADR 0142), and answers the
+// Agent's `space` object for it: {"folder": f} for an existing space, {"name": n} for a new one.
+// A non-empty msg is the refusal to hand back, raised before anything is created.
+//
+// Three rules, and the order matters:
+//   - `space` names an existing space and replaces dir, so it is refused with dir and with an
+//     explicit worktree=true (a space has no repository to branch from).
+//   - A session that runs in a space, and leaves worktree, dir and the shared-copy opt-in unset,
+//     gets a NEW space: the counterpart of the worktree default, so two agents never share one
+//     folder unless asked.
+//   - Any other launch that would make a worktree off a space (worktree=true, or the default, with
+//     dir naming a space or, from a session in one, no dir at all) is refused here, naming the
+//     `space` argument. Left alone it reaches `git worktree add` and fails as "not a git working copy".
+func createSpaceTarget(a *createSessionArgs, parent string, worktree bool) (target map[string]string, msg string) {
+	dir := strings.TrimSpace(a.Dir)
+	explicitWorktree := a.Worktree != nil && *a.Worktree
+	if folder := strings.TrimSpace(a.Space); folder != "" {
+		if dir != "" {
+			return nil, "space cannot be combined with dir: a space replaces it (pass one of them)"
+		}
+		if explicitWorktree {
+			return nil, "space cannot be combined with worktree=true: a space has no repository to branch a worktree from"
+		}
+		return map[string]string{"folder": folder}, ""
+	}
+	inSpace := dir == "" && parent != "" && parentRunsInSpace(parent)
+	if parent != "" && a.Worktree == nil && inSpace && !a.AllowSharedWorkingCopy {
+		target = map[string]string{}
+		// Named after the child's title so the space is findable in the Console; a title that is not
+		// a valid space name only costs the name.
+		if name, ok := spacex.CleanName(a.Title); ok && name != "" {
+			target["name"] = name
+		}
+		return target, ""
+	}
+	if worktree && (inSpace || dirIsSpace(dir)) {
+		return nil, "a space is not a git working copy, so worktree=true cannot work from or in one. " +
+			"Start the child in a new space (leave worktree and dir unset), in an existing one (pass space=<folder>), " +
+			"or pass worktree=false with a dir that is not in use"
+	}
+	return nil, ""
+}
+
+// parentRunsInSpace reports whether the named session runs in a space (spaces are told by their
+// marker, never by the folder name).
+func parentRunsInSpace(parent string) bool {
+	m, ok := session.ReadMeta(parent)
+	return ok && spacex.FolderOf(m.Dir) != ""
+}
+
+// dirIsSpace reports whether dir, as the Agent will resolve it (relative to home), is a space.
+func dirIsSpace(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(paths.HomeDir(), dir)
+	}
+	return spacex.FolderOf(dir) != ""
 }
 
 // operatorCreateKinds is every kind the operator's create_session offers: all of them but ssm,
