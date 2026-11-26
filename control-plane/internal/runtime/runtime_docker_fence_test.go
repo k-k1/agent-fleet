@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeDocker records the docker CLI calls of the fence and answers from fail, keyed by a
@@ -377,26 +378,62 @@ func TestDockerFenceStateDropsStaleAddr(t *testing.T) {
 	}
 }
 
-// The start path reaches the heal through AgentAddrHealer when the workspace is already
-// running and Runtime.Start is skipped (#5257).
-func TestDockerRuntimeHealsMissingAddrThroughTheStartPathInterface(t *testing.T) {
+// The CP's start path on a workspace the factory built: State says running, so Start is
+// skipped, and the address is recorded through AgentAddrHealer alone (#5257).
+func TestFactoryDockerRuntimeHealsMissingAddrOnRunningStart(t *testing.T) {
+	f, err := NewFactory("local", Config{
+		DockerEgressGateway: "af-egress", AgentHost: "127.0.0.1",
+		EgressProxyEnv: []string{"http_proxy=http://af-egress:3128"},
+		RootDataDir:    func(Workspace) string { return t.TempDir() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := f.New(Workspace{ContainerName: "af-ws-u1", Network: "af-net-u1", AgentPort: "7712"}, SecretKeys{}, nil)
+	rt.(*dockerRuntime).inspect = func(_ context.Context, typ, _, format string) string {
+		switch {
+		case typ == "network":
+			return "true"
+		case format == "{{.State.Status}}":
+			return "running"
+		}
+		return "172.20.0.2"
+	}
+	if got := rt.State(context.Background()); got != "running" {
+		t.Fatalf("State = %s, want running", got)
+	}
+	h, ok := rt.(AgentAddrHealer)
+	if !ok {
+		t.Fatal("the factory's docker runtime is not an AgentAddrHealer")
+	}
+	h.HealAgentAddr(context.Background())
+	if got := rt.Endpoint(); got != "http://172.20.0.2:7700" {
+		t.Errorf("healed endpoint: %s", got)
+	}
+}
+
+// A dockerd that stops answering must not hold the lifecycle lease and fence: the heal
+// is bounded and returns without an address.
+func TestHealAgentAddrIsBoundedWhenDockerHangs(t *testing.T) {
+	old := healAgentAddrTimeout
+	healAgentAddrTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { healAgentAddrTimeout = old })
 	d := &dockerRuntime{
 		name: "af-ws-u1", network: "af-net-u1", dataDir: t.TempDir(), agentHost: "127.0.0.1", agentPort: "7712",
 		egressGateway: "af-egress",
-		inspect: func(_ context.Context, typ, _, _ string) string {
-			if typ == "network" {
-				return "true"
-			}
-			return "172.20.0.2"
+		inspect: func(ctx context.Context, _, _, _ string) string {
+			<-ctx.Done()
+			return ""
 		},
 	}
-	var rt Runtime = d
-	h, ok := rt.(AgentAddrHealer)
-	if !ok {
-		t.Fatal("dockerRuntime is not an AgentAddrHealer")
+	done := make(chan struct{})
+	go func() { d.HealAgentAddr(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("HealAgentAddr did not return while docker hung")
 	}
-	h.HealAgentAddr(context.Background())
-	if got := d.Endpoint(); got != "http://172.20.0.2:7700" {
-		t.Errorf("healed endpoint: %s", got)
+	if d.fencedAgentAddr() != "" {
+		t.Error("an address was recorded from a hung inspect")
 	}
 }
