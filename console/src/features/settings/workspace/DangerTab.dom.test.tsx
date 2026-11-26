@@ -108,4 +108,17 @@ describe("DangerTab", () => {
     expect(toast).toHaveBeenCalled();
     expect(resetToTerminal).toHaveBeenCalled();
   });
+
+  it("warns that Clean home deletes ~/spaces, and Recreate does not", async () => {
+    whoami = { home_wipe: true };
+    await mount();
+    await act(async () => buttonWith("作り直す")!.click());
+    expect(document.body.textContent).not.toContain("~/spaces");
+    await act(async () => {
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((b) => (b.textContent || "").trim() === "キャンセル")?.click();
+    });
+    await act(async () => buttonWith("掃除")!.click());
+    expect(document.body.textContent).toContain("~/spaces");
+    expect(document.body.textContent).toContain("完全に削除されます");
+  });
 });

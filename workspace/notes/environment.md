@@ -96,7 +96,8 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   Terminal session exists has no env-gate plugin mode, so it runs without the variable.
   Whenever `$AF_WORK_DIR` is actually empty (a directory that could not be created, or that
   opencode case), use
-  `mkdir -p ~/.af-work/"$(basename "$(git rev-parse --show-toplevel)")"` and remove it when the
+  `mkdir -p ~/.af-work/"$(basename "$PWD")"` (the working directory's base name; a space has no git, so
+  `git rev-parse --show-toplevel` fails there) and remove it when the
   task is done (an unmarked directory is kept at boot but offered for deletion in Settings >
   Machine). The name is the session's slug and a rename changes only the title, so the directory
   never moves. One directory
@@ -104,7 +105,7 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   `~` were measured at 190+ unowned directories in one home. Not `/tmp` (shared by every session,
   wiped on restart) and not `~/.cache`, which is for tools' own caches.
   **`~/.af-work` is throwaway, never a place for files to keep** — tell members to keep their own
-  files elsewhere (`~/repos`, or a folder of their own in home). The boot prune, which also runs once a day, removes only
+  files elsewhere (`~/repos` for code; for work with no repository, a space under `~/spaces/<folder>`, which Recreate keeps but Clean home deletes). The boot prune, which also runs once a day, removes only
   orphaned directories (and those of sessions archived 7+ days ago) the Agent marked
   (`.af-session-workdir`), logs each path, and leaves unmarked ones for the member to remove from Settings > Machine.
 - **Reclaiming cache space** (all regenerable; the next build or install is slower once):
