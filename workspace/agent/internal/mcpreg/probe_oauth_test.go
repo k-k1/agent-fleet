@@ -370,6 +370,18 @@ func TestProbeOAuthExactIssuerOutranksTheRootSlash(t *testing.T) {
 	}
 }
 
+// The same root issuer listed without and with "/" is one server in the report.
+func TestProbeOAuthOneEntryPerIssuer(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/"), f.url(""))
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url(""), nil)
+	o := f.probe().OAuth
+	if o == nil || len(o.Servers) != 1 || o.Selected != f.url("") || o.Servers[0].rootSlash {
+		t.Fatalf("want one exactly matching entry: %+v", o)
+	}
+}
+
 func TestProbeOAuthNoS256(t *testing.T) {
 	f := newOAuthFake(t)
 	f.challenge = `Bearer resource_metadata="%PRM%"`

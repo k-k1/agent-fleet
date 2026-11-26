@@ -523,9 +523,10 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 		return StartResult{}, oerr(http.StatusUnprocessableEntity, OAuthErrNotRequired, "the server did not ask for OAuth")
 	}
 	var srv OAuthServer
-	for _, s := range rep.Servers {
+	for _, s := range rep.Servers { // one entry per issuer (addAuthServer)
 		if s.Valid && s.Issuer == rep.Selected {
 			srv = s
+			break
 		}
 	}
 	if rep.Selected == "" || srv.Issuer == "" {

@@ -535,10 +535,37 @@ func probeOAuth(ctx context.Context, serverURL string, header http.Header) (OAut
 		}
 		srv, problems := discoverAuthServer(ctx, g, issuer)
 		rep.Problems = append(rep.Problems, problems...)
-		rep.Servers = append(rep.Servers, srv)
+		rep.Servers = addAuthServer(rep.Servers, srv)
 	}
 	rep.Selected = selectAuthServer(rep.Servers)
 	return rep, true
+}
+
+// addAuthServer appends srv unless a server with the same issuer is already listed, which
+// happens when the PRM names one root issuer with and without "/" (both resolve to the
+// metadata's spelling). One entry per issuer keeps sign-in on the server the report selected:
+// StartOAuth finds it by issuer. The entry kept is the valid one, then the exact match, then
+// the earlier; the other's problems stay in Problems.
+func addAuthServer(servers []OAuthServer, srv OAuthServer) []OAuthServer {
+	rank := func(s OAuthServer) int {
+		r := 0
+		if s.Valid {
+			r += 2
+		}
+		if !s.rootSlash {
+			r++
+		}
+		return r
+	}
+	for i, s := range servers {
+		if s.Issuer == srv.Issuer {
+			if rank(srv) > rank(s) {
+				servers[i] = srv
+			}
+			return servers
+		}
+	}
+	return append(servers, srv)
 }
 
 // selectAuthServer is the issuer sign-in uses: the first valid server in the PRM's order (ADR

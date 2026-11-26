@@ -28,12 +28,14 @@ const (
 // googleFake serves the measured documents with Google's hosts replaced by its own URL. The MCP
 // endpoint answers server/discover and tools/list without credentials, as Google's do.
 type googleFake struct {
-	srv    *httptest.Server
-	prm    string
-	oidc   string
-	mu     sync.Mutex
-	hits   []string
-	tokens []url.Values
+	srv *httptest.Server
+	prm string // served at the path-inserted well-known URL; "" answers 404
+	// rootPRM, when set, is served at the root well-known URL.
+	rootPRM string
+	oidc    string
+	mu      sync.Mutex
+	hits    []string
+	tokens  []url.Values
 }
 
 func newGoogleFake(t *testing.T) *googleFake {
@@ -88,8 +90,19 @@ func (f *googleFake) serve(w http.ResponseWriter, r *http.Request) {
 			}})
 		}
 	case "/.well-known/oauth-protected-resource/mcp":
+		if f.prm == "" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(f.prm))
+	case "/.well-known/oauth-protected-resource":
+		if f.rootPRM == "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(f.rootPRM))
 	case "/.well-known/openid-configuration":
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(f.oidc))
@@ -188,7 +201,7 @@ func TestGoogleWorkspaceProbeReportsOAuthOnAPublicToolList(t *testing.T) {
 
 func TestPublicToolListWithoutMetadataKeepsItsPlainResult(t *testing.T) {
 	f := newGoogleFake(t)
-	f.prm = "" // the PRM URL answers an empty body, which is no document
+	f.prm = "" // both well-known URLs answer 404
 	res := Probe(context.Background(), ServerDef{Transport: TransportHTTP, URL: f.url("/mcp"), Enabled: true})
 	if !res.OK || res.OAuth != nil {
 		t.Fatalf("a server without a PRM must report a plain success: %+v", res)
@@ -202,7 +215,7 @@ func TestPublicToolListOnASharedOriginKeepsItsPlainResult(t *testing.T) {
 	if other == f.prm {
 		t.Fatal("fixture rewrite did not apply")
 	}
-	f.prm = other
+	f.prm, f.rootPRM = "", other // the path-inserted URL misses, the root one is the other resource's
 	res := Probe(context.Background(), ServerDef{Transport: TransportHTTP, URL: f.url("/mcp"), Enabled: true})
 	if !res.OK || res.OAuth != nil {
 		t.Fatalf("a PRM for another resource must not mark this one: %+v", res.OAuth)
