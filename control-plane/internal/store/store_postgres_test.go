@@ -158,10 +158,12 @@ func TestPostgresStore(t *testing.T) {
 
 	// session mirror
 	if err := st.ReplaceSessions(ctx, ws.ID, []SessionRow{{WorkspaceID: ws.ID, Name: "s1", Kind: "shell",
-		State: "running", CreatedAt: NowTS(), LastSeen: NowTS(), Studio: "st1"}}); err != nil {
+		State: "running", CreatedAt: NowTS(), LastSeen: NowTS(), Studio: "st1",
+		Place: &SessionPlace{Kind: "worktree", ID: "app@wip", Parent: "app"}}}); err != nil {
 		t.Fatalf("replace sess: %v", err)
 	}
-	if rows, err := st.ListSessions(ctx, ws.ID); err != nil || len(rows) != 1 || rows[0].Name != "s1" || rows[0].Studio != "st1" {
+	if rows, err := st.ListSessions(ctx, ws.ID); err != nil || len(rows) != 1 || rows[0].Name != "s1" || rows[0].Studio != "st1" ||
+		rows[0].Place == nil || *rows[0].Place != (SessionPlace{Kind: "worktree", ID: "app@wip", Parent: "app"}) {
 		t.Fatalf("list sess: %v %+v", err, rows)
 	}
 

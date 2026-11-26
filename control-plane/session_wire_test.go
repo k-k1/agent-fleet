@@ -51,6 +51,7 @@ const agentSessionsPayload = `{"sessions":[{
 	"generatedImages":3,"generatedImagesPath":".cache/agent-fleet/generated/2f1c0a7e-0000-5000-8000-000000000001",
 	"studio":"0b9d1f2e-7c4a-4e1b-9a3d-5f6e7a8b9c0d","initialPromptState":"pending",
 	"moving":"s2","movedTo":"s3","queueDelivery":"d-77","inputNotDelivered":true,
+	"place":{"kind":"worktree","id":"x@wip","parent":"x"},
 	"ssm":{"target":"i-0abc123","region":"ap-northeast-1","accountId":"111122223333","profile":"ops","document":"AF-Shell"}
 }]}`
 
@@ -187,6 +188,17 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	for k, v := range map[string]any{"target": "i-0abc123", "region": "ap-northeast-1", "accountId": "111122223333", "profile": "ops", "document": "AF-Shell"} {
 		if ssmObj[k] != v {
 			t.Errorf("relayed ssm.%s = %v, want %v", k, ssmObj[k], v)
+		}
+	}
+	// Where the session runs, stored once by the Agent (#5219). Dropped here, the Console falls
+	// back to guessing from the folder name and files a space under a same-named repository.
+	placeObj, ok := got["place"].(map[string]any)
+	if !ok {
+		t.Fatalf("relayed place = %v, want object", got["place"])
+	}
+	for k, v := range map[string]any{"kind": "worktree", "id": "x@wip", "parent": "x"} {
+		if placeObj[k] != v {
+			t.Errorf("relayed place.%s = %v, want %v", k, placeObj[k], v)
 		}
 	}
 	// context passes straight through without the CP interpreting its shape (RawMessage);

@@ -1,6 +1,7 @@
 package sessionsearch
 
 import (
+	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -372,5 +373,102 @@ func TestMatchScoreIsScore(t *testing.T) {
 	res, _ := Search(Query{Q: "needle", Limit: 10, PerSession: 1, Session: "s1"})
 	if len(res.Hits) != 1 || res.Hits[0].Idx == 1 {
 		t.Fatalf("per-session cap chose by bm25 alone: %+v", res.Hits)
+	}
+}
+
+// A space and a repository can share a folder name: the repo filter must not return the space's
+// session, the space filter must find it, and each hit names the place the meta stored (#5219).
+// A meta written before Place existed still answers by its space marker and then its folder name.
+func TestSearchFiltersByTheStoredPlace(t *testing.T) {
+	f := installFake(t)
+	legacySpace := filepath.Join(os.Getenv("HOME"), "spaces", "notes")
+	if err := os.MkdirAll(legacySpace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacySpace, ".af-space.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.metas = []session.Meta{
+		{Name: "repo", Kind: "claude", Repo: "app", Place: &session.Place{Kind: session.PlaceRepo, ID: "app"}},
+		{Name: "space", Kind: "claude", Repo: "app", Place: &session.Place{Kind: session.PlaceSpace, ID: "app"}},
+		{Name: "wt", Kind: "claude", Repo: "app@wip", Place: &session.Place{Kind: session.PlaceWorktree, ID: "app@wip", Parent: "app"}},
+		{Name: "home", Kind: "claude", Repo: "dev", Place: &session.Place{Kind: session.PlaceHome}},
+		{Name: "oldrepo", Kind: "claude", Repo: "lib", Dir: "/w/lib"},
+		{Name: "oldspace", Kind: "claude", Repo: "notes", Dir: legacySpace},
+		// A place without a kind reads as no place: the legacy rules apply.
+		{Name: "emptyrepo", Kind: "claude", Repo: "lib", Dir: "/w/lib", Place: &session.Place{}},
+		{Name: "emptyspace", Kind: "claude", Repo: "notes", Dir: legacySpace, Place: &session.Place{}},
+	}
+	for _, m := range f.metas {
+		f.turns[m.Name] = []transcript.Turn{say(1, "user", "collision check")}
+	}
+	_ = runPass()
+	names := func(q Query) map[string]Hit {
+		t.Helper()
+		q.Q, q.Limit, q.PerSession = "collision", 50, 3
+		res, err := Search(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]Hit{}
+		for _, h := range res.Hits {
+			out[h.Session] = h
+		}
+		return out
+	}
+	if got := names(Query{Repo: "app"}); len(got) != 1 || got["repo"].Session == "" {
+		t.Fatalf("repo=app must find the repository's session alone: %v", got)
+	}
+	if got := names(Query{Space: "app"}); len(got) != 1 || got["space"].Session == "" {
+		t.Fatalf("space=app must find the space's session alone: %v", got)
+	}
+	if got := names(Query{Repo: "app@wip"}); len(got) != 1 || got["wt"].Session == "" {
+		t.Fatalf("repo=<worktree folder> must find the worktree's session: %v", got)
+	}
+	if got := names(Query{Repo: "dev"}); len(got) != 0 {
+		t.Fatalf("a home session answers no repo filter: %v", got)
+	}
+	if got := names(Query{Repo: "lib"}); len(got) != 2 || got["oldrepo"].Session == "" || got["emptyrepo"].Session == "" {
+		t.Fatalf("a legacy meta still answers by its folder name: %v", got)
+	}
+	if got := names(Query{Space: "notes"}); len(got) != 2 || got["oldspace"].Session == "" || got["emptyspace"].Session == "" {
+		t.Fatalf("a legacy space meta answers the space filter by its marker: %v", got)
+	}
+	if got := names(Query{Repo: "notes"}); len(got) != 0 {
+		t.Fatalf("a legacy space meta must not answer a repo filter: %v", got)
+	}
+	all := names(Query{})
+	for name, want := range map[string][2]string{
+		"repo": {"app", ""}, "space": {"", "app"}, "wt": {"app@wip", ""}, "home": {"", ""},
+		"oldrepo": {"lib", ""}, "oldspace": {"", "notes"}, "emptyrepo": {"lib", ""}, "emptyspace": {"", "notes"},
+	} {
+		if h := all[name]; h.Repo != want[0] || h.Space != want[1] {
+			t.Errorf("hit %s: repo=%q space=%q, want repo=%q space=%q", name, h.Repo, h.Space, want[0], want[1])
+		}
+	}
+	// The same filters through GET /session-search, the path the search_sessions tool takes. The
+	// index is already filled, so mark a pass as just run: otherwise the handler's Kick starts one
+	// in the background that outlives the test and races installFake's cleanup.
+	passGate.Lock()
+	oldPassAt := passAt
+	passAt = time.Now()
+	passGate.Unlock()
+	t.Cleanup(func() { passGate.Lock(); passAt = oldPassAt; passGate.Unlock() })
+	for target, want := range map[string]string{
+		"/session-search?q=collision&space=app": "space",
+		"/session-search?q=collision&repo=app":  "repo",
+	} {
+		rec := httptest.NewRecorder()
+		HandleSearch(rec, httptest.NewRequest("GET", target, nil))
+		var res Result
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != 200 {
+			t.Fatalf("%s: %d %s", target, rec.Code, rec.Body)
+		}
+		if len(res.Hits) != 1 || res.Hits[0].Session != want {
+			t.Errorf("%s: hits %+v, want the %s session alone", target, res.Hits, want)
+		}
+		if res.Indexing {
+			t.Errorf("%s: the handler started a background pass", target)
+		}
 	}
 }
