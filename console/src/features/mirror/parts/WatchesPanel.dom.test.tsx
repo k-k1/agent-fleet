@@ -210,42 +210,72 @@ describe("WatchesPanel", () => {
 
   describe("a fleet watch's session", () => {
     const fleet: SessionWatch = { id: "w7", source: "fleet", ref: "s4uyskj", types: ["fleet.session.idle"] };
+    const session = { name: fleet.ref, kind: "claude", title: "Review checkout", branch: "main" } as const;
 
-    it("links the slug like a Markdown reply does and opens that session's chat", () => {
-      useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] });
+    it("links only the slug and shows the display name and launch branch beside it", () => {
+      useSessionsStore.setState({ sessions: [session] });
       mount([fleet], vi.fn());
-      const a = rows()[0].querySelector<HTMLAnchorElement>("a.md-session-link")!;
+      const row = rows()[0];
+      const a = row.querySelector<HTMLAnchorElement>("a.md-session-link")!;
       expect(a.textContent).toBe("s4uyskj");
+      expect(row.querySelectorAll("a, [role=link]")).toHaveLength(1);
+      expect(row.textContent).toMatch(/s4uyskj\s*Review checkout\s*main\s*fleet\.session\.idle/);
       expect(a.classList.contains("mw-ref")).toBe(true);
+      expect(a.tabIndex).toBe(0);
       act(() => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
       act(() => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true })));
+      act(() => a.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
       expect(opened.calls).toEqual([
         ["s4uyskj", false],
         ["s4uyskj", true],
+        ["s4uyskj", false],
       ]);
     });
 
-    it("leaves a session that does not exist as plain text", () => {
+    it("updates the name and branch from the catalog without replacing the slug link", () => {
+      useSessionsStore.setState({ sessions: [session] });
+      mount([fleet]);
+      const link = rows()[0].querySelector("a");
+      act(() => useSessionsStore.setState({
+        sessions: [{ ...session, title: "", label: "[AF:s4uyskj] Review queue", currentBranch: "fix/queue" }],
+      }));
+      expect(rows()[0].querySelector("a")).toBe(link);
+      expect(rows()[0].textContent).toMatch(/s4uyskj\s*Review queue\s*fix\/queue\s*fleet\.session\.idle/);
+      expect(rows()[0].textContent).not.toContain("main");
+      expect(rows()[0].textContent).not.toContain("Review checkout");
+    });
+
+    it("shows no branch when neither branch field is set", () => {
+      useSessionsStore.setState({ sessions: [{ ...session, branch: "" }] });
+      mount([fleet]);
+      expect(rows()[0].textContent).toMatch(/^s4uyskj\s*Review checkout\s*fleet\.session\.idle$/);
+    });
+
+    it("leaves a missing target as plain text even when other sessions are present", () => {
+      useSessionsStore.setState({ sessions: [{ ...session, name: "sotherx" }] });
       mount([fleet], vi.fn());
       expect(rows()[0].querySelector("a")).toBeNull();
       expect(rows()[0].querySelector(".mw-ref")?.textContent).toBe("s4uyskj");
+      expect(rows()[0].textContent).toMatch(/^s4uyskj\s*fleet\.session\.idle/);
     });
 
     it("follows the session appearing and disappearing while the row stays", () => {
       mount([fleet], vi.fn());
-      act(() => useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] }));
+      act(() => useSessionsStore.setState({ sessions: [session] }));
       expect(rows()[0].querySelectorAll("a.md-session-link")).toHaveLength(1);
+      expect(rows()[0].textContent).toContain("Review checkout");
       act(() => useSessionsStore.setState({ sessions: [] }));
       expect(rows()[0].querySelector("a")).toBeNull();
       expect(rows()[0].querySelector(".mw-ref")?.textContent).toBe("s4uyskj");
-      act(() => useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] }));
+      expect(rows()[0].textContent).toMatch(/^s4uyskj\s*fleet\.session\.idle/);
+      act(() => useSessionsStore.setState({ sessions: [session] }));
       const links = rows()[0].querySelectorAll("a.md-session-link");
       expect(links).toHaveLength(1);
       expect(links[0].textContent).toBe("s4uyskj");
     });
 
     it("opens the session menu on a right click under a host", () => {
-      useSessionsStore.setState({ sessions: [{ name: "s4uyskj" } as never] });
+      useSessionsStore.setState({ sessions: [session] });
       const menu = vi.fn();
       opened.menu = menu;
       mount([fleet]);

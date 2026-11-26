@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
+import { displayName } from "../../../lib/sessionview.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import type { SessionWatch } from "../../../core/api/client.ts";
 import { openWorkItemUrl } from "../../workitems/openUrl.ts";
@@ -182,10 +183,11 @@ export function WatchesPanel({
           const href = safeWatchUrl(w.url);
           const ref = w.ref || w.id;
           const busy = ending.has(w.id);
+          const fleet = w.source === "fleet" && Boolean(w.ref);
           return (
-            <li className={"mw-item" + (w.error ? " failing" : "")} key={w.id}>
+            <li className={"mw-item" + (w.error ? " failing" : "") + (fleet ? " mw-fleet" : "")} key={w.id}>
               <Icon name={sourceIcon(w.source)} title={sourceLabel(w.source)} />
-              {w.source === "fleet" && w.ref ? (
+              {fleet ? (
                 <SessionRef name={w.ref} />
               ) : href ? (
                 <a
@@ -257,7 +259,8 @@ export function WatchesPanel({
  *  the context menu and the tooltip cannot drift from the transcript's. A session that no longer
  *  exists stays plain text, as it does in the transcript. */
 function SessionRef({ name }: { name: string }) {
-  const exists = useSessionsStore((st) => st.sessions.some((s) => s.name === name));
+  const session = useSessionsStore((st) => st.sessions.find((s) => s.name === name));
+  const exists = session !== undefined;
   const openMenu = useSessionLinkMenu();
   const menuRef = useRef(openMenu);
   menuRef.current = openMenu;
@@ -273,17 +276,21 @@ function SessionRef({ name }: { name: string }) {
     );
     a.classList.add("mw-ref");
     el.append(a);
-    // Only the anchor this effect added: React may already have reused the element for the
-    // plain-text fallback and put the name in it.
     return () => a.remove();
   }, [name, exists, hasMenu]);
-  if (!exists) {
+  if (!session) {
     return (
       <span key="text" className="mw-ref" title={name}>
         {name}
       </span>
     );
   }
-  // display: contents keeps the anchor itself the row's flex item, laid out like any other ref.
-  return <span key="link" ref={host} className="md-ref-host" />;
+  const branch = session.currentBranch || session.branch;
+  return (
+    <span className="mw-fleet-ref">
+      <span ref={host} className="md-ref-host" />{" "}
+      <span>{displayName(session)}</span>
+      {branch && <>{" "}<span className="mw-fleet-branch">{branch}</span></>}
+    </span>
+  );
 }
