@@ -218,9 +218,18 @@ func TestPlaceOfNeverBlocksOnAFIFO(t *testing.T) {
 	if err := syscall.Mkfifo(commondir, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The main copy's own config.worktree is read only by the parent check, never by the
+	// worktree's session: a FIFO there costs the create no wait, only the parent.
+	gitInit(t, filepath.Join(repos, "cfg"))
+	gitRun(t, filepath.Join(repos, "cfg"), "config", "extensions.worktreeConfig", "true")
+	placeWorktree(t, filepath.Join(repos, "cfg"), filepath.Join(repos, "cfg@wt"), "cfgwt")
+	if err := syscall.Mkfifo(filepath.Join(repos, "cfg", ".git", "config.worktree"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for dir, want := range map[string]session.Place{
 		filepath.Join(repos, "pipe"):    {Kind: session.PlaceRepo, ID: "pipe"},
 		filepath.Join(repos, "main@wt"): {Kind: session.PlaceRepo, ID: "main@wt"},
+		filepath.Join(repos, "cfg@wt"):  {Kind: session.PlaceWorktree, ID: "cfg@wt"},
 	} {
 		done := make(chan *session.Place, 1)
 		go func() { done <- PlaceOf(dir) }()
@@ -229,8 +238,9 @@ func TestPlaceOfNeverBlocksOnAFIFO(t *testing.T) {
 			if *got != want {
 				t.Errorf("PlaceOf(%q) = %+v, want %+v", dir, got, want)
 			}
-		case <-time.After(10 * time.Second):
-			t.Fatalf("PlaceOf(%q) blocked on a FIFO", dir)
+		// Below the parent check's 3 s timeout, so waiting it out fails too.
+		case <-time.After(2 * time.Second):
+			t.Fatalf("PlaceOf(%q) waited on a FIFO", dir)
 		}
 	}
 }

@@ -900,15 +900,15 @@ func WorktreeParent(dir string) string {
 }
 
 // LinkedWorktreeMain reports whether dir is a linked worktree (`git worktree add`) and, when it
-// is, the main working copy it hangs off. It reads the .git gitfile and commondir the way git
-// does rather than running git, so a session create pays no process for it. A submodule's
-// gitfile has no commondir and is not a linked worktree.
+// is, the main working copy it hangs off. Whether dir is a linked worktree is read from the
+// .git gitfile and commondir the way git reads them, without running git; a submodule's
+// gitfile has no commondir and is not a linked worktree. Only naming the parent may run git,
+// once (ownsCommonDir).
 //
 // main is "" whenever the folder above the common git directory is not, as git reads it, a
 // working copy that owns it: a --separate-git-dir, a bare repository (whatever its directory
 // is called), a core.worktree that points elsewhere, or a git that does not answer. A parent
-// named there would be invented, so when in doubt there is none. Only a linked worktree pays
-// for that one git run.
+// named there would be invented, so when in doubt there is none.
 func LinkedWorktreeMain(dir string) (main string, linked bool) {
 	body, ok := readSmallRegular(filepath.Join(dir, ".git"), smallFileMax)
 	if !ok {
@@ -956,9 +956,10 @@ func physicalFrom(base, p string) (string, bool) {
 	return real, err == nil
 }
 
-// mainCopyTimeout bounds the one git run that confirms a parent. It reads only local files, but
-// a named pipe planted as the config would hold it forever.
-const mainCopyTimeout = 10 * time.Second
+// mainCopyTimeout bounds the one git run that confirms a parent. It reads only local files and
+// answers in milliseconds; the bound is for a named pipe planted where git reads, which would
+// otherwise hold the create (and a recreate, after it stopped the old slot) forever.
+const mainCopyTimeout = 3 * time.Second
 
 // ownsCommonDir reports whether candidate is, as git itself reads it, a non-bare working copy
 // whose top level is candidate and whose common git directory is common. git is asked rather
@@ -966,6 +967,14 @@ const mainCopyTimeout = 10 * time.Second
 // (comments, subsections, includes), and a parser of our own that misread one would name a
 // folder that holds no working copy.
 func ownsCommonDir(candidate, common string) bool {
+	// The main copy's own config.worktree is read by this run and by nothing the worktree's
+	// session needs (its git reads the worktree's own), so a fault there must not cost the
+	// create even the timeout: anything but a regular file means no parent and no git run.
+	if fi, err := os.Stat(filepath.Join(common, "config.worktree")); err == nil && !fi.Mode().IsRegular() {
+		return false
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), mainCopyTimeout)
 	defer cancel()
 	out, err := CmdContext(ctx, candidate, "rev-parse", "--path-format=absolute",
