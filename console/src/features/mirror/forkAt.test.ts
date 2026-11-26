@@ -100,6 +100,22 @@ describe("carriedUserTurns", () => {
     expect(carriedUserTurns(groups, u2)).toBe(1);
   });
 
+  it("uses the same exclusive cutoff for every bubble sharing a Codex turn anchor", () => {
+    const notice = user("current");
+    const member = user("current");
+    const groups = [user("earlier"), notice, member];
+
+    expect(carriedUserTurns(groups, notice)).toBe(1);
+    expect(carriedUserTurns(groups, member)).toBe(1);
+  });
+
+  it("counts earlier anchored exchanges once and unanchored inputs individually", () => {
+    const target = user("current");
+    const groups = [user("earlier"), user("earlier"), user(), user(""), target];
+
+    expect(carriedUserTurns(groups, target)).toBe(3);
+  });
+
   it("returns 0 for a turn that is not in the list", () => {
     expect(carriedUserTurns([user("msg_1")], user("msg_9"))).toBe(0);
   });

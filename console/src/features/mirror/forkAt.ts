@@ -36,11 +36,18 @@ export function canBranchFrom(t: BranchableTurn): boolean {
   return t.role === "user" && !!t.anchorId && !t.pending && !t.queued && !t.compact;
 }
 
-// carriedUserTurns counts the user messages carried into the fork. The fork point itself is not
-// carried (the cut is made before it so it can be re-typed), so it is excluded. This is the
-// number the confirmation dialog reports.
+// carriedUserTurns counts the user exchanges before the exclusive fork point. Codex can
+// render several bubbles for a single runtime turn, but forks cut before that entire anchor.
 export function carriedUserTurns(groups: BranchableTurn[], at: BranchableTurn): number {
   const i = groups.indexOf(at);
   if (i < 0) return 0;
-  return groups.slice(0, i).filter((g) => g.role === "user" && !g.compact).length;
+  const seen = new Set<string>();
+  let count = 0;
+  for (const { role, compact, anchorId } of groups.slice(0, i)) {
+    if (anchorId && anchorId === at.anchorId) break;
+    if (role !== "user" || compact || (anchorId && seen.has(anchorId))) continue;
+    if (anchorId) seen.add(anchorId);
+    count++;
+  }
+  return count;
 }

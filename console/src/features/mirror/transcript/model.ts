@@ -391,6 +391,7 @@ export function groupTurns(turns: Turn[], breaks: number[] = []): Group[] {
       !t.queueId &&
       // An automated notice or a message from another session needs its own bubble.
       // Folding it into the member's prompt would share the badge, copy text and fork target.
+      // A notice envelope can be typed by the member, so use the source tag for notices.
       !(t.role === "user" && (last.source === "notice" || t.source === "notice" || fromSession(last) || fromSession(t)))
     ) {
       last.parts.push(...parts);
