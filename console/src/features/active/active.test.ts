@@ -297,6 +297,30 @@ describe("unattended groups", () => {
     expect(g[1].alive).toBe(1);
   });
 
+  it("groups by root category and orders headings by category position", () => {
+    const queued = [
+      ...list,
+      s("first", { origin: "queue", queueCategoryId: "first", alive: false }),
+      s("helper", { origin: "session", originSession: "first", queueCategoryId: "second" }),
+      s("reviewer", { origin: "session", originSession: "helper", alive: false }),
+      s("second", { origin: "queue", queueCategoryId: "second" }),
+      s("unknown", { origin: "queue", queueCategoryId: "deleted" }),
+    ];
+    const queues = [
+      { categoryId: "second", category: "Alpha", repo: "app", categoryPosition: 2 },
+      { categoryId: "first", category: "Zulu", repo: "app", categoryPosition: 1 },
+    ];
+    const g = activeGroups(queued, repos, [], null, new Set(["helper"]), undefined, true, 0, queues);
+    expect(g.map((x) => x.key).slice(1)).toEqual([
+      "u:autorun:first", "u:autorun:second", "u:autorun", "u:autorun:deleted", "u:schedule",
+    ]);
+    expect(g[1]).toMatchObject({ label: "Zulu", hint: "app", total: 2, alive: 1 });
+    expect(names(g[1].sessions)).toEqual(["helper", "reviewer"]);
+    expect(names(g[2].sessions)).toEqual(["second"]);
+    expect(names(g[3].sessions)).toEqual(["run"]);
+    expect(names(g[4].sessions)).toEqual(["unknown"]);
+  });
+
   it("does not list a schedule's worktree child twice when its schedule shows in Sessions", () => {
     const shown = new Set(["sc1"]);
     const g = activeGroups(list, repos, [], null, new Set(), shown);

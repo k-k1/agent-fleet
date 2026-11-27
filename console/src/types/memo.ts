@@ -189,6 +189,7 @@ export interface MemoQueue {
   categoryId: string;
   repo: string;
   category: string;
+  categoryPosition?: number;
   instruction: string;
   agentKind: string;
   model: string;

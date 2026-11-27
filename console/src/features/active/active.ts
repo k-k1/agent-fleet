@@ -11,9 +11,8 @@
 //            SSM logins are the Terminal view's; unattended runs are listed in the trailing groups
 //            (unattendedScope).
 //   GROUP  … the tree's three sections in the tree's order: repositories (by remote, as the
-//            sessions overview groups them), spaces, other. Two groups follow them: the RUNNING
-//            unattended runs, one group for auto-run and one for schedules, as families like the
-//            others (decision 2 note). They are not in the scope above: see unattendedScope.
+//            sessions overview groups them), spaces, other. Running unattended families follow,
+//            by queue category for auto-run and in one group for schedules (unattendedScope).
 //   FOLD   … a parent hides its descendants until the member opens it. The stored value is
 //            the OPENED parents, not the folded ones: a parent that gains its first child
 //            must start folded without anybody having recorded it.
@@ -21,17 +20,18 @@ import { childrenIndex, descendantNames } from "../sessions/family.ts";
 import { isWaiting } from "../sessions/waiting.ts";
 import { foldFamilies, orderByFamily, repoGroupId } from "../overview/overview.ts";
 import type { FoldInfo } from "../overview/overview.ts";
-import { sessionAutoKind, sessionFolder, sessionSpace, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
+import { sessionAutoKind, sessionAutoRoot, sessionFolder, sessionSpace, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import { sessionInWorkingSet } from "../../lib/workingSets.ts";
 import { compareText } from "../../lib/intl.ts";
 import type { Space } from "../spaces/store.ts";
 import type { Repo } from "../repos/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
+import type { MemoQueue } from "../../types/memo.ts";
 import type { Session } from "../../types/session.ts";
 
 export type ActiveGroupKind = "repo" | "space" | "other" | "autorun" | "schedule";
 
-/** The two groups of unattended runs: folded until the member opens them, and their waiting
+/** The groups of unattended runs: folded until the member opens them, and their waiting
  *  sessions are not counted on the rail icon (waitingSessions leaves unattended runs out). */
 export const isUnattendedKind = (k: ActiveGroupKind): boolean => k === "autorun" || k === "schedule";
 
@@ -43,9 +43,9 @@ export interface ActiveGroup {
   /** Identity and React key. Never empty: "o:" is the trailing "other" group. */
   key: string;
   kind: ActiveGroupKind;
-  /** Heading text. "" for the "other" group and the two unattended ones — the view localizes those. */
+  /** Heading text or queue name. Empty when the view supplies the whole heading. */
   label: string;
-  /** Tooltip: what the group was formed on (the remote, the base folder, the space folder). */
+  /** Tooltip context for an ordinary group, or the repository name for a queue heading. */
   hint: string;
   /** Cards in order, after the fold has taken its rows out. */
   sessions: Session[];
@@ -234,6 +234,8 @@ function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[], repos
   return { key: OTHER_GROUP, kind: "other", label: "", hint: "" };
 }
 
+type QueueHeading = Pick<MemoQueue, "categoryId" | "category" | "repo" | "categoryPosition">;
+
 const KIND_ORDER: Record<ActiveGroupKind, number> = { repo: 0, space: 1, other: 2, autorun: 3, schedule: 4 };
 
 /** The view, grouped. `expanded` holds the parents the member opened; set=null means no
@@ -247,6 +249,7 @@ export function activeGroups(
   shown?: ReadonlySet<string>,
   reposKnown = repos.length > 0,
   now: number = Date.now(),
+  queues: readonly QueueHeading[] = [],
 ): ActiveGroup[] {
   const byFolder = new Map(repos.map((r) => [r.name, r]));
   const members = new Map<string, { id: GroupId; sessions: Session[] }>();
@@ -257,10 +260,19 @@ export function activeGroups(
     members.set(id.key, g);
   }
   const allByName = new Map(sessions.map((s) => [s.name, s] as const));
+  const queueOrder = new Map([...queues].sort((a, b) =>
+    compareText(a.repo, b.repo) ||
+    (a.categoryPosition ?? Infinity) - (b.categoryPosition ?? Infinity) ||
+    compareText(a.categoryId, b.categoryId),
+  ).map((q, i) => [AUTORUN_GROUP + ":" + q.categoryId, { q, i }]));
   for (const s of unattendedScope(sessions, set, shown, repos)) {
-    const auto = sessionAutoKind(s, allByName, shown);
-    if (!auto) continue;
-    const id: GroupId = { key: auto === "autorun" ? AUTORUN_GROUP : SCHEDULE_GROUP, kind: auto === "autorun" ? "autorun" : "schedule", label: "", hint: "" };
+    const root = sessionAutoRoot(s, allByName, shown);
+    if (!root) continue;
+    const autorun = root.origin === "queue";
+    const category = autorun ? root.queueCategoryId : undefined;
+    const key = autorun ? (category ? AUTORUN_GROUP + ":" + category : AUTORUN_GROUP) : SCHEDULE_GROUP;
+    const q = queueOrder.get(key)?.q;
+    const id: GroupId = { key, kind: autorun ? "autorun" : "schedule", label: q?.category || "", hint: q?.repo || "" };
     const g = members.get(id.key) || { id, sessions: [] };
     g.sessions.push(s);
     members.set(id.key, g);
@@ -318,6 +330,8 @@ export function activeGroups(
   }
   // Headings in name order inside each kind, stable while sessions come and go: a list that
   // is watched must not reorder its sections every time something starts.
-  out.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || compareText(a.label, b.label) || compareText(a.key, b.key));
+  out.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
+    (queueOrder.get(a.key)?.i ?? Infinity) - (queueOrder.get(b.key)?.i ?? Infinity) ||
+    compareText(a.label, b.label) || compareText(a.key, b.key));
   return out;
 }

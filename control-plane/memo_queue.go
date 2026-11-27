@@ -360,16 +360,17 @@ func clipProducer(s string) string {
 // memoQueueDTO is a queue's settings on the wire. Repo and category name the category row it
 // belongs to, for display.
 type memoQueueDTO struct {
-	CategoryID  string  `json:"categoryId"`
-	Repo        string  `json:"repo"`
-	Category    string  `json:"category"`
-	Instruction string  `json:"instruction"`
-	AgentKind   string  `json:"agentKind"`
-	Model       string  `json:"model"`
-	Effort      string  `json:"effort"`
-	Route       string  `json:"route"`
-	SpendCapUSD float64 `json:"spendCapUsd"`
-	Worktree    bool    `json:"worktree"`
+	CategoryID       string  `json:"categoryId"`
+	Repo             string  `json:"repo"`
+	Category         string  `json:"category"`
+	CategoryPosition int     `json:"categoryPosition"`
+	Instruction      string  `json:"instruction"`
+	AgentKind        string  `json:"agentKind"`
+	Model            string  `json:"model"`
+	Effort           string  `json:"effort"`
+	Route            string  `json:"route"`
+	SpendCapUSD      float64 `json:"spendCapUsd"`
+	Worktree         bool    `json:"worktree"`
 	// AcceptOwnSessions is the switch "accept from sessions I started": a message from a session
 	// the member started enters without a release. Off by default.
 	AcceptOwnSessions bool `json:"acceptOwnSessions"`
@@ -421,7 +422,7 @@ type memoQueueDTO struct {
 }
 
 func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
-	return memoQueueDTO{CategoryID: q.CategoryID, Repo: c.Repo, Category: c.Name, Instruction: q.Instruction,
+	return memoQueueDTO{CategoryID: q.CategoryID, Repo: c.Repo, Category: c.Name, CategoryPosition: c.Position, Instruction: q.Instruction,
 		AgentKind: q.AgentKind, Model: q.Model, Effort: q.Effort, Route: q.Route, SpendCapUSD: q.SpendCapUSD,
 		Worktree: q.Worktree, AcceptOwnSessions: q.AcceptOwnSessions, ContinuationMax: memoContinuationMax(q), MaxActive: q.MaxActive, Batch: q.Batch, MaxTaskHours: memoQueueTaskHours(q),
 		OpenCron: q.OpenCron, OpenMinutes: q.OpenMinutes, TZ: q.TZ, OpenAfter: q.OpenAfter, MaxFiresPerDay: memoQueueFiresPerDay(q),

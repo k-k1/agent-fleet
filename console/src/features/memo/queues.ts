@@ -116,6 +116,7 @@ export function readQueue(v: unknown): MemoQueue | null {
     categoryId: v.categoryId,
     repo: str(v.repo),
     category: str(v.category),
+    categoryPosition: typeof v.categoryPosition === "number" && Number.isFinite(v.categoryPosition) ? v.categoryPosition : undefined,
     instruction: str(v.instruction),
     agentKind: str(v.agentKind),
     model: str(v.model),
