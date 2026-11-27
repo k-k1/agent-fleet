@@ -517,9 +517,8 @@ export function useEffortOptions(kind: string, model: string, emptyLabel?: strin
     : catalogEfforts.length
       ? catalogEfforts
       : FALLBACK_EFFORTS[kind] || [];
-  // claude cannot report a per-model default effort through the CLI (it has no catalog). With
-  // none given it falls back to the Claude Code CLI default (xhigh), so say so. codex/opencode
-  // show the catalog's defaultEffort as-is, e.g. "Default (medium)".
+  // A caller can label its empty choice explicitly. Otherwise show the reported model default,
+  // or Claude Code's CLI default because it has no model catalog.
   const def = selected?.defaultEffort || "";
   const defaultLabel = def
     ? t("ui.default_with", { effort: def })

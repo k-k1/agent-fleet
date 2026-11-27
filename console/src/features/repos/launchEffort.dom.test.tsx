@@ -60,12 +60,24 @@ afterEach(async () => {
 
 function expectLaunch(driver: string, effort: string) {
   const body = apiJSON.mock.calls.filter(([path, method]) => path === "api/sessions" && method === "POST").at(-1)?.[2];
-  expect(body).toMatchObject({ kind: "codex", dir: repo.path, driver });
+  expect(body).toMatchObject({ kind: "codex", dir: repo.path });
+  if (driver) expect(body.driver).toBe(driver);
+  else expect(body).not.toHaveProperty("driver");
   if (effort) expect(body.effort).toBe(effort);
   else expect(body).not.toHaveProperty("effort");
 }
 
-describe.each(["managed", "tui"])("Codex Start work with %s", (driver) => {
+function startWork(driver: string, effort: string, choice: string) {
+  return row.onStartWork({
+    kind: "codex", driver, model: "", effort, effortChoice: choice, startMode: "normal",
+    prompt: "", title: "", images: [], subdir: "", base: "", newBranch: "", worktree: false,
+  });
+}
+
+describe.each([
+  { method: "Managed", driver: "managed" },
+  { method: "Terminal (CLI)", driver: "" },
+])("Codex Start work with $method", ({ driver }) => {
   it.each([
     { effort: "", choice: "" },
     { effort: "high", choice: "" },
@@ -73,14 +85,21 @@ describe.each(["managed", "tui"])("Codex Start work with %s", (driver) => {
   ])("sends effort '$effort' and remembers choice '$choice' on success", async ({ effort, choice }) => {
     localStorage.setItem(effortKey, "medium");
     await act(async () => {
-      expect(await row.onStartWork({
-        kind: "codex", driver, model: "", effort, effortChoice: choice, startMode: "normal",
-        prompt: "", title: "", images: [], subdir: "", base: "", newBranch: "", worktree: false,
-      })).toMatchObject({ ok: true });
+      expect(await startWork(driver, effort, choice)).toMatchObject({ ok: true });
     });
     expectLaunch(driver, effort);
     expect(localStorage.getItem(effortKey)).toBe(choice || "@af:default");
   });
+});
+
+it("keeps the previous effort when Start work fails to create a session", async () => {
+  localStorage.setItem(effortKey, "medium");
+  apiJSON.mockResolvedValueOnce({ error: { code: "runtime_failed" } });
+  await act(async () => {
+    expect(await startWork("managed", "low", "low")).toMatchObject({ ok: false });
+  });
+  expectLaunch("managed", "low");
+  expect(localStorage.getItem(effortKey)).toBe("medium");
 });
 
 describe("Codex repository quick launch", () => {
@@ -100,5 +119,13 @@ describe("Codex repository quick launch", () => {
     await act(async () => void (await row.onLaunch("codex", false)));
     expectLaunch("managed", "low");
     expect(localStorage.getItem(effortKey)).toBe("low");
+  });
+
+  it("does not rewrite a legacy value when quick launch fails to create a session", async () => {
+    localStorage.setItem(effortKey, "default");
+    apiJSON.mockResolvedValueOnce({ error: { code: "runtime_failed" } });
+    await act(async () => void (await row.onLaunch("codex", false)));
+    expectLaunch("managed", "");
+    expect(localStorage.getItem(effortKey)).toBe("default");
   });
 });

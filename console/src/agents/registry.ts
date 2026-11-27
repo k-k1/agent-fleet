@@ -149,6 +149,8 @@ export interface AgentDescriptor {
   launchHintKey: MsgKey; // the seg-button sub-label (i18n key; resolved at render via t())
   // repo-launch session-name suffix (so a repo's shell/oc/cx sessions stay distinct)
   launchSuffix: string;
+  // An empty launch effort follows Settings and is remembered as that choice.
+  launchEffortUsesSettings?: boolean;
   // the TUI key that cycles permission/collaboration mode (Shift+Tab for claude/codex,
   // Tab for opencode's agent cycle), sent by the chat's plan-mode toggle. "" when none.
   planCycleKey: string;
@@ -280,6 +282,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     cssClass: "codex",
     launchHintKey: "agent.launch_hint.codex",
     launchSuffix: "-cx",
+    launchEffortUsesSettings: true,
     planCycleKey: "BTab", // Shift+Tab cycles the collaboration mode (used to exit plan)
     planEnterCmd: "/plan", // codex also has /plan ("switch to Plan mode")
     defaultModeLabel: "Default",

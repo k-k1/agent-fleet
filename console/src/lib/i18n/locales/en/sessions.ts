@@ -554,7 +554,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.field.model": "Model",
   "launch.field.effort": "Reasoning effort",
   "launch.field.effort_hint": "Unset uses the model default.",
-  "launch.field.codex_effort_hint": "Use setting follows Settings → Agents → Codex. Unspecified leaves the effort to Codex.",
+  "launch.field.effort_setting_hint": "Use setting follows Default effort in Settings → Agents. Unspecified leaves the effort to the agent.",
   "launch.effort_use_setting": "Use setting ({effort})",
   "launch.effort_use_unspecified": "Use setting (unspecified)",
   "launch.field.start_mode": "Start mode",

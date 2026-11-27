@@ -756,7 +756,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   }, [kind, model, modelOptions, modelUnoffered, prefsReread, bedrockDefaultPending]);
   const defaults = agentLaunchDefault(settings, kind);
   const skipPermEffective = skipPerm ?? defaults.skipPermissions;
-  const codexEffortLabel = kind === "codex"
+  const effortUsesSettings = agentOf(kind).launchEffortUsesSettings;
+  const effortSettingLabel = effortUsesSettings
     ? defaults.effort
       ? tr("launch.effort_use_setting", { effort: defaults.effort })
       : tr("launch.effort_use_unspecified")
@@ -813,7 +814,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   const advParts = [
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
     hasEffort
-      ? tr("launch.sum.effort", { v: effort || codexEffortLabel || tr("launch.sum.effort_default") })
+      ? tr("launch.sum.effort", { v: effort || effortSettingLabel || tr("launch.sum.effort_default") })
       : "",
     hasStartMode ? tr(startMode === "plan" ? "launch.sum.start_plan" : "launch.sum.start_normal") : "",
     hasPermChoice ? tr(skipPermEffective ? "launch.sum.permissions_skip" : "launch.sum.permissions_on") : "",
@@ -1062,7 +1063,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       // Code would map an alias to an id of its own choosing and walk a fallback ladder on a denial.
       model: onBedrock ? bedrockModel.trim() : hasModel ? model : "",
       effort: hasEffort ? resolveEffortOverride(kind, effort, defaults.effort) : "",
-      effortChoice: kind === "codex" && hasEffort ? effort : undefined,
+      effortChoice: effortUsesSettings && hasEffort ? effort : undefined,
       route: chosenRoute || undefined,
       routeConnection: chosenRoute === "bedrock" && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
       startMode: hasStartMode ? startMode : "normal",
@@ -1735,8 +1736,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             <div className="ui-field-row">
               {hasEffort && (
                 <div className="ui-field">
-                  <FieldLabel as="span" info={tr(kind === "codex" ? "launch.field.codex_effort_hint" : "launch.field.effort_hint")}>{tr("launch.field.effort")}</FieldLabel>
-                  <EffortPicker kind={kind} model={model} effort={effort} emptyLabel={codexEffortLabel} onChange={(v) => {
+                  <FieldLabel as="span" info={tr(effortUsesSettings ? "launch.field.effort_setting_hint" : "launch.field.effort_hint")}>{tr("launch.field.effort")}</FieldLabel>
+                  <EffortPicker kind={kind} model={model} effort={effort} emptyLabel={effortSettingLabel} onChange={(v) => {
                     mark("effort");
                     setEffort(v);
                   }} />

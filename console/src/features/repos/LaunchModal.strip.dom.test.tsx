@@ -187,6 +187,24 @@ describe("Codex launch effort", () => {
     expect(onLaunch).toHaveBeenCalledWith(expect.objectContaining({ effort: "low", effortChoice: "low" }));
   });
 
+  it.each(["", "low"])("keeps effort choice '%s' available in Terminal (CLI)", async (effort) => {
+    setCodexEffort("");
+    await renderDialog(["codex"]);
+    await openEffortPicker();
+    const terminal = [...detailsSection().querySelectorAll("button")].find((b) => b.textContent?.includes("Terminal (CLI)"))!;
+    await click(terminal);
+    const picker = await openEffortPicker();
+    expect(picker.selectedOptions[0].textContent).toBe("Use setting (unspecified)");
+    if (effort) {
+      await act(async () => {
+        picker.value = effort;
+        picker.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    await click(primary());
+    expect(onLaunch).toHaveBeenCalledWith(expect.objectContaining({ driver: "", effort, effortChoice: effort }));
+  });
+
   it.each([
     ["home", () => renderDialog(["codex"], true)],
     ["space", () => renderHub(["codex"])],

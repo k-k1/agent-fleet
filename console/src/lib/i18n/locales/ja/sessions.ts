@@ -562,7 +562,7 @@ export const sessions = {
   "launch.field.model": "モデル",
   "launch.field.effort": "推論の強さ",
   "launch.field.effort_hint": "未指定のときはモデルの既定値になります。",
-  "launch.field.codex_effort_hint": "「設定に従う」は設定 → エージェント → Codex の値を使います。未指定の場合は Codex に任せます。",
+  "launch.field.effort_setting_hint": "「設定に従う」は設定 → エージェントの既定の推論の強さを使います。未指定の場合はエージェントに任せます。",
   "launch.effort_use_setting": "設定に従う（{effort}）",
   "launch.effort_use_unspecified": "設定に従う（未指定）",
   "launch.field.start_mode": "開始モード",
