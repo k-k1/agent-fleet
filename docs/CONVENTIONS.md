@@ -312,10 +312,13 @@ hardware that has not happened, and a residual that a review left.
   `bug`, `enhancement` or `documentation` — and one priority: `priority: high` for data
   integrity, user-facing regressions or operational risk, `priority: medium` for planned
   work after those, `priority: low` for deferred work. Add `follow-up` for something a
-  merged change left behind and `needs-live-run` when it can only be closed by a run on
-  real hardware or a deployment. The issue forms under `.github/ISSUE_TEMPLATE/` set the
-  type for issues filed on github.com; `gh issue create` does not use them, and neither
-  sets a priority.
+  merged change left behind. The issue forms under `.github/ISSUE_TEMPLATE/` set the type
+  for issues filed on github.com; `gh issue create` does not use them, and neither sets
+  a priority.
+- **`needs-live-run` marks work ready for live acceptance.** Add it to an issue or PR
+  only after implementation and review are complete and acceptance on real hardware
+  or on a deployment is the only remaining work. Record live reproduction or
+  investigation needed to implement the change in the issue or PR body.
 - **Two labels say why an issue is not ready to build.** Each is removed the moment its
   condition ends, so the label always matches the state.
   - `needs-decision`: it cannot be built until the owner decides or an ADR is written.
@@ -330,9 +333,8 @@ hardware that has not happened, and a residual that a review left.
   reopen it. Reopening is always fine. The reason is one of:
   - *Completed*: every acceptance item has been seen. A live check that could not be run
     is acceptable only when tests cover the behaviour, the comment names them and says
-    "not seen live: …". Whatever can only be shown on real hardware or a deployment gets
-    or keeps `needs-live-run` and stays open; an issue that carries that label is never
-    closed on tests plus "not seen live", only by the run itself.
+    "not seen live: …". An issue with `needs-live-run` stays open until the required run
+    on real hardware or a deployment passes.
   - *Not planned* (`gh issue close N --reason "not planned"`): the premise is gone
     (feature retired, superseded by #N, the CLI or version moved on, measured as no
     longer relevant), or the issue has been idle for 4+ weeks and is not on the current

@@ -215,12 +215,16 @@ into an ADR, a `docs/log/` journal, `roadmap.md` or your memory. Then point at i
 `Follow-ups: #N` under the ADR's Status line, or the issue number at the end of the
 journal's residual list. Keep the issue short and link the section that holds the
 evidence. Pass `--label` when you file it: one of `bug` / `enhancement` /
-`documentation`, one `priority: high|medium|low`, plus `follow-up`, `needs-live-run`,
-`needs-decision` (waits on the owner's decision or an ADR; first body line states the question with its options) or `blocked` (waits on
-something outside the issue; first body line `Waiting on: <what>, <when / #N>`) where
-they apply. Close an issue with a three-line comment: evidence, why, and what would
-reopen it. An issue is public the moment it is filed and skips the secret scans, so no
-real hostnames, account IDs or tokens. Full rule: `docs/CONVENTIONS.md` §10.
+`documentation`, one `priority: high|medium|low`, and `follow-up`, `needs-decision` or
+`blocked` where they apply. For `needs-decision`, give the owner or ADR decision as a
+question with options on the first line. For `blocked`, start with
+`Waiting on: <what>, <when / #N>`.
+
+Add `needs-live-run` only after implementation and review are complete and live acceptance
+is the only work left. Record any earlier live reproduction or investigation in the issue
+or PR body. Close an issue with a three-line comment giving the evidence, the reason, and
+what would reopen it. An issue is public the moment it is filed and skips the secret scans,
+so omit real hostnames, account IDs and tokens. See `docs/CONVENTIONS.md` §10.
 
 ## Running the Console tests
 
