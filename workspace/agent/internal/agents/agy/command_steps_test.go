@@ -48,6 +48,7 @@ func TestCompletedCommandSteps(t *testing.T) {
 	hook("PostToolUse", "current-launch", args(foreign, "foreign", "4"))
 	hook("PostToolUse", "current-launch", args(conv, "missing index", "null"))
 	hook("PostToolUse", "current-launch", args(conv, "negative index", "-1"))
+	hook("PostToolUse", "current-launch", `{"conversationId":"`+conv+`","stepIdx":9,"error":"execution failed","toolCall":{"name":"run_command","args":{"CommandLine":"failed attempt"}}}`)
 	hook("PostToolUse", "current-launch", `{"conversationId":"`+conv+`","stepIdx":4,"toolCall":{"name":"manage_task","args":{"CommandLine":"not a command"}}}`)
 	hook("PostToolUse", "current-launch", `{"conversationId":"`+conv+`","stepIdx":4,"toolCall":{"name":"run_command","args":{"CommandLine":2}}}`)
 	if after, _ := currentRecord(sid); after.State != before.State || after.At != before.At {
@@ -64,6 +65,9 @@ func TestCompletedCommandSteps(t *testing.T) {
 	}
 	if _, ok := commandSteps(conv).Read("-1"); ok {
 		t.Fatal("stored a negative step index")
+	}
+	if _, ok := commandSteps(conv).Read("9"); ok {
+		t.Fatal("stored a command from an errored tool hook")
 	}
 	if got, ok := commandSteps(conv).Read("4"); !ok || got != short {
 		t.Fatalf("stored command = %q, want %q", got, short)
@@ -102,5 +106,13 @@ func TestCompletedCommandSteps(t *testing.T) {
 	}
 	if got := parts[0].Output; got != "Command exited with code 0.\n\nCommand output:\nhello" {
 		t.Errorf("command output changed: %q", got)
+	}
+
+	const invalid = "not-a-conversation-uuid"
+	launchGens.Write(sid, "another-launch")
+	sids.Write(sid, invalid)
+	hook("PostToolUse", "another-launch", args(invalid, "invalid ID", "4"))
+	if _, ok := commandSteps(invalid).Read("4"); ok {
+		t.Fatal("stored a command for an invalid conversation ID")
 	}
 }
