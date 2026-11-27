@@ -39,35 +39,34 @@ import (
 // else stays 502 + runtime_failed. Both carry err.Error() as the message: a generic code cannot
 // express the "why", so the Console shows it alongside via errDetail().
 func writeRuntimeErr(w http.ResponseWriter, err error) {
-	if writeStartRefusal(w, err) {
-		return
+	ref := runtimeFailure(err)
+	httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+}
+
+func runtimeFailure(err error) SpawnRefusal {
+	if ref := startFailureRefusal(err); ref != nil {
+		return *ref
 	}
 	if errors.Is(err, errSessionRetired) {
 		// Permanent until a person starts the session: not a runtime fault to retry.
-		httpx.WriteErr(w, http.StatusConflict, "session_retired", err.Error())
-		return
+		return SpawnRefusal{http.StatusConflict, "session_retired", err.Error()}
 	}
 	if errors.Is(err, errActNotRecorded) {
-		httpx.WriteErr(w, http.StatusInternalServerError, "act_not_recorded", err.Error())
-		return
+		return SpawnRefusal{http.StatusInternalServerError, "act_not_recorded", err.Error()}
 	}
 	if errors.Is(err, errRetireClearFailed) {
-		httpx.WriteErr(w, http.StatusInternalServerError, "retire_clear_failed", err.Error())
-		return
+		return SpawnRefusal{http.StatusInternalServerError, "retire_clear_failed", err.Error()}
 	}
 	if errors.Is(err, errDriverSwitching) {
-		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
-		return
+		return SpawnRefusal{http.StatusConflict, errCodeDriverSwitching, err.Error()}
 	}
 	if errors.Is(err, opencode.ErrUnsupportedVersion) {
-		httpx.WriteErr(w, http.StatusConflict, errCodeAgentUnsupportedVer, err.Error())
-		return
+		return SpawnRefusal{http.StatusConflict, errCodeAgentUnsupportedVer, err.Error()}
 	}
 	if errors.Is(err, codex.ErrNotLoggedIn) || errors.Is(err, opencode.ErrNotConnected) {
-		httpx.WriteErr(w, http.StatusConflict, errCodeAgentNotConnected, err.Error())
-		return
+		return SpawnRefusal{http.StatusConflict, errCodeAgentNotConnected, err.Error()}
 	}
-	httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", runtimeErrMessage(err))
+	return SpawnRefusal{http.StatusBadGateway, "runtime_failed", runtimeErrMessage(err)}
 }
 
 // runtimeErrMessage is err's message plus, for a child that failed to start, the end of its
@@ -180,49 +179,62 @@ func resumeManagedAs(d agents.Driver, m session.Meta, input, deliberate bool) (a
 // (opencode version, not connected) or that a retry in a minute does (codex still holding the
 // thread) get the same 409 codes as the Managed path; every other failure stays 500 tmux_failed.
 func writeTmuxLaunchErr(w http.ResponseWriter, err error) {
-	if writeLaunchRefusal(w, err) {
-		return
-	}
-	httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+	ref := tmuxLaunchFailure(err)
+	httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 }
 
-// writeLaunchRefusal answers the sentinels a launch can be refused with, as 409 + a code the
-// Console renders from its catalogue, and reports whether it did; callers keep their own
-// generic code for everything else. Used by the /start-shaped handlers that do not go through
-// writeRuntimeErr (which keeps its own copy of the first two branches for the 502 fallthrough).
+func tmuxLaunchFailure(err error) SpawnRefusal {
+	if ref := launchFailureRefusal(err); ref != nil {
+		return *ref
+	}
+	return SpawnRefusal{http.StatusInternalServerError, "tmux_failed", err.Error()}
+}
+
 func writeLaunchRefusal(w http.ResponseWriter, err error) bool {
+	ref := launchFailureRefusal(err)
+	if ref == nil {
+		return false
+	}
+	httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+	return true
+}
+
+func launchFailureRefusal(err error) *SpawnRefusal {
 	switch {
 	case errors.Is(err, opencode.ErrUnsupportedVersion):
-		httpx.WriteErr(w, http.StatusConflict, errCodeAgentUnsupportedVer, err.Error())
+		return &SpawnRefusal{http.StatusConflict, errCodeAgentUnsupportedVer, err.Error()}
 	case errors.Is(err, codex.ErrNotLoggedIn), errors.Is(err, opencode.ErrNotConnected):
-		httpx.WriteErr(w, http.StatusConflict, errCodeAgentNotConnected, err.Error())
+		return &SpawnRefusal{http.StatusConflict, errCodeAgentNotConnected, err.Error()}
 	case errors.Is(err, codex.ErrThreadReleasing):
-		httpx.WriteErr(w, http.StatusConflict, errCodeCodexReleasing, err.Error())
+		return &SpawnRefusal{http.StatusConflict, errCodeCodexReleasing, err.Error()}
 	default:
-		// A launch refused by its route (a settings conflict found where the working copy is
-		// known) keeps the route's own code instead of a generic launch failure.
-		var rr *agents.RouteRefusal
-		if !errors.As(err, &rr) {
-			return false
-		}
-		httpx.WriteErr(w, rr.Status, rr.Code, rr.Message)
+		return routeFailureRefusal(err)
 	}
+}
+
+func writeStartRefusal(w http.ResponseWriter, err error) bool {
+	ref := startFailureRefusal(err)
+	if ref == nil {
+		return false
+	}
+	httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 	return true
 }
 
-// writeStartRefusal answers err with its typed code when it is a StartRefusalError.
-func writeStartRefusal(w http.ResponseWriter, err error) bool {
+func startFailureRefusal(err error) *SpawnRefusal {
 	var refusal *StartRefusalError
-	if !errors.As(err, &refusal) {
-		var rr *agents.RouteRefusal
-		if !errors.As(err, &rr) {
-			return false
-		}
-		httpx.WriteErr(w, rr.Status, rr.Code, rr.Message)
-		return true
+	if errors.As(err, &refusal) {
+		return refusal.Ref
 	}
-	httpx.WriteErr(w, refusal.Ref.Status, refusal.Ref.Code, refusal.Ref.Message)
-	return true
+	return routeFailureRefusal(err)
+}
+
+func routeFailureRefusal(err error) *SpawnRefusal {
+	var rr *agents.RouteRefusal
+	if errors.As(err, &rr) {
+		return &SpawnRefusal{rr.Status, rr.Code, rr.Message}
+	}
+	return nil
 }
 
 // Messages of the driver-selection refusals. The Agent does not know the member's language, so
