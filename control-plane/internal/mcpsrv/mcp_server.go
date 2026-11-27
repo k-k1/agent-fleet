@@ -770,7 +770,7 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 			writeAPIErr(w, mcpNameConflict(row.Name))
 			return
 		}
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, mcpServerWriteError(err))
 		return
 	}
 	a.recordMCPUpsert(r.Context(), ident, row, stored)
@@ -779,6 +779,13 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 
 func mcpNameConflict(name string) *APIError {
 	return &APIError{http.StatusConflict, codeMCPNameTaken, "a server named " + name + " is already distributed in this tenant"}
+}
+
+func mcpServerWriteError(err error) *APIError {
+	if errors.Is(err, store.ErrMCPTenantNotFound) {
+		return &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"}
+	}
+	return internalErr(err)
 }
 
 // Audit detail names the server and the flags, never a header value (docs/log/48 §9).

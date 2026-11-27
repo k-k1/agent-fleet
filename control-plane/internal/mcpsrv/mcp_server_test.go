@@ -35,6 +35,13 @@ func newMCPServerAPITest(t *testing.T, withKey bool) (ServerAPI, context.Context
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	for id, slug := range map[string]string{"tenant-a": "a", "tenant-b": "b", "t": "t"} {
+		if _, err := st.DB().ExecContext(ctx,
+			`INSERT INTO tenant(id, slug, name, status, limits, isolation, created_at) VALUES(?,?,?,'active','{}','shared',?)`,
+			id, slug, slug, store.NowTS()); err != nil {
+			t.Fatalf("insert tenant: %v", err)
+		}
+	}
 	cp := testCP{store: st}
 	if withKey {
 		cp.master32 = []byte("0123456789abcdef0123456789abcdef")

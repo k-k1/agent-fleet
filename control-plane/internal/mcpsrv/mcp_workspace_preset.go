@@ -157,7 +157,7 @@ func (a ServerAPI) AdminCreateWorkspacePreset(w http.ResponseWriter, r *http.Req
 	}
 	name, err := a.store.CreateMCPServers(ctx, tenant.ID, rows)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, mcpServerWriteError(err))
 		return
 	}
 	if name != "" {

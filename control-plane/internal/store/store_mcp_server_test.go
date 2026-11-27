@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
@@ -33,6 +34,7 @@ func TestMCPServerOAuthClientPostgres(t *testing.T) {
 	checkMCPServerOAuthClient(t, st)
 	t.Run("batch rollback", func(t *testing.T) { checkCreateMCPServersRollsBack(t, st) })
 	t.Run("concurrent names", func(t *testing.T) { checkMCPServerConcurrentNames(t, st) })
+	t.Run("tenant deletion lock order", func(t *testing.T) { checkMCPServerTenantDeleteOrder(t, st) })
 }
 
 // checkMCPServerOAuthClient: the tenant client's four columns and the definition scopes live in
@@ -166,5 +168,71 @@ func checkMCPServerConcurrentNames(t *testing.T, st *SQL) {
 				t.Fatalf("manual write: %v", merr)
 			}
 		})
+	}
+}
+
+func checkMCPServerTenantDeleteOrder(t *testing.T, st *SQL) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	tn, err := st.CreateTenant(ctx, "deleted", "Deleted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := MCPServerRow{ID: NewID(), TenantID: tn.ID, Name: "google-gmail"}
+	if err := st.CreateMCPServer(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	edit, err := st.beginMCPServerWrite(ctx, tn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer edit.Rollback()
+	var pid int
+	if err := edit.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	deleted := make(chan error, 1)
+	go func() { deleted <- st.DeleteTenant(ctx, tn.ID) }()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var waiting bool
+		if err := st.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-deleted:
+			t.Fatalf("tenant deletion bypassed the edit's lock: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	// A deletion waiting on the tenant must not have locked or removed the MCP row first.
+	var id string
+	if err := edit.QueryRowContext(ctx, `SELECT id FROM mcp_server WHERE id=? FOR UPDATE NOWAIT`, row.ID).Scan(&id); err != nil {
+		t.Fatalf("delete touched the MCP row before the edit could: %v", err)
+	}
+	if _, err := edit.ExecContext(ctx, `UPDATE mcp_server SET label=? WHERE tenant_id=? AND id=?`, "Edited", tn.ID, row.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := edit.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-deleted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if rows, err := st.ListMCPServers(ctx, tn.ID); err != nil || len(rows) != 0 {
+		t.Fatalf("deleted tenant retained %d definitions: %v", len(rows), err)
 	}
 }

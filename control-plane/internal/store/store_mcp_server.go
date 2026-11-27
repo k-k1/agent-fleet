@@ -60,6 +60,9 @@ type MCPServerStore interface {
 // ErrMCPServerNameTaken means another definition in the tenant uses the name, ignoring case.
 var ErrMCPServerNameTaken = errors.New("MCP server name already exists")
 
+// ErrMCPTenantNotFound means the tenant disappeared before the definition could be saved.
+var ErrMCPTenantNotFound = errors.New("MCP server tenant not found")
+
 // --- Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031) ----------------------
 //
 // Every statement carries tenant_id, including the ones that already have the primary
@@ -138,18 +141,41 @@ func (s *SQL) CreateMCPServers(ctx context.Context, tenantID string, rows []MCPS
 	return "", tx.Commit()
 }
 
-// PostgreSQL serializes the case-insensitive name check and write on the tenant row. Each
-// statement needs a fresh snapshot after waiting for that lock. SQLite obtains its writer
-// lock at the first INSERT or UPDATE, each of which contains its own name check.
 func (s *SQL) beginMCPServerWrite(ctx context.Context, tenantID string) (*sqlTx, error) {
-	if s.dialect != "postgres" {
-		return s.db.BeginTx(ctx, nil)
-	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	tx, err := s.beginTenantMCPMutation(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `SELECT id FROM tenant WHERE id=? FOR NO KEY UPDATE`, tenantID); err != nil {
+	var exists bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenant WHERE id=?)`, tenantID).Scan(&exists)
+	if err != nil || !exists {
+		_ = tx.Rollback()
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrMCPTenantNotFound
+	}
+	return tx, nil
+}
+
+// beginTenantMCPMutation serializes definition saves and tenant deletion. Postgres uses a
+// separate lock namespace so tenant deletion does not change its row-lock order relative to
+// other tenant operations. READ COMMITTED sees the winner's rows after waiting for its lock.
+// SQLite acquires the database writer lock before reading the tenant or any of its children.
+func (s *SQL) beginTenantMCPMutation(ctx context.Context, tenantID string) (*sqlTx, error) {
+	var opts *sql.TxOptions
+	lock := `UPDATE tenant SET status=status WHERE id=?`
+	key := tenantID
+	if s.dialect == "postgres" {
+		opts = &sql.TxOptions{Isolation: sql.LevelReadCommitted}
+		lock = `SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`
+		key = "af:mcp-tenant:" + tenantID
+	}
+	tx, err := s.db.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, lock, key); err != nil {
 		_ = tx.Rollback()
 		return nil, err
 	}

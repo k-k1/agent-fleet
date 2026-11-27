@@ -270,7 +270,7 @@ func (s *SQL) ListTenants(ctx context.Context) ([]Tenant, error) {
 // The tenant's history — audit_log, usage_daily, cloud_cost_daily — is deliberately kept,
 // exactly as for a membership.
 func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTenantMCPMutation(ctx, tenantID)
 	if err != nil {
 		return err
 	}
