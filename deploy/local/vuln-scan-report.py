@@ -90,8 +90,8 @@ def parse_trivy(path, pinned=frozenset()):
         raise InputError(f"{path}: Trivy report has no os-pkgs result")
     rows = []
     for res in doc.get("Results") or []:
-        # OS packages are cured by a base image refresh. A language package is cured by a
-        # rebuild only when it is the Go standard library inside one of OUR binaries; a
+        # OS packages can be cured by Debian archive fixes or a base image refresh. A language
+        # package is cured by a rebuild only when it is the Go standard library inside our binaries; a
         # module, an npm package or a third-party tool's own runtime is a pin to bump.
         target = res.get("Target", "?")
         is_os = res.get("Class") == "os-pkgs"
@@ -101,7 +101,7 @@ def parse_trivy(path, pinned=frozenset()):
             if sev not in SEVERITIES or not fixed:
                 continue
             # An OS package the Dockerfile pins to an exact version is not moved by a
-            # fresh base: the rebuild installs the same pinned (vulnerable) build.
+            # rebuild: it installs the same pinned (vulnerable) build.
             pinned_os = is_os and v.get("PkgName") in pinned
             own_stdlib = v.get("PkgName") == "stdlib" and target.rsplit("/", 1)[-1] in OWN_BINARIES
             rows.append((v.get("VulnerabilityID", "?"), sev, v.get("PkgName", "?"),
