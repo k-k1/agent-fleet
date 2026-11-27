@@ -301,7 +301,7 @@ func noteObservedFirstTurnEnd(sid, rev, at, reason string) {
 		return
 	}
 	if t.Done {
-		if t.ObservedRev == rev && reason == TurnEndReasonFailed {
+		if t.ObservedRev != "" && t.ObservedRev == rev && reason == TurnEndReasonFailed {
 			t.NoReason = false
 			t.Outcome = reason
 			_ = firstTurns.Write(sid, t)

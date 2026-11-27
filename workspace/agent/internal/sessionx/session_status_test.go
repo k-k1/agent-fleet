@@ -670,3 +670,15 @@ func TestQueuedPolledFailuresAfterContinuationHaveDistinctOutboxIDs(t *testing.T
 		t.Fatalf("outbox events = %+v", events)
 	}
 }
+
+func TestQueuedManagedFailureDoesNotUseTerminalFailureID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "managed-failure", Dir: t.TempDir(), Kind: session.KindAgy, Driver: session.DriverManaged, QueueDelivery: "delivery"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+	RecordSessionNotificationWithTurnEnd(sid, "working", agents.StateFailed, "failure", "2026-11-27T11:00:00Z")
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != "answer-ready" {
+		t.Fatalf("events = %+v", events)
+	}
+}
