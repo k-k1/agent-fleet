@@ -42,7 +42,7 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 // clears the optimistic "working" /input stored: that poll is where a turn ends, and a stale
 // "working" reads idle.
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
-	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 45 * time.Second, TurnFailure: TurnFailure}
+	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 45 * time.Second, TurnFailure: TurnFailure, TurnFailureUnmarked: true}
 }
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.
@@ -56,5 +56,5 @@ func (agentImpl) ProgressSignals() agents.ProgressTraits {
 // UsageLimitTraits is agents.UsageLimiter: the quota refusal the TUI draws as the last line of a
 // refused turn (quota_pane.go). A quota is a window that waiting clears.
 func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
-	return agents.UsageLimitTraits{AtLimit: atQuotaLimit, ResetAt: quotaResetAt}
+	return agents.UsageLimitTraits{AtLimit: atQuotaLimit, ResetAt: quotaResetAt, RanTurnSince: ranTurnSince}
 }

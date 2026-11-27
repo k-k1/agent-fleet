@@ -71,6 +71,10 @@ type LiveStateTraits struct {
 	// from a finished one in the report and the turn-failed status reason. Called only after
 	// idleEndsThisTurn agreed the turn ended.
 	TurnFailure func(m session.Meta, mark string) string
+	// TurnFailureUnmarked asks for TurnFailure also when the turn has no mark (a first input
+	// before the source has a position, one typed into the terminal), with mark "". Only for a
+	// kind whose TurnFailure does not need the mark.
+	TurnFailureUnmarked bool
 }
 
 // FileMarkOffset is the byte offset of a FileSizeMark taken on path, ok=false when the mark is

@@ -119,3 +119,48 @@ func TestTurnIdentityAgyMissingNewInputDoesNotExpireIntoCompletion(t *testing.T)
 		t.Fatalf("the real end was not recorded: %+v", st)
 	}
 }
+
+// agyFakePane puts a tmux on PATH that answers list-panes and capture-pane with the frame
+// file's content, so the agy pane reads see a refused turn without a terminal.
+func agyFakePane(t *testing.T, frame string) {
+	t.Helper()
+	dir := t.TempDir()
+	f := filepath.Join(dir, "frame")
+	if err := os.WriteFile(f, []byte(frame), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncase \"$1\" in\nlist-panes) echo '1 %1';;\ncapture-pane) cat " + f + ";;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+const agyQuotaFrame = "partial answer\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h39m46s.\n─────\n> \n─────\n? for shortcuts      Gemini · high\n"
+
+// A first input (no turn mark yet) that ends on the quota refusal is recorded as a failed turn,
+// not a completion; the same end with no banner on screen is still a completion.
+func TestPolledTurnEndAgyQuotaRefusalWithoutMarkFails(t *testing.T) {
+	for _, tc := range []struct {
+		name, frame string
+		reason      string
+	}{
+		{"refused", agyQuotaFrame, status.TurnEndReasonFailed},
+		{"clean", "done\n─────\n> \n─────\n? for shortcuts      Gemini · high\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, sid, add := agyIdentityFixture(t, "agy_quota_"+tc.name)
+			add([][2]int{{0, 14}, {1, 15}}, 1)
+			agyFakePane(t, tc.frame)
+			status.Persist(sid, "working") // delivered without a turn mark
+			if _, ok := status.TurnMarkOf(sid); ok {
+				t.Fatal("control: the turn has a mark")
+			}
+			notifyPolledTurnEnd(m, "idle")
+			rec, _ := status.Read(sid)
+			if rec.State != "idle" || rec.TurnEndReason != tc.reason {
+				t.Fatalf("state=%q reason=%q, want idle/%q", rec.State, rec.TurnEndReason, tc.reason)
+			}
+		})
+	}
+}

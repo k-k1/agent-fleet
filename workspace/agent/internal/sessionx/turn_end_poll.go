@@ -47,7 +47,8 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 		return
 	}
 	if t := liveStateTraits(m.Kind); t.TurnFailure != nil {
-		if mark, ok := status.TurnMarkOf(sid); ok {
+		mark, ok := status.TurnMarkOf(sid)
+		if ok || t.TurnFailureUnmarked {
 			if failure := t.TurnFailure(m, mark); failure != "" {
 				agents.MarkTurnEndErr(sid, agents.TurnFailed, failure)
 				return
