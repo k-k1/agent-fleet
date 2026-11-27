@@ -6,6 +6,7 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { t } from "../../lib/i18n/index.ts";
 
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
@@ -86,6 +87,7 @@ async function typePrompt(text: string): Promise<void> {
 
 beforeEach(async () => {
   localStorage.clear();
+  useTenantStore.setState({ resolved: true, whoami: { email: "member@example.com" } });
   writeFoldValue("af-start-section", "other"); // the home row is in Other
   claudeExpired = false;
   launchKinds = ["claude"];

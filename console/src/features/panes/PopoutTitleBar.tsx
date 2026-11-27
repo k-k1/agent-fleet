@@ -57,7 +57,7 @@ export function PopoutTitleBar() {
         {title}
       </span>
       <span className="popout-spacer" />
-      <IconButton icon="screen-full" label={tr("ui.popout_expand")} disabled={!hydrated} onClick={() => setPopoutMode("full")} />
+      <IconButton data-launch-delivery-focus icon="screen-full" label={tr("ui.popout_expand")} disabled={!hydrated} onClick={() => setPopoutMode("full")} />
     </div>
   );
 }

@@ -7,10 +7,10 @@
 import { apiJSON, errDetail } from "../../core/api/client.ts";
 import { routeSelectionBody } from "./bedrockProfiles.ts";
 import { policyRefusalKey, policyRefusalOf } from "./launchPolicy.ts";
-import { createElement } from "react";
 import { t } from "../../lib/i18n/index.ts";
-import { LaunchDeliveryRetry, launchDeliveryKey } from "./LaunchDeliveryRetry.tsx";
 import { deliverLaunchPrompt, uploadLaunchFiles } from "./launchDelivery.ts";
+import { holdLaunchDraft, launchDraftOwner } from "./launchDeliveryDraft.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { writeRepoLast, writeRepoSubdir } from "../../lib/repoLast.ts";
@@ -73,6 +73,21 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // because the saved paths have to be woven into it and the upload target IS that
     // session. Otherwise it rides on the create request and the Agent delivers it.
     const withImages = !!(images?.length && agentOf(kind).caps.imagePaste);
+    const tenant = useTenantStore.getState();
+    const owner = launchDraftOwner(tenant);
+    // A refused upload must have a known owner before the launch form can hand it off.
+    if (withImages && (!tenant.resolved || !owner.identified || tenant.notProvisioned)) {
+      toast(t("rp.delivery_identity_pending"), { kind: "warn" });
+      return { ok: false };
+    }
+    const current = () => {
+      if (!withImages) return true;
+      const active = useTenantStore.getState();
+      return !active.notProvisioned && launchDraftOwner(active).prefix === owner.prefix;
+    };
+    const deliveryToast: typeof toast = (...args) => {
+      if (current()) toast(...args);
+    };
     const body: Record<string, unknown> = { dir, kind };
     if (driver) body.driver = driver;
     if (hasModel && model) body.model = model;
@@ -209,13 +224,13 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
       );
       return { ok: false, spaceGone: code === "space_not_found" || undefined };
     }
-    if (repo) {
+    if (repo && current()) {
       writeRepoLast(repo, kind, hasModel ? model : undefined, effortChoice ?? effort, startMode);
       writeRepoSubdir(repo, subdir || "");
     }
     // A repo-less (home) session has no group membership to inherit, so add it directly to
     // the selected working set (docs/log/52 §1). A launch inside a repo inherits the repo's.
-    if (!dir) autoAddToActiveWorkingSet("sessions", res.name);
+    if (!dir && current()) autoAddToActiveWorkingSet("sessions", res.name);
     const chat = agentOf(kind).caps.chat;
     // Now that the session exists, upload any staged attachments to it and fold their
     // saved paths into the first prompt (claude opens them with its Read tool).
@@ -223,49 +238,47 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     let promptLost = false;
     let retryFiles: Awaited<ReturnType<typeof uploadLaunchFiles>> = [];
     if (withImages) {
-      const uploaded = await uploadLaunchFiles(res.name, (images ?? []).map((file) => ({ file, path: "" })), toast);
-      if (uploaded.some((entry) => !entry.path)) {
+      const uploaded = await uploadLaunchFiles(res.name, (images ?? []).map((file) => ({ file, path: "" })), deliveryToast, current);
+      if (!current() || uploaded.some((entry) => !entry.path)) {
         // Releasing part of the first prompt would make the member repeat it when retrying.
         seed = "";
         retryFiles = uploaded;
       } else {
-        const result = await deliverLaunchPrompt(res.name, kind, prompt, uploaded, toast);
+        const result = await deliverLaunchPrompt(res.name, kind, prompt, uploaded, deliveryToast);
         promptLost = !result.ok;
         seed = result.seed;
+        if (promptLost && !current()) retryFiles = uploaded;
       }
     }
-    if (seed) {
+    if (seed && current()) {
       // The send itself runs on the Agent side; the mirror only shows the submitted text as
       // an optimistic echo (launchSeed is a display-only handoff), so chat is not empty for
       // the few seconds between launch and the first turn reaching the transcript.
       if (chat) setLaunchSeed(res.name, seed);
       if (prompt && repo) pushPromptHistory(repo, prompt);
     }
-    if (worktree) {
-      void refreshRepos();
-      useFilesStore.getState().bump();
+    if (current()) {
+      if (worktree) {
+        void refreshRepos();
+        useFilesStore.getState().bump();
+      }
+      void refreshSessions();
+      // The request card shows the session the CP just recorded on it.
+      if (inboxItemId) void useInboxStore.getState().refresh();
+      (chat ? openSessionChat : openSessionTerminal)(res.name);
     }
-    void refreshSessions();
-    // The request card shows the session the CP just recorded on it.
-    if (inboxItemId) void useInboxStore.getState().refresh();
-    (chat ? openSessionChat : openSessionTerminal)(res.name);
     // The created session's name is returned so that accepting a handoff (docs/log/77) can
     // tell the owner WHICH session took it. Callers may look at ok alone.
     // Keep the launch seed memo on incomplete delivery. The launch form uses the result
     // to know when responsibility for the draft has passed to the recovery UI.
     if (retryFiles.length) {
-      // Keep the same text backstop as a launch whose files could not be saved as a memo.
-      // The notification holds the full draft during this Console page's lifetime.
-      const backedUp = !!prompt.trim() && (await stashLaunchDraft(repo, prompt, [])).ok;
-      const dialog = { open: false };
-      toast(createElement(LaunchDeliveryRetry, { session: res.name, kind, repo, prompt, files: retryFiles, dialog }), {
-        kind: "warn",
-        key: launchDeliveryKey(res.name),
-        duration: 0,
-        closeLabel: t("rp.delivery_discard"),
-        canClose: () => !dialog.open,
-      });
-      if (backedUp) toast(t("rp.delivery_text_backup"), { kind: "info" });
+      const saved = await holdLaunchDraft(owner.prefix, { session: res.name, kind, repo, prompt, files: retryFiles });
+      if (!saved && current()) {
+        toast(t("rp.delivery_storage_failed"), { kind: "warn" });
+        // The text memo still gives the member a way back if the browser refused the files.
+        const backedUp = !!prompt.trim() && (await stashLaunchDraft(repo, prompt, [])).ok;
+        if (backedUp && current()) toast(t("rp.delivery_text_backup"), { kind: "info" });
+      }
       return {
         ok: true,
         name: res.name,

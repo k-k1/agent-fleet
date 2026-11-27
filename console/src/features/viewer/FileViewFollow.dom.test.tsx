@@ -18,6 +18,7 @@ const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
 let served: { content: string; editable: boolean } = { content: PLAIN_MD, editable: true };
 
 vi.mock("../../core/api/client.ts", () => ({
+  getTenant: () => "",
   api: vi.fn(async (path: string) => {
     if (path.startsWith("api/fs/linemarks")) return { error: { message: "none" } };
     const { content, editable } = served;

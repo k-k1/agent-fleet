@@ -1,9 +1,14 @@
 // A launch whose session was created but whose draft did not fully arrive (#5077) must say so:
 // the caller deletes the memo and clears the draft on ok, so ok alone would lose what never
 // reached the session.
+import "fake-indexeddb/auto";
+import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { clearAttachDraftSnapshot, readAttachDraftSnapshots, resetAttachDraftDB, settleAttachDraft } from "../../lib/attachDraft.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { launchDraftOwner, useHeldLaunchDrafts } from "./launchDeliveryDraft.ts";
 
 const apiJSON = vi.fn();
 const pasteImage = vi.fn();
@@ -16,6 +21,7 @@ vi.mock("../memo/launchStash.ts", () => ({ stashLaunchDraft: (...a: unknown[]) =
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
 
 const { useStartWork } = await import("./useStartWork.ts");
+const { LaunchDeliveryRecovery } = await import("./LaunchDeliveryRetry.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 const { takeLaunchSeed, subscribeLaunchSeed } = await import("../../lib/launchSeed.ts");
@@ -29,10 +35,55 @@ function Probe() {
   return null;
 }
 const toasts = () => [...document.querySelectorAll(".ui-toast-msg")].map((n) => n.textContent || "");
-const file = (name: string) => new File(["x"], name, { type: "image/png" });
+const file = (name: string, content = "x") => new File([content], name, { type: "image/png" });
+const owner = { tenant: "first", whoami: { email: "first@example.com" }, resolved: true };
+const draftKey = () => launchDraftOwner(useTenantStore.getState()).prefix + "s1";
+const reviewButton = () => document.querySelector<HTMLButtonElement>(".ui-toast-msg button");
+const recoveryDialog = () => document.querySelector<HTMLFormElement>("form[role=dialog]");
+const focusTarget = () => document.querySelector<HTMLButtonElement>("[data-launch-delivery-focus]");
+
+async function editPrompt(text: string) {
+  const prompt = recoveryDialog()!.querySelector("textarea")!;
+  const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(prompt, text);
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function submitRetry(dialog: HTMLFormElement) {
+  await act(async () => dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await vi.waitFor(() => expect(dialog.isConnected && dialog.hasAttribute("inert")).toBe(false));
+}
+
+async function mount() {
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(
+      <ToastProvider>
+        <button data-launch-delivery-focus type="button">Notifications</button>
+        <LaunchDeliveryRecovery />
+        <Probe />
+      </ToastProvider>,
+    );
+  });
+}
+
+async function reload(scope: Partial<ReturnType<typeof useTenantStore.getState>> = owner) {
+  await act(async () => root?.unmount());
+  useHeldLaunchDrafts.setState({ drafts: {} });
+  resetAttachDraftDB();
+  useTenantStore.setState(scope);
+  await mount();
+}
 
 beforeEach(async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   localStorage.clear();
+  globalThis.indexedDB = new IDBFactory();
+  resetAttachDraftDB();
+  useTenantStore.setState(owner);
+  useHeldLaunchDrafts.setState({ drafts: {} });
   takeLaunchSeed("s1");
   apiJSON.mockReset();
   pasteImage.mockReset();
@@ -40,20 +91,14 @@ beforeEach(async () => {
   stash.mockResolvedValue({ ok: true });
   host = document.createElement("div");
   document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      <ToastProvider>
-        <Probe />
-      </ToastProvider>,
-    );
-  });
+  await mount();
 });
 afterEach(async () => {
   await act(async () => root?.unmount());
   host.remove();
   root = null;
   start = null;
+  vi.unstubAllGlobals();
 });
 
 const launch = async (images: File[]) => {
@@ -88,19 +133,15 @@ describe("partial draft delivery", () => {
     const r = await launch([file("a.png"), file("b.png")]);
     expect(r.ok).toBe(true);
     expect(r.incomplete).toEqual({ files: ["b.png"], prompt: true, saved: false, held: true });
-    expect(stash).toHaveBeenCalledExactlyOnceWith("x", "look at these", []);
+    expect(stash).not.toHaveBeenCalled();
     expect(apiJSON).toHaveBeenCalledTimes(1);
     const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
     await act(async () => review.click());
     let dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
     expect(dialog.querySelector("textarea")?.value).toBe("look at these");
     expect(dialog.textContent).toContain("b.png");
-    const submit = async () => {
-      await act(async () => dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    };
-
     pasteImage.mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large" } });
-    await submit();
+    await submitRetry(dialog);
     expect(dialog.textContent).toContain("b.png");
     expect(apiJSON).toHaveBeenCalledTimes(1);
 
@@ -115,7 +156,7 @@ describe("partial draft delivery", () => {
     await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
 
     pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/smaller.png" });
-    await submit();
+    await submitRetry(dialog);
     expect(pasteImage.mock.calls.map(([session, f]) => [session, f.name])).toEqual([
       ["s1", "a.png"], ["s1", "b.png"], ["s1", "b.png"], ["s1", "smaller.png"],
     ]);
@@ -128,6 +169,157 @@ describe("partial draft delivery", () => {
     expect(review.isConnected).toBe(false);
   });
 
+  it("restores edits and unsent bytes after reload, then sends to the original session", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" }).mockResolvedValueOnce({ status: 413 });
+    await launch([file("a.png"), file("b.png")]);
+    await act(async () => reviewButton()!.click());
+    const dialog = recoveryDialog()!;
+    const picker = dialog.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await editPrompt("edited after refusal");
+    await act(async () => dialog.querySelectorAll<HTMLButtonElement>("li button")[1].click());
+    Object.defineProperty(picker, "files", { value: [file("new.png", "new file bytes")] });
+    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+    await settleAttachDraft(draftKey());
+
+    await reload();
+    await vi.waitFor(() => expect(reviewButton()).not.toBeNull());
+    const review = reviewButton()!;
+    review.focus();
+    await act(async () => review.click());
+    const restored = recoveryDialog()!;
+    expect(restored.querySelector("textarea")?.value).toBe("edited after refusal");
+    expect([...restored.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      expect.stringContaining("a.png"), expect.stringContaining("new.png"),
+    ]);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    pasteImage.mockImplementationOnce(async (_session: string, uploaded: File) => {
+      expect(uploaded.type).toBe("image/png");
+      expect(await uploaded.text()).toBe("new file bytes");
+      return { status: 200, path: "/p/new.png" };
+    });
+    await submitRetry(restored);
+    expect(recoveryDialog()).toBeNull();
+    expect(document.activeElement).toBe(focusTarget());
+    expect(pasteImage.mock.calls.map(([session, file]) => [session, file.name])).toEqual([
+      ["s1", "a.png"], ["s1", "b.png"], ["s1", "new.png"],
+    ]);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    expect(apiJSON).toHaveBeenLastCalledWith("api/sessions/s1/input", "POST", {
+      prompt: expect.stringMatching(/edited after refusal[\s\S]*\/p\/a\.png[\s\S]*\/p\/new\.png/),
+      when_ready: true,
+    });
+    await reload();
+    expect(await readAttachDraftSnapshots(launchDraftOwner(useTenantStore.getState()).prefix)).toEqual([]);
+    expect(reviewButton()).toBeNull();
+  });
+
+  it("only restores offers for the resolved member and tenant", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("b.png")]);
+    await reload({ ...owner, resolved: false });
+    expect(reviewButton()).toBeNull();
+
+    await act(async () => useTenantStore.setState({ ...owner, whoami: { email: "another@example.com" } }));
+    expect(reviewButton()).toBeNull();
+    await act(async () => useTenantStore.setState({ ...owner, tenant: "other" }));
+    expect(reviewButton()).toBeNull();
+    await act(async () => useTenantStore.setState(owner));
+    await vi.waitFor(() => expect(reviewButton()).not.toBeNull());
+    await act(async () => reviewButton()!.click());
+    await act(async () => useTenantStore.setState({ tenant: "other" }));
+    expect(recoveryDialog()).toBeNull();
+    expect(reviewButton()).toBeNull();
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops a retry when the tenant changes during an upload", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("b.png"), file("c.png")]);
+    const prefix = launchDraftOwner(useTenantStore.getState()).prefix;
+    await act(async () => reviewButton()!.click());
+    let finishUpload!: (result: { status: number; path: string }) => void;
+    pasteImage.mockImplementationOnce(() => new Promise((resolve) => { finishUpload = resolve; }));
+    await act(async () => recoveryDialog()!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await vi.waitFor(() => expect(finishUpload).toBeTypeOf("function"));
+    await act(async () => useTenantStore.setState({ tenant: "other" }));
+    expect(recoveryDialog()).toBeNull();
+    expect(reviewButton()).toBeNull();
+    await act(async () => useTenantStore.setState(owner));
+    expect(reviewButton()?.disabled).toBe(true);
+    await act(async () => reviewButton()!.click());
+    expect(recoveryDialog()).toBeNull();
+    await act(async () => finishUpload({ status: 200, path: "/p/b.png" }));
+    await settleAttachDraft(prefix + "s1");
+    const [stored] = await readAttachDraftSnapshots(prefix);
+    expect(stored.items.map(({ name, path }) => [name, path])).toEqual([
+      ["b.png", "/p/b.png"], ["c.png", ""],
+    ]);
+    expect(pasteImage).toHaveBeenCalledTimes(3);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(recoveryDialog()).toBeNull();
+    await vi.waitFor(() => expect(reviewButton()?.disabled).toBe(false));
+  });
+
+  it("keeps the original form draft until the launch has a resolved owner", async () => {
+    await act(async () => useTenantStore.setState({ resolved: false, whoami: null }));
+    expect(await launch([file("b.png")])).toEqual({ ok: false });
+    expect(toasts()).toContain(t("rp.delivery_identity_pending"));
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(stash).not.toHaveBeenCalled();
+  });
+
+  it("cannot revive or send a draft another tab already cleared", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("b.png")]);
+    await act(async () => reviewButton()!.click());
+    expect(await clearAttachDraftSnapshot(draftKey())).toBe(true);
+    await editPrompt("stale edit from another tab");
+    await act(async () => settleAttachDraft(draftKey()));
+    const prefix = launchDraftOwner(useTenantStore.getState()).prefix;
+    expect(await readAttachDraftSnapshots(prefix)).toEqual([]);
+    await submitRetry(recoveryDialog()!);
+    expect(reviewButton()).toBeNull();
+    expect(pasteImage).toHaveBeenCalledTimes(1);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses a delivered draft after a failed IndexedDB delete and a reload", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/b.png" });
+    await launch([file("b.png")]);
+    await act(async () => reviewButton()!.click());
+    const deletion = vi.spyOn(IDBObjectStore.prototype, "delete").mockImplementationOnce(() => {
+      throw new DOMException("Delete interrupted", "AbortError");
+    });
+    try {
+      await submitRetry(recoveryDialog()!);
+    } finally {
+      deletion.mockRestore();
+    }
+    const prefix = launchDraftOwner(useTenantStore.getState()).prefix;
+    expect(await readAttachDraftSnapshots(prefix)).toHaveLength(1);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    await reload();
+    await vi.waitFor(async () => expect(await readAttachDraftSnapshots(prefix)).toEqual([]));
+    expect(reviewButton()).toBeNull();
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the text memo fallback if the browser refuses to persist the draft", async () => {
+    vi.stubGlobal("indexedDB", undefined);
+    resetAttachDraftDB();
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("b.png")]);
+    expect(reviewButton()).not.toBeNull();
+    expect(stash).toHaveBeenCalledExactlyOnceWith("x", "look at these", []);
+    expect(toasts()).toContain(t("rp.delivery_storage_failed"));
+  });
+
   it("keeps the retry draft if the session refuses the input", async () => {
     apiJSON.mockImplementation((p: string) => created(p, { error: { code: "busy" } }));
     pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/b.png" });
@@ -135,11 +327,7 @@ describe("partial draft delivery", () => {
     const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
     await act(async () => review.click());
     const dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
-    const submit = () => act(async () => {
-      dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-
-    await submit();
+    await submitRetry(dialog);
     const refusedCall = apiJSON.mock.lastCall;
     expect(dialog.isConnected).toBe(true);
     expect(dialog.querySelector("textarea")?.value).toBe("look at these");
@@ -150,7 +338,7 @@ describe("partial draft delivery", () => {
     const unsubscribe = subscribeLaunchSeed("s1", onSeed);
     try {
       apiJSON.mockImplementation((p: string) => created(p));
-      await submit();
+      await submitRetry(dialog);
       expect(apiJSON).toHaveBeenCalledTimes(3);
       expect(apiJSON.mock.lastCall).toEqual(refusedCall);
       expect(pasteImage).toHaveBeenCalledTimes(2);
@@ -175,8 +363,12 @@ describe("partial draft delivery", () => {
     expect(dialog.isConnected).toBe(true);
     await act(async () => dialog.querySelector<HTMLButtonElement>("header button")!.click());
     await act(async () => discard.click());
-    expect(review.isConnected).toBe(false);
+    await vi.waitFor(() => expect(review.isConnected).toBe(false));
     expect(apiJSON).toHaveBeenCalledTimes(1);
+    await settleAttachDraft(draftKey());
+    await reload();
+    expect(await readAttachDraftSnapshots(launchDraftOwner(useTenantStore.getState()).prefix)).toEqual([]);
+    expect(reviewButton()).toBeNull();
   });
 
   it("reports the file whose upload failed on the network", async () => {

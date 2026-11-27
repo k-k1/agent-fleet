@@ -26,7 +26,7 @@ const DB_VERSION = 1;
 const STORE = "attachments";
 // Abandoned drafts are pruned on the first open of the page session: an attachment nobody
 // came back for in two weeks is not a draft anymore, and its bytes are not free.
-const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+export const ATTACH_DRAFT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 /** One stored attachment. `bytes` is absent for a file that is already uploaded and needs
  *  no thumbnail — its bytes live in the session's pasted dir and the chip is icon + name. */
@@ -61,7 +61,11 @@ interface StoredDraft {
   key: string;
   at: number;
   items: AttachDraftRec[];
+  data?: unknown;
 }
+
+const snapshotFilesKey = (key: string) => key + "\u0000files";
+const isSnapshotFiles = (key: unknown) => typeof key === "string" && key.endsWith("\u0000files");
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -100,14 +104,17 @@ function openDB(): Promise<IDBDatabase | null> {
 // the caller from reading the draft it actually asked for.
 function prune(db: IDBDatabase): void {
   try {
-    const cutoff = Date.now() - MAX_AGE_MS;
+    const cutoff = Date.now() - ATTACH_DRAFT_MAX_AGE_MS;
     const store = db.transaction(STORE, "readwrite").objectStore(STORE);
     const req = store.openCursor();
     req.onsuccess = () => {
       const cur = req.result;
       if (!cur) return;
       const rec = cur.value as StoredDraft;
-      if (!rec || typeof rec.at !== "number" || rec.at < cutoff) cur.delete();
+      if (!rec || typeof rec.at !== "number" || (rec.at < cutoff && !isSnapshotFiles(rec.key))) {
+        cur.delete();
+        if (rec?.data !== undefined) store.delete(snapshotFilesKey(rec.key));
+      }
       cur.continue();
     };
   } catch {
@@ -128,13 +135,16 @@ function run<T>(
     (db) =>
       new Promise<T | null>((resolve) => {
         if (!db || (guard && !guard())) return resolve(null);
+        let tx: IDBTransaction | undefined;
         try {
-          const tx = db.transaction(STORE, mode);
+          tx = db.transaction(STORE, mode);
           const req = fn(tx.objectStore(STORE));
-          req.onsuccess = () => resolve(req.result as T);
+          tx.oncomplete = () => resolve(req.result as T);
           req.onerror = () => resolve(null);
           tx.onabort = () => resolve(null);
         } catch {
+          // Some writers queue several requests. Abort if a later request could not be queued.
+          try { tx?.abort(); } catch { /* The transaction already ended. */ }
           resolve(null);
         }
       }),
@@ -188,6 +198,91 @@ function fileBytes(file: File): Promise<ArrayBuffer | null> {
     bytesOf.set(file, p);
   }
   return p;
+}
+
+/** Read compound drafts for a resolved owner. The prefix ends at the owner boundary. */
+export async function readAttachDraftSnapshots(prefix: string): Promise<StoredDraft[]> {
+  const records = await run<StoredDraft[]>("readonly", (store) =>
+    store.getAll(IDBKeyRange.bound(prefix, prefix + "\uffff", false, true)),
+  );
+  const cutoff = Date.now() - ATTACH_DRAFT_MAX_AGE_MS;
+  const byKey = new Map(records?.map((rec) => [rec.key, rec]));
+  return (records ?? [])
+    .filter((rec) => rec.data !== undefined && rec.at >= cutoff)
+    .map((rec) => ({ ...rec, items: byKey.get(snapshotFilesKey(rec.key))?.items ?? rec.items }));
+}
+
+/** Commit the initial snapshot atomically. Later edits touch only the part they changed. */
+export function writeAttachDraftSnapshot(
+  key: string,
+  data: unknown,
+  files: { file: File; path: string }[] | undefined,
+  existingOnly: boolean,
+): Promise<boolean> {
+  // A prompt edit must not cancel a pending read of a newly attached file.
+  const writeKey = existingOnly && files ? snapshotFilesKey(key) : key;
+  const ticket = takeTicket(writeKey);
+  const current = () => writeSeq.get(writeKey) === ticket;
+  const write = async (): Promise<boolean> => {
+    const items = await Promise.all((files ?? []).map(async ({ file, path }): Promise<AttachDraftRec> => ({
+      name: file.name,
+      type: file.type,
+      image: file.type.startsWith("image/"),
+      path,
+      // After upload the same session already has the bytes. Keep its path and file label.
+      bytes: path ? undefined : (await fileBytes(file)) ?? undefined,
+    })));
+    if (!current()) return true;
+    if (items.some((it) => !it.path && !it.bytes)) return false;
+    const at = Date.now();
+    const record = { key, at, items: [], data } satisfies StoredDraft;
+    const fileRecord = { key: snapshotFilesKey(key), at, items } satisfies StoredDraft;
+    const result = await run<IDBValidKey | StoredDraft | undefined>("readwrite", (store) => {
+      if (!existingOnly) {
+        store.put(fileRecord);
+        return store.put(record);
+      }
+      // A tab that was still editing when another cleared the draft must not bring it back.
+      const previous = store.get(key) as IDBRequest<StoredDraft | undefined>;
+      previous.addEventListener("success", () => {
+        if (!previous.result) return;
+        if (files) {
+          store.put(fileRecord);
+          store.put({ ...previous.result, at });
+        } else {
+          store.put({ ...previous.result, at, data });
+        }
+      });
+      return previous;
+    }, current);
+    return !current() || result != null;
+  };
+  const writing = write();
+  void track(key, Promise.all([pendingWrite.get(key), writing]).then(() => {}));
+  return writing;
+}
+
+export async function hasAttachDraftSnapshot(key: string): Promise<boolean | null> {
+  const result = await run<IDBValidKey | undefined>("readonly", (store) => store.getKey(key));
+  return result === null ? null : result !== undefined;
+}
+
+export function clearAttachDraftSnapshot(key: string): Promise<boolean> {
+  takeTicket(key);
+  takeTicket(snapshotFilesKey(key));
+  const clearing = run("readwrite", (store) => {
+    store.delete(snapshotFilesKey(key));
+    return store.delete(key);
+  }).then((result) => result !== null);
+  void track(key, clearing.then(() => {}));
+  return clearing;
+}
+
+/** Restore a file for a retry. A path-only upload needs a label but never uploads again. */
+export function restoreAttachDraftFile(rec: AttachDraftRec): File | null {
+  if (typeof rec?.name !== "string" || typeof rec.type !== "string" || typeof rec.path !== "string") return null;
+  if (!rec.path && !isBytes(rec.bytes)) return null;
+  return new File(isBytes(rec.bytes) ? [rec.bytes] : [], rec.name, { type: rec.type });
 }
 
 // writeAttachDraft replaces a key's staged attachments. Bytes are kept only where they

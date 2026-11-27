@@ -4,9 +4,9 @@
 // without its file would be sent as a path the agent can't read, and a 30MB PDF copied
 // into the browser to draw an icon is waste that only shows up as a quota error later.
 import "fake-indexeddb/auto";
-import { IDBFactory } from "fake-indexeddb";
-import { beforeEach, describe, expect, it } from "vitest";
-import { clearAttachDraft, readAttachDraft, resetAttachDraftDB, writeAttachDraft } from "./attachDraft.ts";
+import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearAttachDraft, readAttachDraft, readAttachDraftSnapshots, resetAttachDraftDB, writeAttachDraft, writeAttachDraftSnapshot } from "./attachDraft.ts";
 
 const png = (body: string, name = "shot.png"): File => new File([body], name, { type: "image/png" });
 const log = (body: string, name = "server.log"): File => new File([body], name, { type: "text/plain" });
@@ -134,5 +134,20 @@ describe("attachment drafts", () => {
     resetAttachDraftDB();
     expect(await readAttachDraft("old")).toEqual([]);
     expect((await readAttachDraft("new")).map((r) => r.name)).toEqual(["b.png"]);
+  });
+
+  it("updates snapshot text without rewriting the attachments", async () => {
+    const key = "member:session";
+    expect(await writeAttachDraftSnapshot(key, { prompt: "initial" }, [{ file: png("PNG"), path: "" }], false)).toBe(true);
+    const put = vi.spyOn(IDBObjectStore.prototype, "put");
+    try {
+      expect(await writeAttachDraftSnapshot(key, { prompt: "edited" }, undefined, true)).toBe(true);
+      expect(put).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ key, items: [] }));
+    } finally {
+      put.mockRestore();
+    }
+    const [stored] = await readAttachDraftSnapshots("member:");
+    expect(stored.data).toEqual({ prompt: "edited" });
+    expect(await textOf(stored.items[0]?.bytes)).toBe("PNG");
   });
 });
