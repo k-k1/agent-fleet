@@ -41,13 +41,25 @@ func AfterDeliverySatisfies(d MemoDelivery) bool {
 		(d.PRState == PRStateNone && d.TurnEndedAt != "" && !TurnBad(d) && d.AnswerClass == AnswerDone)
 }
 
-// memoPrereqSatisfiedSQL is AfterDeliverySatisfies, plus "delivered by a delivery", for a
-// prerequisite row p.
+// CanConfirmPrerequisite excludes runs that can still hand their messages back to the queue.
+func CanConfirmPrerequisite(d MemoDelivery) bool {
+	return d.State == DeliveryClosed && d.Outcome != DeliveryDeferred && d.Outcome != DeliveryWake
+}
+
+func (t memoTx) ConfirmMemoDelivery(id, deliveryID string) (bool, error) {
+	return affected(t.q.ExecContext(t.ctx, `UPDATE memo SET confirmed_delivery_id=?
+		WHERE id=? AND membership_id=? AND state=? AND delivery_id=? AND delivery_id<>''`,
+		deliveryID, id, t.mid, MemoStateDelivered, deliveryID))
+}
+
+// memoPrereqSatisfiedSQL mirrors memoafter.prereq for eligible prerequisite rows.
 const memoPrereqSatisfiedSQL = `p.state='delivered' AND p.delivery_id<>'' AND EXISTS (SELECT 1 FROM memo_delivery d
-	  WHERE d.id=p.delivery_id AND d.state='closed' AND d.outcome='clean' AND NOT (d.overdue_at<>'' AND d.retire_gen<>0)
-	    AND (d.pr_state='merged'
-	      OR (d.turn_ended_at<>'' AND d.turn_outcome NOT IN ('turn-failed','turn-aborted') AND (d.turn_outcome='clean' OR d.turn_ms>=60000)
-	        AND d.pr_state='none' AND d.answer_class='done')))`
+	  WHERE d.id=p.delivery_id AND d.membership_id=p.membership_id AND d.state='closed'
+	    AND ((p.confirmed_delivery_id=d.id AND d.outcome NOT IN ('deferred','wake'))
+	      OR (d.outcome='clean' AND NOT (d.overdue_at<>'' AND d.retire_gen<>0)
+	        AND (d.pr_state='merged'
+	          OR (d.turn_ended_at<>'' AND d.turn_outcome NOT IN ('turn-failed','turn-aborted') AND (d.turn_outcome='clean' OR d.turn_ms>=60000)
+	            AND d.pr_state='none' AND d.answer_class='done')))))`
 
 // memoEligibleSQL holds for a pending row m whose prerequisites are all satisfied. after_ids is a
 // JSON array of hex ids with no duplicate (the API refuses one), so its element count is its

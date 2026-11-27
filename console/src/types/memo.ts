@@ -110,6 +110,8 @@ export interface MemoAfterItem {
   label?: string;
   state: "satisfied" | "waiting" | "failed";
   reason?: string;
+  /** The closed run the owner can confirm, when automatic evidence has not satisfied this link. */
+  confirmDeliveryId?: string;
   /** The PRs of its run, as last read from the workspace, for reason "pr" (waiting for them to
    *  merge) and "pr_closed". Absent while none was read. */
   prs?: MemoAfterPR[];

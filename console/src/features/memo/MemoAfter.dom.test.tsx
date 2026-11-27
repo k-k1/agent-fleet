@@ -10,6 +10,7 @@ import type { WorkItem } from "../workitems/read.ts";
 let servedMemos: Memo[] = [];
 let servedCats: MemoCategory[] = [];
 const memoUpdate = vi.fn(async (_id: string, _patch: unknown): Promise<Record<string, unknown>> => ({}));
+const confirmPrerequisite = vi.fn(async (_id: string, _prerequisite: string, _delivery: string): Promise<Record<string, unknown>> => ({}));
 vi.mock("./api.ts", () => ({
   memoList: async () => servedMemos,
   memoCategoryList: async () => servedCats,
@@ -23,6 +24,7 @@ vi.mock("./api.ts", () => ({
   memoImageGC: async () => ({}),
   memoQueueList: async () => ({ tenantEnabled: true, queues: [] }),
   memoRelease: async () => ({}),
+  memoConfirmPrerequisite: (id: string, prerequisite: string, delivery: string) => confirmPrerequisite(id, prerequisite, delivery),
   memoQueueResume: async () => ({}),
 }));
 vi.mock("./share.ts", () => ({ consumeShare: async () => null, registerShareSW: () => {} }));
@@ -78,6 +80,7 @@ beforeEach(() => {
   servedCats = [aCat({})];
   memoUpdate.mockClear();
   memoUpdate.mockResolvedValue({});
+  confirmPrerequisite.mockReset();
   useWorkItemStore.setState({ payload: null, loaded: false });
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -132,6 +135,42 @@ const workItem = (key: string, title: string): WorkItem =>
   ({ id: key, queryId: "q", provider: "github", kind: "issue", key, title, state: "open", url: "", assignee: "", labels: [], labelColors: {}, repo: "", updatedAt: "", checks: { state: "", total: 0, failed: 0, pending: 0 }, mergeable: "" }) as WorkItem;
 
 describe("a note that waits for other notes", () => {
+  it("asks before confirming a prerequisite and keeps the dependent on its approval card", async () => {
+    servedCats = [queueCat];
+    const held = aMemo({
+      id: "d1",
+      body: "second job",
+      state: "held",
+      after: ["p1", "p2"],
+      afterStatus: [
+        { id: "p1", label: "first job", state: "failed", reason: "bad_first_turn", confirmDeliveryId: "run1" },
+        { id: "p2", label: "other job", state: "waiting", reason: "running" },
+      ],
+      heldReason: { after: "p1", reason: "bad_first_turn" },
+    });
+    servedMemos = [held];
+    confirmPrerequisite.mockImplementation(async () => {
+      servedMemos = [{ ...held, afterStatus: [{ id: "p1", label: "first job", state: "satisfied", reason: "confirmed" }, held.afterStatus![1]] }];
+      return {};
+    });
+    await renderSection();
+    const confirmButton = () => btn(rowOf("second job"), t("memo.after_confirm"));
+    expect(rowOf("second job").querySelectorAll(".memo-after button")).toHaveLength(1);
+    await click(confirmButton());
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog().textContent).toContain("first job");
+    await click(btn(dialog(), t("ui.cancel")));
+    expect(confirmPrerequisite).not.toHaveBeenCalled();
+    await click(confirmButton());
+    await click(btn(dialog(), t("memo.after_confirm")));
+    expect(confirmPrerequisite).toHaveBeenCalledExactlyOnceWith("d1", "p1", "run1");
+    expect(confirmButton()).toBeUndefined();
+    expect(rowOf("second job").textContent).toContain(t("memo.after_r_confirmed"));
+    expect(rowOf("second job").textContent).toContain(t("memo.after_confirm_approve"));
+    expect(rowOf("second job").textContent).toContain(t("memo.after_r_running"));
+    expect(rowOf("second job").textContent).not.toContain(t("memo.after_r_bad_first_turn"));
+  });
+
   it("says what it waits for and how each stands", async () => {
     servedCats = [queueCat];
     servedMemos = [

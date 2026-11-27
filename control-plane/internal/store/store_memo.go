@@ -43,6 +43,9 @@ type Memo struct {
 	// none. Only the delivery statements write it: InsertMemo and UpdateMemo never do, so a
 	// write that read the row before a claim cannot take the claim away.
 	DeliveryID string
+	// ConfirmedDeliveryID records the run whose work the owner confirmed for this memo.
+	// Returning the memo and delivering it again gives it a different DeliveryID.
+	ConfirmedDeliveryID string
 	// RefProvider, RefKey and RefURL are the typed reference of ADR 0137 section 4: a pointer to
 	// a work item, never a copy of it. All three are set or none is, and the API layer is what
 	// validates them. A reference is part of what a release is bound to.
@@ -133,7 +136,7 @@ const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path
 	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id,
 	ref_provider, ref_key, ref_url, released_by,
 	derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id, after_ids, held_reason,
-	not_before, defer_count, defer_reasons, chain_id, chain_seq, chain_delivery, start_after, recipe, run_next FROM memo`
+	not_before, defer_count, defer_reasons, chain_id, chain_seq, chain_delivery, start_after, recipe, run_next, confirmed_delivery_id FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
@@ -144,7 +147,7 @@ func scanMemo(row scanner) (Memo, error) {
 		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID,
 		&m.RefProvider, &m.RefKey, &m.RefURL, &m.ReleasedBy,
 		&m.DerivedFrom, &m.SourceProvenance, &m.TidyFrom, &m.TidySeenHash, &m.TidyRunID, &m.AfterIDs, &m.HeldReason,
-		&m.NotBefore, &m.DeferCount, &m.DeferReasons, &m.ChainID, &m.ChainSeq, &m.ChainDelivery, &m.StartAfter, &m.Recipe, &runNext)
+		&m.NotBefore, &m.DeferCount, &m.DeferReasons, &m.ChainID, &m.ChainSeq, &m.ChainDelivery, &m.StartAfter, &m.Recipe, &runNext, &m.ConfirmedDeliveryID)
 	m.RunNext = runNext != 0
 	return m, err
 }
