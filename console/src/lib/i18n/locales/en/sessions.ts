@@ -526,9 +526,10 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.archive": "Archive (remove from the list)",
   "srow.prs_merged": "Merged",
   "srow.prs_merged_hint": "Every pull request of this session is finished (merged, or closed). Archive it to tidy the list",
-  "srow.prs_merged_title": "Tidy this session away?",
-  "srow.prs_merged_body": "Every pull request of {name} is finished: at least one merged, any other closed. The session is stopped and archived; the conversation is kept and can be restored from the archive at any time.",
-  "srow.prs_merged_confirm": "Archive",
+  "srow.archive_title": "Archive “{name}”?",
+  "srow.archive_body": "Archiving stops the session if it is running. To restore the conversation, use “Open archive (restore)” in the Repositories heading.",
+  "srow.archive_confirm": "Archive",
+  "srow.prs_merged_reason": "All pull requests for this session are finished. At least one was merged.",
   "srow.recreate": "Recreate (current conversation goes to the archive)",
   "srow.recreate_worktree": "Recreate working copy (worktree)…",
 

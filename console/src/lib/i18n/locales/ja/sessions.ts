@@ -534,9 +534,10 @@ export const sessions = {
   "srow.archive": "アーカイブする（一覧から消す）",
   "srow.prs_merged": "マージ済み",
   "srow.prs_merged_hint": "このセッションのプルリクエストはすべて終わっています（マージ済み、またはクローズ）。アーカイブして一覧から片付けます",
-  "srow.prs_merged_title": "このセッションを片付けますか？",
-  "srow.prs_merged_body": "{name} のプルリクエストはすべて終わっています（1 件以上マージ済み、残りはクローズ）。セッションを止めてアーカイブします。会話は残り、アーカイブからいつでも戻せます。",
-  "srow.prs_merged_confirm": "アーカイブする",
+  "srow.archive_title": "「{name}」をアーカイブしますか？",
+  "srow.archive_body": "実行中のセッションは停止します。会話は「リポジトリ」見出しの「アーカイブを開く（復帰）」から復帰できます。",
+  "srow.archive_confirm": "アーカイブする",
+  "srow.prs_merged_reason": "このセッションのプルリクエストはすべて完了し、1 件以上がマージされています。",
   "srow.recreate": "作り直す（今の会話はアーカイブへ）",
   "srow.recreate_worktree": "作業コピー（worktree）を作り直す…",
 

@@ -35,7 +35,7 @@ const tidyOne = (s: Session, op: "archive" | "delete", stop = true) =>
     .catch(() => ({ s, ok: false }));
 
 export interface SessionActions {
-  /** Hide from the list but KEEP it (restorable). Live sessions stop first. */
+  /** Confirm before moving the session to the archive. Live sessions stop first. */
   archive(s: Session): Promise<void>;
   /** Archive a session whose PRs all merged (#3131), after a confirm that says why it is offered. */
   archiveMerged(s: Session): Promise<void>;
@@ -79,24 +79,26 @@ export function useSessionActions(): SessionActions {
   const closeSessionPanes = useLayoutStore((s) => s.closeSessionPanes);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  const archive = async (s: Session) => {
-    const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" });
-    if (!res.ok) {
-      toast(t("sess.archive_failed"));
+  const confirmArchive = async (s: Session, reason?: string) => {
+    const body = tr("srow.archive_body");
+    if (!(await askConfirm({
+      title: tr("srow.archive_title", { name: displayName(s) }),
+      body: reason ? `${reason} ${body}` : body,
+      confirmLabel: tr("srow.archive_confirm"),
+      safeFocus: true,
+    }))) return;
+
+    const { ok } = await tidyOne(s, "archive");
+    if (!ok) {
+      toast(tr("sess.archive_failed"));
       return;
     }
     closeSessionPanes(s.name);
     void refreshSessions();
   };
 
-  const archiveMerged = async (s: Session) => {
-    const ok = await askConfirm({
-      title: tr("srow.prs_merged_title"),
-      body: tr("srow.prs_merged_body", { name: displayName(s) }),
-      confirmLabel: tr("srow.prs_merged_confirm"),
-    });
-    if (ok) await archive(s);
-  };
+  const archive = (s: Session) => confirmArchive(s);
+  const archiveMerged = (s: Session) => confirmArchive(s, tr("srow.prs_merged_reason"));
 
   const deleteSession = async (s: Session) => {
     if (
