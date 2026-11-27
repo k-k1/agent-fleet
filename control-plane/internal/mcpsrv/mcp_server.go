@@ -603,7 +603,10 @@ func (a ServerAPI) AdminList(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, body)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "servers": out})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenant": t.Slug, "servers": out,
+		"google_workspace": workspacePreset(a.cp.ServerIdentity(r.Context()).PublicBaseURL),
+	})
 }
 
 func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody {
@@ -703,8 +706,7 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if strings.EqualFold(rows[i].Name, name) {
-			writeAPIErr(w, &APIError{http.StatusConflict, codeMCPNameTaken,
-				"a server named " + name + " is already distributed in this tenant"})
+			writeAPIErr(w, mcpNameConflict(name))
 			return
 		}
 	}
@@ -780,19 +782,38 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		err = a.store.UpdateMCPServer(r.Context(), row)
 	}
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		if errors.Is(err, store.ErrMCPServerNameTaken) {
+			writeAPIErr(w, mcpNameConflict(row.Name))
+			return
+		}
+		writeAPIErr(w, mcpServerWriteError(err))
 		return
 	}
-	// Audit detail names the server and the flags, never a header value (docs/log/48 §9).
+	a.recordMCPUpsert(r.Context(), ident, row, stored)
+	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
+}
+
+func mcpNameConflict(name string) *APIError {
+	return &APIError{http.StatusConflict, codeMCPNameTaken, "a server named " + name + " is already distributed in this tenant"}
+}
+
+func mcpServerWriteError(err error) *APIError {
+	if errors.Is(err, store.ErrMCPTenantNotFound) {
+		return &APIError{http.StatusNotFound, "no_tenant", "unknown tenant"}
+	}
+	return internalErr(err)
+}
+
+// Audit detail names the server and the flags, never a header value (docs/log/48 §9).
+func (a ServerAPI) recordMCPUpsert(ctx context.Context, ident store.Identity, row store.MCPServerRow, stored *store.MCPServerRow) {
 	changed := ""
 	if stored != nil && stored.URL != row.URL {
 		changed = " old_url=" + stored.URL + " host_changed=" + boolStr(urlHostChanged(stored.URL, row.URL))
 	}
-	a.auditMCP(r.Context(), ident, t.ID, "mcp.upsert", row.Name,
+	a.auditMCP(ctx, ident, row.TenantID, "mcp.upsert", row.Name,
 		"url="+row.URL+changed+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth+
 			" oauth_client="+row.OAuthClientID+" confidential="+boolStr(row.OAuthSecretEnc != "")+
 			" scopes="+strings.ReplaceAll(row.OAuthScopes, " ", ",")+" elicitation="+row.Elicitation)
-	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
 }
 
 // AdminDelete (DELETE /api/admin/mcp-servers/{id}?tenant=<slug>).

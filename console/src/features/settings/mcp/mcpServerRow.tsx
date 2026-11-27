@@ -156,10 +156,12 @@ export function targetsText(tg: { assistant: boolean; session: boolean; watch?: 
 // ProbeView renders one connection-test outcome (docs/log/48 §10). On failure the server's
 // own stderr / body tail is shown verbatim — a broken command almost always explains
 // itself there, and paraphrasing it would only hide the cause.
-export function ProbeView({ probe, onSignIn }: { probe?: ProbeResult; onSignIn?: () => void }) {
+export function ProbeView({ probe, onSignIn, hideSignInHint }: { probe?: ProbeResult; onSignIn?: () => void; hideSignInHint?: boolean }) {
   const tr = useT();
   if (!probe) return null;
-  if (isOAuthRequired(probe) && probe.oauth) return <OAuthProbeView report={probe.oauth} onSignIn={onSignIn} />;
+  if (isOAuthRequired(probe) && probe.oauth) {
+    return <OAuthProbeView report={probe.oauth} onSignIn={onSignIn} hideSignInHint={hideSignInHint} />;
+  }
   if (!probe.ok) {
     return (
       <div className="mcp-probe mcp-probe--bad">
@@ -172,28 +174,36 @@ export function ProbeView({ probe, onSignIn }: { probe?: ProbeResult; onSignIn?:
     );
   }
   return (
-    <div className="mcp-probe mcp-probe--ok">
-      <Icon name="pass" />
-      <div>
+    <>
+      <div className="mcp-probe mcp-probe--ok">
+        <Icon name="pass" />
         <div>
-          {tr("mcp.test_ok", {
-            name: probe.serverName || "?",
-            version: probe.serverVersion || "?",
-            count: probe.toolCount,
-            ms: probe.elapsedMs,
-          })}
+          <div>
+            {tr("mcp.test_ok", {
+              name: probe.serverName || "?",
+              version: probe.serverVersion || "?",
+              count: probe.toolCount,
+              ms: probe.elapsedMs,
+            })}
+          </div>
+          {probe.revision && <div className="muted mcp-probe-muted">{tr("mcp.test_revision", { rev: probe.revision })}</div>}
+          {probe.tools && probe.tools.length > 0 && <div className="muted mono mcp-probe-muted mcp-probe-mono">{probe.tools.join(", ")}</div>}
         </div>
-        {probe.revision && <div className="muted mcp-probe-muted">{tr("mcp.test_revision", { rev: probe.revision })}</div>}
-        {probe.tools && probe.tools.length > 0 && <div className="muted mono mcp-probe-muted mcp-probe-mono">{probe.tools.join(", ")}</div>}
       </div>
-    </div>
+      {probe.oauth && <OAuthProbeView report={probe.oauth} publicTools />}
+    </>
   );
 }
 
 // OAuthProbeView is the test result of a server that wants an OAuth sign-in: what it offers,
 // and anything the Agent refused to trust. The Sign in button appears for a saved server whose
 // authentication is OAuth (onSignIn); otherwise the note says how to get there.
-function OAuthProbeView({ report, onSignIn }: { report: OAuthReport; onSignIn?: () => void }) {
+function OAuthProbeView({ report, onSignIn, hideSignInHint, publicTools }: {
+  report: OAuthReport;
+  onSignIn?: () => void;
+  hideSignInHint?: boolean;
+  publicTools?: boolean;
+}) {
   const tr = useT();
   const problems = report.problems || [];
   const regLabel = (reg: string[]) =>
@@ -210,12 +220,12 @@ function OAuthProbeView({ report, onSignIn }: { report: OAuthReport; onSignIn?: 
     <div className="mcp-probe info" data-testid="mcp-oauth-probe">
       <Icon name="info" />
       <div>
-        <div>{tr("mcp.oauth_required")}</div>
+        <div>{tr(publicTools ? "mcp.oauth_metadata_found" : "mcp.oauth_required")}</div>
         {onSignIn ? (
           <button className="primary mcp-btn" onClick={onSignIn}>
             {tr("mcp.oauth_probe_signin")}
           </button>
-        ) : (
+        ) : !hideSignInHint && !publicTools && (
           <div className="muted mcp-probe-muted">{tr("mcp.oauth_soon")}</div>
         )}
         {report.challengedScope && <div className="muted mono mcp-probe-muted mcp-probe-mono">{tr("mcp.oauth_scope", { scope: report.challengedScope })}</div>}

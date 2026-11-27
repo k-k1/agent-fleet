@@ -805,6 +805,7 @@ func registerMCPServerRoutes(mux *http.ServeMux, cfg config) {
 	m := mcpsrv.NewServerAPI(cpDeps{cfg.mgr})
 	mux.HandleFunc("GET /api/admin/mcp-servers", m.AdminList)
 	mux.HandleFunc("POST /api/admin/mcp-servers", m.AdminUpsert)
+	mux.HandleFunc("POST /api/admin/mcp-servers/google-workspace", m.AdminCreateWorkspacePreset)
 	mux.HandleFunc("PUT /api/admin/mcp-servers/{id}", m.AdminUpsert)
 	mux.HandleFunc("DELETE /api/admin/mcp-servers/{id}", m.AdminDelete)
 	mux.HandleFunc("GET /internal/mcp-servers", m.WithMCPToken(m.Distribute))

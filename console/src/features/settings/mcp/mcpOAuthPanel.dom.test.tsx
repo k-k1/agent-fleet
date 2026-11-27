@@ -138,6 +138,19 @@ describe("row states", () => {
     expect(list.textContent).toContain("api-39.read");
   });
 
+  it("connected: public probe metadata offers no second sign-in", async () => {
+    setStatus({ state: "connected", sharedWith: ["Drive"] });
+    await mount(row({ probe: {
+      ok: true, toolCount: 1, elapsedMs: 5,
+      oauth: { required: true, selected: "https://as.example.com" },
+    } }));
+    const report = host!.querySelector('[data-testid="mcp-oauth-probe"]');
+    expect(report?.textContent).toContain("OAuth metadata found");
+    expect(report?.querySelector("button")).toBeNull();
+    expect(button("Disconnect")).toBeTruthy();
+    expect(button("Sign in")).toBeUndefined();
+  });
+
   it("connected: a short scope list stays inline", async () => {
     setStatus({ state: "connected", scopes: Array.from({ length: 12 }, (_, i) => `s${i}`) });
     await mount(row());

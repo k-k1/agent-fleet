@@ -3,7 +3,7 @@
 // The CP opens /api/admin/mcp-servers* to tenant_admin (and super_admin), so this view has
 // to be reachable from tenant settings as well as from the admin modal.
 import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
@@ -31,6 +31,8 @@ import {
   tenantScopesValid,
 } from "./mcpWire.ts";
 import { deleteTenantMcpServer, listTenantMcpServers, saveTenantMcpServer } from "./mcpApi.ts";
+import type { WorkspaceMcpPreset } from "./mcpApi.ts";
+import { WorkspaceMcpForm } from "./WorkspaceMcpForm.tsx";
 import { isOk } from "../api.ts";
 import type { TenantForm, TenantServer } from "./mcpWire.ts";
 // Same field furniture as the member tab's form (McpTab), so the two MCP forms stay
@@ -61,33 +63,49 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   const tr = useT();
   const [slug, setSlug] = useState(tenants[0]?.slug || "");
   const [rows, setRows] = useState<TenantServer[] | null>(null);
+  const [preset, setPreset] = useState<WorkspaceMcpPreset | undefined>();
+  const [presetOpen, setPresetOpen] = useState(false);
   const [err, setErr] = useState("");
   const [form, setForm] = useState<TenantForm | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState<TenantServer | null>(null);
+  const loadVersion = useRef(0);
   const { check: egress, recheck: recheckEgress } = useEgressCheck(
     hostsOf([...(rows || []).map((s) => s.url), form?.url]),
   );
 
   const load = useCallback(async () => {
     if (!slug) return;
+    const version = ++loadVersion.current;
     setErr("");
     try {
       const d = await listTenantMcpServers(slug);
+      if (version !== loadVersion.current) return;
       if (d && !isOk(d)) {
         setErr(errText(d.error));
-        setRows([]);
+        setRows((current) => current ?? []);
         return;
       }
       if (!d) throw new TypeError("empty reply body");
       setRows(d.servers || []);
+      if (d.google_workspace) setPreset(d.google_workspace);
     } catch {
-      setErr(tr("admin.load_error"));
+      if (version === loadVersion.current) setErr(tr("admin.load_error"));
     }
   }, [slug, tr]);
   useEffect(() => {
     load();
+    return () => { loadVersion.current++; };
   }, [load]);
+
+  const selectTenant = (next: string) => {
+    loadVersion.current++;
+    setSlug(next);
+    setRows(null);
+    setPreset(undefined);
+    setForm(null);
+    setConfirmDel(null);
+  };
 
   const save = async (f: TenantForm) => {
     setBusy(true);
@@ -127,7 +145,7 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
           {tenants.length > 1 && (
             <label>
               {tr("admin.tenant")}
-              <select value={slug} onChange={(e) => setSlug(e.target.value)}>
+              <select value={slug} disabled={busy || presetOpen} onChange={(e) => selectTenant(e.target.value)}>
                 {tenants.map((t) => (
                   <option key={t.slug} value={t.slug}>
                     {t.name}
@@ -179,10 +197,10 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
                   )}
                   {!s.enabled && <span className="muted">{tr("admin.mcp_disabled")}</span>}
                   <span className="allow-acts">
-                    <button type="button" className="ghost xs" disabled={busy} onClick={() => setForm(tenantFormOf(s))}>
+                    <button type="button" className="ghost xs" disabled={busy || presetOpen} onClick={() => setForm(tenantFormOf(s))}>
                       {tr("mcp.edit")}
                     </button>
-                    <button type="button" className="ghost xs danger" disabled={busy} onClick={() => setConfirmDel(s)}>
+                    <button type="button" className="ghost xs danger" disabled={busy || presetOpen} onClick={() => setConfirmDel(s)}>
                       {tr("common.delete")}
                     </button>
                   </span>
@@ -206,12 +224,21 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
             egress={egress}
             onProposed={recheckEgress}
           />
-        ) : (
-          !form && (
+        ) : !form && !presetOpen && (
+          <div className="le-actions">
             <button type="button" className="ghost" disabled={!slug} onClick={() => setForm(emptyTenantForm())}>
               <Icon name="add" /> {tr("admin.mcp_add")}
             </button>
-          )
+            {preset && (
+              <button type="button" className="ghost" disabled={busy} onClick={() => setPresetOpen(true)}>
+                <Icon name="add" /> {tr("admin.mcp_workspace")}
+              </button>
+            )}
+          </div>
+        )}
+        {presetOpen && preset && (
+          <WorkspaceMcpForm slug={slug} preset={preset} rows={rows || []} onConflict={load}
+            onCancel={() => setPresetOpen(false)} onSaved={() => { setPresetOpen(false); void load(); }} />
         )}
       </section>
 
