@@ -14,6 +14,21 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
+func (e *deliveryEnv) confirmPrerequisiteRequest(who, path string, in memoConfirmPrerequisiteIn, fetchSite string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	body, err := json.Marshal(in)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", path, bytes.NewReader(body))
+	req.Header.Set(inboxTestEmailHeader, who+"@example.com")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", fetchSite)
+	rec := httptest.NewRecorder()
+	e.mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestMemoConfirmPrerequisite(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		ctx := context.Background()
@@ -38,19 +53,11 @@ func TestMemoConfirmPrerequisite(t *testing.T) {
 		in := memoConfirmPrerequisiteIn{PrerequisiteID: pre.ID, DeliveryID: run.ID}
 		press := func(who, path string, in memoConfirmPrerequisiteIn, want int, fetchSite ...string) {
 			t.Helper()
-			body, err := json.Marshal(in)
-			if err != nil {
-				t.Fatal(err)
-			}
-			req := httptest.NewRequest("POST", path, bytes.NewReader(body))
-			req.Header.Set(inboxTestEmailHeader, who+"@example.com")
-			req.Header.Set("Content-Type", "application/json")
+			site := "same-origin"
 			if len(fetchSite) != 0 {
-				req.Header.Set("Sec-Fetch-Site", fetchSite[0])
+				site = fetchSite[0]
 			}
-			r := httptest.NewRecorder()
-			e.mux.ServeHTTP(r, req)
-			if r.Code != want {
+			if r := e.confirmPrerequisiteRequest(who, path, in, site); r.Code != want {
 				t.Fatalf("confirm: %d %s, want %d", r.Code, r.Body.String(), want)
 			}
 		}
@@ -121,6 +128,56 @@ func TestMemoConfirmPrerequisite(t *testing.T) {
 		}
 		if sqlStats, goStats := e.statsOf(q); sqlStats.Eligible != 1 || goStats.Eligible != 1 {
 			t.Fatalf("only the returned sibling should be eligible: SQL %+v, Go %+v", sqlStats, goStats)
+		}
+	})
+}
+
+func TestMemoConfirmPrerequisiteDeliveryOutcomes(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.useQueueAgent("")
+		now := time.Now()
+		for _, tc := range []struct {
+			name, outcome string
+			overdue       bool
+			want          int
+		}{
+			{name: "wake", outcome: store.DeliveryWake, want: http.StatusConflict},
+			{name: "aborted", outcome: store.DeliveryAborted, want: http.StatusNoContent},
+			{name: "unknown", outcome: store.DeliveryUnknown, want: http.StatusNoContent},
+			{name: "overdue", outcome: store.DeliveryClean, overdue: true, want: http.StatusNoContent},
+		} {
+			q := e.queueWith("app", tc.name, nil)
+			pre := e.pending("app", tc.name, "prerequisite")
+			dep := decode[memoDTO](t, e.do("a", "POST", "/api/memos", afterMemo("app", tc.name, "dependent", pre.ID)))
+			run := e.fired(q)
+			e.closeDeliveryAs(run.ID, tc.outcome, "clean", 90_000, now)
+			if tc.overdue {
+				e.setPRs(run.ID, store.PRStateMerged)
+				if _, err := e.st.DB().ExecContext(context.Background(),
+					`UPDATE memo_delivery SET overdue_at=?, retire_gen=3 WHERE id=?`, store.DeliveryTS(now), run.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if sqlSide, goSide := e.statsOf(q); sqlSide.Eligible != 0 || goSide.Eligible != 0 {
+				t.Fatalf("%s should require confirmation: SQL %+v, Go %+v", tc.name, sqlSide, goSide)
+			}
+			in := memoConfirmPrerequisiteIn{PrerequisiteID: pre.ID, DeliveryID: run.ID}
+			path := "/api/memos/" + dep.ID + "/confirm-prerequisite"
+			if r := e.confirmPrerequisiteRequest("a", path, in, "same-origin"); r.Code != tc.want {
+				t.Fatalf("%s confirmation: %d %s, want %d", tc.name, r.Code, r.Body.String(), tc.want)
+			}
+			wantEligible := 1
+			if tc.outcome == store.DeliveryWake {
+				wantEligible = 0
+				// A wake cannot deliver a memo. Even a stale marker on such a row cannot satisfy it.
+				if _, err := e.st.DB().ExecContext(context.Background(),
+					`UPDATE memo SET confirmed_delivery_id=? WHERE id=?`, run.ID, pre.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if sqlSide, goSide := e.statsOf(q); sqlSide.Eligible != wantEligible || goSide.Eligible != wantEligible {
+				t.Fatalf("%s after confirmation, want %d eligible: SQL %+v, Go %+v", tc.name, wantEligible, sqlSide, goSide)
+			}
 		}
 	})
 }
