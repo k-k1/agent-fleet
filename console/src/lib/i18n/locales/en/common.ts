@@ -380,6 +380,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "active.empty_in_set": "Nothing is running in the working set \"{set}\".",
   "active.hidden_waiting_hint_one": "{count} folded child session is waiting for your answer",
   "active.hidden_waiting_hint_other": "{count} folded child sessions are waiting for your answer",
+  "active.queue_group": "{category} ({repo})",
   "active.group_waiting_hint_one": "{count} session in this group is waiting for your answer",
   "active.group_waiting_hint_other": "{count} sessions in this group are waiting for your answer",
   "active.older_stopped_one": "{count} more stopped session not shown (older than 24 hours, or no stop time)",

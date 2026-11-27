@@ -304,8 +304,11 @@ func TestMemoQueueSettings(t *testing.T) {
 		if r.Code != 200 || !got.Enabled || got.MaxActive != 6 || got.Batch != 20 || got.Worktree || got.AgentKind != "codex" || got.SpendCapUSD != 5 {
 			t.Fatalf("update: %d %s", r.Code, r.Body.String())
 		}
+		if r := e.do("a", "PATCH", "/api/memo-categories/"+cat, map[string]any{"position": 4}); r.Code != 200 {
+			t.Fatalf("reorder category: %d %s", r.Code, r.Body.String())
+		}
 		list := decode[memoQueuesWire](t, e.do("a", "GET", "/api/memo-queues", nil)).Queues
-		if len(list) != 1 || list[0].CategoryID != cat || !list[0].Enabled {
+		if len(list) != 1 || list[0].CategoryID != cat || list[0].CategoryPosition != 4 || !list[0].Enabled {
 			t.Fatalf("list: %+v", list)
 		}
 		if l := decode[memoQueuesWire](t, e.do("c", "GET", "/api/memo-queues", nil)).Queues; len(l) != 0 {

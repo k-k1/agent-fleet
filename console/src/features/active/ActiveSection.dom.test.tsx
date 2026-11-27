@@ -27,6 +27,8 @@ const { ACTIVE_EXPANDED_KEY, ACTIVE_EXPANDED_MAX, ACTIVE_GROUPS_FOLDED_KEY, ACTI
 const { readFoldValue, setFoldScope, writeFoldValue } = await import("../../lib/foldStore.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { waitingSessions, sessionBadges } = await import("../../app/activity/badges.ts");
+const { queueScope, useQueueSettingsCache } = await import("../memo/queueSettingsCache.ts");
+const { readMemoQueues } = await import("../memo/queues.ts");
 const { useSchedulesStore } = await import("../schedules/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
@@ -64,6 +66,7 @@ const cards = () => [...host.querySelectorAll<HTMLElement>(".ovw-card")].map((e)
 
 beforeEach(() => {
   localStorage.clear();
+  useQueueSettingsCache.getState().reset();
   api.mockClear();
   setSettings({ workingSets: [], workingSetActive: "" });
   // The default state is unsettled ("…"): each test says what it needs.
@@ -324,6 +327,31 @@ describe("ActiveSection", () => {
       expect(headBtn("u:autorun").getAttribute("aria-expanded")).toBe("false");
       await act(async () => setFoldScope({ tenant: "t1" }));
       expect(headBtn("u:autorun").getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("labels each queue and remembers its fold independently as metadata loads", async () => {
+      const runs = [
+        sess("run-a", { origin: "queue", queueCategoryId: "a" }),
+        sess("review-a", { origin: "session", originSession: "run-a" }),
+        sess("run-b", { origin: "queue", queueCategoryId: "b" }),
+      ];
+      await render(runs);
+      expect(headBtn("u:autorun:a").getAttribute("aria-expanded")).toBe("false");
+      expect(headBtn("u:autorun:b").getAttribute("aria-expanded")).toBe("false");
+      await act(async () => headBtn("u:autorun:a").click());
+      const cache = useQueueSettingsCache.getState();
+      await act(async () => cache.publish(queueScope(), cache.begin(), readMemoQueues({
+        queues: [
+          { categoryId: "a", category: "Reviews", repo: "app", categoryPosition: 2 },
+          { categoryId: "b", category: "Builds", repo: "app", categoryPosition: 1 },
+        ],
+      })!));
+      expect(heads()).toEqual(["Builds (app)", "Reviews (app)"]);
+      expect(headBtn("u:autorun:a").getAttribute("aria-label")).toBe("Reviews (app), 2 running / 2 total");
+      expect(headBtn("u:autorun:a").getAttribute("aria-expanded")).toBe("true");
+      expect(headBtn("u:autorun:b").getAttribute("aria-expanded")).toBe("false");
+      expect(cards()).toEqual(["run-a"]);
+      expect(JSON.parse(readFoldValue(ACTIVE_GROUPS_OPENED_KEY) || "[]")).toEqual(["u:autorun:a"]);
     });
 
     it("Schedules folds, opens and is stored like Auto-run, and a shown schedule worktree child is listed once", async () => {

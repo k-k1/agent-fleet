@@ -22,6 +22,8 @@ import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { useNotificationStore } from "../notifications/store.ts";
 import { waitingAtFromNotifications } from "../sessions/order.ts";
 import { observedWaitingAt } from "../sessions/waiting.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { useQueueSettings } from "../memo/queueSettingsCache.ts";
 import { useShownSchedules } from "../schedules/store.ts";
 import { spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
 import { SessionCard } from "../overview/SessionCard.tsx";
@@ -68,6 +70,9 @@ export const ActiveSection = memo(function ActiveSection() {
   const spaces = useSpacesStore((s) => spacesFor(s, owner));
   const wset = useActiveWorkingSet();
   const shownSchedules = useShownSchedules();
+  const tenant = useTenantStore((s) => s.tenant);
+  const identity = useTenantStore((s) => s.identityRev);
+  const { queues } = useQueueSettings((tenant ?? "") + "\u0000" + identity);
   // Derived from the layout here rather than through useRepoRailContext, which also reads
   // the connections and the launch catalogue: a card launches nothing.
   const running = useWorkspaceStore((s) => s.state) === "running";
@@ -80,18 +85,24 @@ export const ActiveSection = memo(function ActiveSection() {
   const [openedGroups, toggleOpened] = useActiveOpenedGroups();
   const foldedSet = useMemo(() => new Set(foldedGroups), [foldedGroups]);
   const openedSet = useMemo(() => new Set(openedGroups), [openedGroups]);
-  // Ordinary groups start open and store the folded ones; the unattended two start folded and store the opened ones.
+  // Ordinary groups start open and store the folded ones; unattended groups start folded and store the opened ones.
   const isFolded = (g: ActiveGroup) => (isUnattendedKind(g.kind) ? !openedSet.has(g.key) : foldedSet.has(g.key));
-  const groupName = (g: ActiveGroup) => (g.kind === "other" ? tr("pj.other_sessions") : g.kind === "autorun" ? tr("memo.autorun") : g.kind === "schedule" ? tr("sched.title") : g.label);
+  const groupName = (g: ActiveGroup) => {
+    if (g.kind === "other") return tr("pj.other_sessions");
+    if (g.kind === "schedule") return tr("sched.title");
+    if (g.kind !== "autorun") return g.label;
+    if (g.hint) return tr("active.queue_group", { category: g.label, repo: g.hint });
+    return g.label || tr("memo.autorun");
+  };
   // Headings are sorted with the locale's collation, so the order is the locale's too.
   const locale = useLocale();
 
   const now = useNow(60_000);
   const expandedSet = useMemo(() => new Set(expanded), [expanded]);
   const groups = useMemo(
-    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, now),
+    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, now, queues),
     // `locale` is not named in the body: compareText reads it.
-    [sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, now, locale],
+    [sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, now, queues, locale],
   );
   // The unattended groups are left out of the section's count: it says how many sessions of
   // the member's own are running, and a queue's runs would bury it.
@@ -110,7 +121,7 @@ export const ActiveSection = memo(function ActiveSection() {
         <div className="act-list">
           {groups.map((g) => (
             <section className="act-group" key={g.key} data-active-group={g.key}>
-              <h3 className="ovw-gtitle act-gtitle" title={g.hint || undefined}>
+              <h3 className="ovw-gtitle act-gtitle" title={(g.kind === "autorun" ? groupName(g) : g.hint) || undefined}>
                 {/* The heading is a disclosure button: Enter / Space fold it, and a screen reader says which way it is. */}
                 <button type="button" className="act-gfold" aria-expanded={!isFolded(g)}
                   aria-label={[groupName(g), tr("ovw.group_count", { alive: g.alive, n: g.total }), g.waiting > 0 ? tCount("active.group_waiting_hint", g.waiting) : ""].filter(Boolean).join(", ")}

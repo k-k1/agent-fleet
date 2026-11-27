@@ -163,8 +163,8 @@ export function sessions(locale) {
 }
 
 // The Active view's guide shot (SHOT_ACTIVE_GUIDE): the default sessions plus a session in a
-// space and two runs of an auto-run queue, so the view shows a repository, a space, other
-// sessions and the Auto-run group (folded until opened).
+// space and sessions from two auto-run queues, so the view shows ordinary headings followed
+// by the folded queue headings.
 export function sessionsActiveGuide(locale) {
   return [
     ...sessions(locale),
@@ -194,9 +194,28 @@ export function sessionsActiveGuide(locale) {
       alive: true,
       model: "claude-sonnet-5-5",
       origin: "queue",
+      queueCategoryId: "shot-active-deps",
       createdAt: ago(9),
     },
+    {
+      name: "sq7pd6f",
+      kind: "codex",
+      title: L(locale, "回帰テスト", "Regression tests"),
+      repo: "webshop",
+      state: "working",
+      alive: true,
+      origin: "queue",
+      queueCategoryId: "shot-active-tests",
+      createdAt: ago(7),
+    },
   ];
+}
+
+export function queuesActiveGuide(locale) {
+  return { tenantEnabled: true, queues: [
+    { categoryId: "shot-active-deps", repo: "webshop", category: L(locale, "依存更新", "Deps"), categoryPosition: 0 },
+    { categoryId: "shot-active-tests", repo: "webshop", category: L(locale, "テスト", "Tests"), categoryPosition: 1 },
+  ] };
 }
 
 export function spacesActiveGuide(locale) {

@@ -392,33 +392,37 @@ export function lineageNodes(n: RepoTreeNode): RepoTreeNode[] {
   return n.detached && n.detached.length > 0 ? [...childNodes(n), ...n.detached] : childNodes(n);
 }
 
-// sessionAutoKind — which unattended source raised a session, "" = the member's own.
+// sessionAutoRoot — the unattended run that raised a session, if any.
 //
 // origin queue / schedule is the run itself. A child the run spawned (origin "session")
 // follows ONLY origin=session edges up to the first session that is not one: a handoff
 // the member launched from a run keeps origin=user while carrying originSession, so it
 // ends the walk as "the member's" and everything it spawns stays visible. A missing
-// parent or a cycle answers "" (ordinary display), never a guess.
+// parent or a cycle also keeps the session in ordinary display.
 //
 // `shown` holds the ids of schedules the member set to also show in the Sessions view: a session
-// that run's root started and that has its own worktree is then the member's own (""). The root
+// that run's root started and that has its own worktree is then the member's own. The root
 // itself and a child without a worktree stay the Schedules view's; a root with no id, or whose
 // schedule is not in `shown` (gone, not loaded), keeps the default.
-export function sessionAutoKind(s: Session | undefined, byName: Map<string, Session>, shown?: ReadonlySet<string>): AutoKind | "" {
+export function sessionAutoRoot(s: Session | undefined, byName: Map<string, Session>, shown?: ReadonlySet<string>): Session | undefined {
   const seen = new Set<string>();
   let cur = s;
   while (cur) {
-    if (seen.has(cur.name)) return "";
+    if (seen.has(cur.name)) return undefined;
     seen.add(cur.name);
-    if (cur.origin === "queue") return "autorun";
+    if (cur.origin === "queue") return cur;
     if (cur.origin === "schedule") {
-      if (shown && cur !== s && s?.worktree === true && !!cur.scheduleId && shown.has(cur.scheduleId)) return "";
-      return "schedule";
+      if (shown && cur !== s && s?.worktree === true && !!cur.scheduleId && shown.has(cur.scheduleId)) return undefined;
+      return cur;
     }
-    if (cur.origin !== "session") return "";
+    if (cur.origin !== "session") return undefined;
     cur = cur.originSession ? byName.get(cur.originSession) : undefined;
   }
-  return "";
+}
+
+export function sessionAutoKind(s: Session | undefined, byName: Map<string, Session>, shown?: ReadonlySet<string>): AutoKind | "" {
+  const root = sessionAutoRoot(s, byName, shown);
+  return root ? (root.origin === "queue" ? "autorun" : "schedule") : "";
 }
 
 /** Sessions the member's own views list: everything except an unattended run and the sessions it

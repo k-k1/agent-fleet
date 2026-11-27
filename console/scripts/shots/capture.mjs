@@ -1355,7 +1355,7 @@ const SCENES = [
   },
   {
     // The Active view of the left pane (ADR 0145): running and waiting sessions as cards under
-    // their repository, space or "Other sessions", with the unattended Auto-run group folded.
+    // their repository, space or "Other sessions", followed by the folded auto-run queues.
     name: "active-view",
     guide: true,
     stubEnv: { SHOT_ACTIVE_GUIDE: "1" },
@@ -1368,7 +1368,9 @@ const SCENES = [
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     action: `(async () => { await new Promise((r) => setTimeout(r, 1500)); })()`,
     settle: 1500,
-    verify: `document.querySelectorAll("[data-active-group]").length >= 2`,
+    verify: `[...document.querySelectorAll('[data-active-group^="u:autorun:shot-active-"] .act-gfold')].filter((e) =>
+      e.getAttribute("aria-expanded") === "false" && e.querySelector(".ovw-gname")?.textContent.includes("webshop")
+    ).length === 2`,
   },
   {
     // The Terminal view's "Start a terminal" dialog: Home, the repositories and the space (five places, at PLACES_FOLD_MAX so not folded), SSM.
