@@ -46,16 +46,33 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 	if state != "idle" || status.LiveState(sid) != "working" || !idleEndsThisTurn(m, sid) || turnEndHeld(m) {
 		return
 	}
+	// The failure read below may wait on tmux, and the next turn's input can land meanwhile and
+	// write a new working record. The verdict belongs to the record read here: written only while
+	// it is still the current one.
+	rev := ""
+	if rec, ok := status.Read(sid); ok {
+		rev = rec.Rev
+	}
+	current := func() bool {
+		rec, ok := status.Read(sid)
+		return ok && rec.Rev == rev
+	}
 	if t := liveStateTraits(m.Kind); t.TurnFailure != nil {
 		mark, ok := status.TurnMarkOf(sid)
 		if ok || t.TurnFailureUnmarked {
-			if failure := t.TurnFailure(m, mark); failure != "" {
-				agents.MarkTurnEndErr(sid, agents.TurnFailed, failure)
+			switch failure := t.TurnFailure(m, mark); failure {
+			case "":
+			case agents.TurnFailurePending:
+				return
+			default:
+				if current() {
+					agents.MarkTurnEndErr(sid, agents.TurnFailed, failure)
+				}
 				return
 			}
 		}
 	}
-	if t := liveStateTraits(m.Kind); t.TurnEndPending != nil && t.TurnEndPending(m) {
+	if !current() {
 		return
 	}
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)

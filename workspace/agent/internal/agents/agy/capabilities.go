@@ -42,7 +42,7 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 // clears the optimistic "working" /input stored: that poll is where a turn ends, and a stale
 // "working" reads idle.
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
-	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 45 * time.Second, TurnFailure: TurnFailure, TurnFailureUnmarked: true, TurnEndPending: TurnEndPending}
+	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 45 * time.Second, TurnFailure: TurnFailure, TurnFailureUnmarked: true}
 }
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.

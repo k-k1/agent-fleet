@@ -75,11 +75,13 @@ type LiveStateTraits struct {
 	// before the source has a position, one typed into the terminal), with mark "". Only for a
 	// kind whose TurnFailure does not need the mark.
 	TurnFailureUnmarked bool
-	// TurnEndPending reports that the source says the turn ended but the kind's own second
-	// evidence (the screen) cannot confirm it yet, so the poll records nothing this time and asks
-	// again. It must turn false by itself after a short grace, or a completion is held back for good.
-	TurnEndPending func(m session.Meta) bool
 }
+
+// TurnFailurePending is what a kind's TurnFailure returns when the source says the turn ended but
+// its own second evidence (the screen) cannot confirm it yet: the poll records nothing this time
+// and asks again. The kind must stop returning it after a short grace, or a completion is held
+// back for good.
+const TurnFailurePending = "\x00pending"
 
 // FileMarkOffset is the byte offset of a FileSizeMark taken on path, ok=false when the mark is
 // unparseable or path is no longer the file it was taken from. For a kind's TurnFailure, which

@@ -122,14 +122,17 @@ func TestTurnIdentityAgyMissingNewInputDoesNotExpireIntoCompletion(t *testing.T)
 
 // agyFakePane puts a tmux on PATH that answers list-panes and capture-pane with the frame
 // file's content, so the agy pane reads see a refused turn without a terminal.
-func agyFakePane(t *testing.T, frame string) {
+func agyFakePane(t *testing.T, frame string) { agyFakePaneSlow(t, frame, "") }
+
+// agyFakePaneSlow answers capture-pane after the given shell sleep, e.g. "sleep 1; ".
+func agyFakePaneSlow(t *testing.T, frame, sleepFor string) {
 	t.Helper()
 	dir := t.TempDir()
 	f := filepath.Join(dir, "frame")
 	if err := os.WriteFile(f, []byte(frame), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\ncase \"$1\" in\nlist-panes) echo '1 %1';;\ncapture-pane) cat " + f + ";;\nesac\n"
+	script := "#!/bin/sh\ncase \"$1\" in\nlist-panes) echo '1 %1';;\ncapture-pane) " + sleepFor + "cat " + f + ";;\nesac\n"
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -181,5 +184,29 @@ func TestPolledTurnEndAgyWaitsForThePaneThenFails(t *testing.T) {
 	notifyPolledTurnEnd(m, "idle")
 	if rec, _ := status.Read(sid); rec.State != "idle" || rec.TurnEndReason != status.TurnEndReasonFailed {
 		t.Fatalf("state=%q reason=%q, want idle/failed", rec.State, rec.TurnEndReason)
+	}
+}
+
+// The verdict read from the pane belongs to the record read before it: the next turn's input
+// landing while tmux answers must not be turned into an idle/completed state by the old verdict.
+func TestPolledTurnEndAgyVerdictDoesNotOverwriteTheNextTurn(t *testing.T) {
+	for _, tc := range []struct{ name, frame string }{
+		{"refused", agyQuotaFrame},
+		{"clean", "done\n─────\n> \n─────\n? for shortcuts      Gemini · high\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, sid, add := agyIdentityFixture(t, "agy_quota_race_"+tc.name)
+			add([][2]int{{0, 14}, {1, 15}}, 1)
+			agyFakePaneSlow(t, tc.frame, "sleep 1; ")
+			status.Persist(sid, "working")
+			done := make(chan struct{})
+			go func() { notifyPolledTurnEnd(m, "idle"); close(done) }()
+			time.Sleep(300 * time.Millisecond)
+			status.Persist(sid, "working") // the next turn's input, a new record
+			<-done
+			if st, _ := status.Read(sid); st.State != "working" || st.TurnEnd {
+				t.Fatalf("the old verdict overwrote the next turn: %+v", st)
+			}
+		})
 	}
 }

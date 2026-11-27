@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -142,7 +143,7 @@ func idleFrame() string { return "done" + idleChrome }
 
 // An unreadable or unpainted pane right after the DB's last write holds the completion back; an
 // idle pane, or a pane that stays unreadable past the grace, does not.
-func TestTurnEndPendingWaitsForThePaneOnlyBriefly(t *testing.T) {
+func TestTurnFailurePendingWaitsForThePaneOnlyBriefly(t *testing.T) {
 	old, oldAlive := capturePaneFrame, paneSessionAlive
 	defer func() { capturePaneFrame, paneSessionAlive = old, oldAlive }()
 	paneSessionAlive = func(string) bool { return true }
@@ -151,20 +152,20 @@ func TestTurnEndPendingWaitsForThePaneOnlyBriefly(t *testing.T) {
 	for _, tc := range []struct {
 		name, frame string
 		age         time.Duration
-		want        bool
+		want        string
 	}{
-		{"capture failed, DB just written", "", time.Second, true},
-		{"footer not painted, DB just written", "partial\nesc to cancel\n", time.Second, true},
-		{"idle footer", idleFrame(), time.Second, false},
-		{"capture failed, past the grace", "", 5 * time.Minute, false},
-		{"no tmux session at all", "\x00", time.Second, false},
+		{"capture failed, DB just written", "", time.Second, agents.TurnFailurePending},
+		{"footer not painted, DB just written", "partial\nesc to cancel\n", time.Second, agents.TurnFailurePending},
+		{"idle footer", idleFrame(), time.Second, ""},
+		{"capture failed, past the grace", "", 5 * time.Minute, ""},
+		{"no tmux session at all", "\x00", time.Second, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := staleFixture(t, "slot-pend", rows, [][]byte{executorRow(4, 1)}, tc.age)
 			capturePaneFrame = func(string) string { return strings.TrimPrefix(tc.frame, "\x00") }
 			paneSessionAlive = func(string) bool { return !strings.HasPrefix(tc.frame, "\x00") }
-			if got := TurnEndPending(m); got != tc.want {
-				t.Fatalf("got %v want %v", got, tc.want)
+			if got := TurnFailure(m, ""); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
 			}
 		})
 	}
@@ -203,5 +204,23 @@ func TestRanTurnSinceNeedsACompletedRun(t *testing.T) {
 	capturePaneFrame = func(string) string { return idleFrame() }
 	if ranTurnSince(m, now.Add(-time.Hour)) {
 		t.Fatal("a write older than the episode counted as a newer turn")
+	}
+}
+
+// Any wrap the TUI makes reads whole, and the reset comes out of the same text that was detected.
+func TestQuotaBannerWrapsAreReadWhole(t *testing.T) {
+	for _, tc := range []struct{ name, banner string }{
+		{"width 40, break inside a word", "Individual quota reached. Please upgrade\nyour subscription to increase your limi\nts. Resets in 1h39m46s."},
+		{"break inside the phrase and a word", "Individual quota\nreached. Please upgrade your subscript\nion to increase your limits. Resets in 1h39m46s."},
+		{"break inside the number", "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h3\n9m46s."},
+	} {
+		text, ok := quotaBannerInFrame(tc.banner + idleChrome)
+		if !ok {
+			t.Errorf("%s: not detected", tc.name)
+			continue
+		}
+		if d, ok := quotaResetIn(text); !ok || d != time.Hour+39*time.Minute+46*time.Second {
+			t.Errorf("%s: reset %v ok=%v", tc.name, d, ok)
+		}
 	}
 }

@@ -25,14 +25,23 @@ import (
 // quotaBannerLines bounds how many transcript lines the banner may be wrapped over.
 const quotaBannerLines = 4
 
-// quotaTailRe is everything the banner may carry after "quota reached": the upgrade hint and
-// the countdown, in either's absence. Anything else after it is a newer line of the transcript.
-var quotaTailRe = regexp.MustCompile(`(?i)^[\s.:,]*(?:please upgrade your subscription to increase your limits\.?)?\s*(?:resets in (?:\d+\s*[a-z]+\s*)+\.?)?\s*$`)
+// The banner is matched with every whitespace character removed: the TUI wraps it at a width
+// of its own, and a break can fall between words, inside a word or inside a number. Detection and
+// the reset instant read the same compact text, so they cannot disagree about a wrap.
+//
+// head: optional glyphs and an "error:" label, then the phrase, at the very start. A markdown
+// quote or bullet (">", "-", "*"), a prompt echo and a sentence that merely mentions the phrase
+// all have something else in front of it. tail: the upgrade hint and the countdown, either of
+// them optional but not both; anything else is a newer line of the transcript.
+var (
+	quotaHeadRe  = regexp.MustCompile(`(?i)^(?:[^\p{L}\p{N}>\-*+•])*(?:(?:error|warning)[:]?)?individualquotareached`)
+	quotaTailRe  = regexp.MustCompile(`(?i)^[.:,]*(?:pleaseupgradeyoursubscriptiontoincreaseyourlimits\.?)?(?:resetsin(?:\d+[a-z]+)+\.?)?$`)
+	quotaResetRe = regexp.MustCompile(`(?i)resetsin((?:\d+[a-z]+)+)`)
+)
 
-// quotaHeadRe is how the banner starts: optional glyphs and an "error:" label, then the phrase
-// itself, at the very start. A markdown quote or bullet (">", "-", "*"), a prompt echo and a
-// sentence that merely mentions the phrase all have something else in front of it.
-var quotaHeadRe = regexp.MustCompile(`(?i)^(?:[^\p{L}\p{N}>\-*+•]\s*)*(?:(?:error|warning)\b[:\s]*)?individual\s*quota\s*reached\b`)
+func compact(s string) string {
+	return strings.Join(strings.Fields(s), "")
+}
 
 // quotaRefusalSource is the episode's Source for a reset read off the banner.
 const quotaRefusalSource = "agy:quota-banner"
@@ -81,42 +90,30 @@ func quotaBannerInFrame(frame string) (text string, ok bool) {
 	if !ok {
 		return "", false
 	}
-	// Newest candidate first: the banner may be wrapped over several lines, and a wrap that
-	// splits a word or a number joins without the space.
+	// Newest candidate first: the banner may be wrapped over several lines.
 	for k := len(content) - 1; k >= 0; k-- {
-		for _, join := range []func([]string) string{joinWrapped, joinWith(" "), joinWith("")} {
-			joined := join(content[k:])
-			loc := quotaHeadRe.FindStringIndex(joined)
-			if loc == nil {
-				continue
-			}
-			if tail := joined[loc[1]:]; quotaTailRe.MatchString(tail) && strings.Trim(tail, " .:,") != "" {
-				return joined, true
-			}
+		joined := strings.Join(content[k:], " ")
+		c := compact(joined)
+		loc := quotaHeadRe.FindStringIndex(c)
+		if loc == nil {
+			continue
+		}
+		if tail := c[loc[1]:]; quotaTailRe.MatchString(tail) && strings.Trim(tail, ".:,") != "" {
+			return joined, true
 		}
 	}
 	return "", false
 }
 
-func joinWith(sep string) func([]string) string {
-	return func(l []string) string { return strings.Join(l, sep) }
-}
-
-// joinWrapped joins wrapped lines with a space except where a digit meets a digit, which is a
-// number the wrap cut ("1h3" / "9m46s"), so a banner wrapped between words and through a number
-// reads whole.
-func joinWrapped(lines []string) string {
-	var b strings.Builder
-	for i, l := range lines {
-		if i > 0 {
-			prev := lines[i-1]
-			if !(prev[len(prev)-1] >= '0' && prev[len(prev)-1] <= '9' && l[0] >= '0' && l[0] <= '9') {
-				b.WriteByte(' ')
-			}
-		}
-		b.WriteString(l)
+// quotaResetIn is the countdown of a banner, ok=false when it names none (or a unit it does not
+// know).
+func quotaResetIn(text string) (time.Duration, bool) {
+	m := quotaResetRe.FindStringSubmatch(compact(text))
+	if m == nil {
+		return 0, false
 	}
-	return b.String()
+	d := resetDuration(strings.Join(resetPartRe.FindAllString(m[1], -1), " "))
+	return d, d > 0
 }
 
 func isRule(t string) bool { return strings.Trim(t, "─━-═ ") == "" }
@@ -171,36 +168,34 @@ func forgetQuota(name string) {
 // quota when the banner is the last thing it drew. Without it the poll reports a clean
 // completion. The mark is not used: the pane carries no turn identity, and a turn without a mark
 // (a first input, one typed into the terminal) must still be judged (TurnFailureUnmarked).
-// It reads the pane once and never waits: a poll that blocks here can outlive the turn it judges.
+//
+// One capture answers all three questions (refused, cleanly idle, not confirmable yet), and it
+// never waits. When the pane is not captured or its idle footer is not painted while the
+// conversation was written within quotaPaintGrace, a refusal may still be about to appear: it
+// returns agents.TurnFailurePending, and the poll asks again. Past the grace the end completes
+// as before, so an unreadable pane cannot hold a completion back for good.
 func TurnFailure(m session.Meta, _ string) string {
-	if text, ok := paneQuotaBanner(m.Name); ok {
+	frame := capturePaneFrame(session.TmuxName(m.Name))
+	if text, ok := quotaBannerInFrame(frame); ok {
 		return text
 	}
-	return ""
-}
-
-// TurnEndPending is agents.LiveStateTraits.TurnEndPending: the state source says the turn ended,
-// but the pane cannot confirm it yet (not captured, or the idle footer not painted) and the
-// conversation was written within quotaPaintGrace, so a refusal may still be about to appear.
-// The poll leaves the end unrecorded and asks again; past the grace it completes as before, so
-// an unreadable pane cannot hold a completion back for good.
-func TurnEndPending(m session.Meta) bool {
-	frame := capturePaneFrame(session.TmuxName(m.Name))
 	if hasIdleFooter(frame) {
-		return false
+		return ""
 	}
 	// No frame at all only counts as "not captured" while the tmux session is there: a session
 	// without a pane has nothing to wait for.
 	if strings.TrimSpace(frame) == "" && !paneSessionAlive(session.TmuxName(m.Name)) {
-		return false
+		return ""
 	}
 	captureConversation(m)
 	conv := sids.Read(session.UUID(m.Dir, m.Name))
 	if conv == "" {
-		return false
+		return ""
 	}
-	mt, ok := dbModTime(conv)
-	return ok && quotaNow().Sub(mt) < quotaPaintGrace
+	if mt, ok := dbModTime(conv); ok && quotaNow().Sub(mt) < quotaPaintGrace {
+		return agents.TurnFailurePending
+	}
+	return ""
 }
 
 // atQuotaLimit is agents.UsageLimitTraits.AtLimit: the quota is a window that waiting clears.
@@ -221,11 +216,11 @@ func quotaResetAt(m session.Meta, _ bool, _ time.Time) (time.Time, string, bool)
 	if !ok {
 		return time.Time{}, "", false
 	}
-	at, ok := LimitInMessage(text, firstSeenQuota(m.Name, text, quotaNow()))
-	if !ok || at.IsZero() {
+	d, ok := quotaResetIn(text)
+	if !ok {
 		return time.Time{}, "", false
 	}
-	return at, quotaRefusalSource, true
+	return firstSeenQuota(m.Name, text, quotaNow()).Add(d), quotaRefusalSource, true
 }
 
 // ranTurnSince is agents.UsageLimitTraits.RanTurnSince: the session finished a turn successfully
@@ -239,7 +234,7 @@ func ranTurnSince(m session.Meta, at time.Time) bool {
 	if conv == "" || !hasIdleFooter(capturePaneFrame(session.TmuxName(m.Name))) {
 		return false
 	}
-	if mt, ok := dbModTime(conv); !ok || !mt.After(at.Add(2*time.Second)) {
+	if mt, ok := dbModTime(conv); !ok || !mt.After(at) {
 		return false
 	}
 	return lastRunCompleted(conv)
