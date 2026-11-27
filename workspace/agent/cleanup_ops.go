@@ -560,11 +560,27 @@ func archiveSessionForDelete(m session.Meta) (string, error) {
 		ID: newCleanupID(nowUTC(), idSlug(m.Name)), At: nowUTC().Format(time.RFC3339),
 		Reason: "delete_session", Sessions: []cleanupArchivedSession{as},
 	}
-	if err := writeCleanupBundle(&man, payloads, true); err != nil {
+	err := cleanupBundleWriter(&man, payloads, true)
+	if err != nil && as.History != "" {
+		// The history is a convenience: a trash that cannot hold it (a full disk) must still take
+		// the session, as it did before histories were carried.
+		log.Printf("trash %s: archive with terminal history failed (%v); retrying without it", m.Name, err)
+		delete(payloads, as.History)
+		as.History, as.HistoryMod = "", ""
+		man = cleanupManifest{
+			ID: newCleanupID(nowUTC(), idSlug(m.Name)), At: nowUTC().Format(time.RFC3339),
+			Reason: "delete_session", Sessions: []cleanupArchivedSession{as},
+		}
+		err = cleanupBundleWriter(&man, payloads, true)
+	}
+	if err != nil {
 		return "", err
 	}
 	return man.ID, nil
 }
+
+// cleanupBundleWriter is writeCleanupBundle; a var only so a test can fail the first write.
+var cleanupBundleWriter = writeCleanupBundle
 
 // addTerminalHistoryPayload carries a trashed shell's terminal history in its archive while the
 // tenant keeps history at all (AF_TERMINAL_HISTORY_RETENTION_DAYS > 0). With retention off the

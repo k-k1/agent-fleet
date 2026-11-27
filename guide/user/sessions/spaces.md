@@ -78,7 +78,7 @@ shell and SSM sessions to the trash.
 - A restore is refused when something already sits at the space's folder name under `~/spaces`: move or delete that,
   then restore again
 - **"Delete permanently"** on the trash row removes the folder and its files for good. The row's size is the
-  folder's; "or more" after it means a very large folder was only measured in part. A shell's scrollback in the trash stays in its archive until you delete the row. The trash never empties on its own, and it takes the room until then
+  folder's; "or more" after it means the measuring limit was reached, so the size shown is a lower bound. A shell's scrollback in the trash stays in its archive until you delete the row. The trash never empties on its own, and it takes the room until then
 - The space needs the trash and `~/spaces` to be on one file system, which they are in a workspace. If they are not, nothing is deleted and
   the dialog says so
 

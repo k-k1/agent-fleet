@@ -614,6 +614,9 @@ func placeNoReplace(tmp, dest string) (created bool, err error) {
 	return false, err
 }
 
+// chtimes is os.Chtimes; a var only so a test can make it fail.
+var chtimes = os.Chtimes
+
 // restoreTerminalHistory puts a restored shell's archived terminal history back where nothing
 // is, best effort: the shell is already back, and a screen history is not worth failing a restore
 // over. It is skipped when retention is off or the history has outlived it, and the placed file
@@ -643,7 +646,7 @@ func restoreTerminalHistory(s cleanupArchivedSession, meta session.Meta, payload
 	defer os.Remove(tmp)
 	// Without the original time the janitor would age the file from the restore, stretching the
 	// retention: leave it out instead.
-	if err := os.Chtimes(tmp, mod, mod); err != nil {
+	if err := chtimes(tmp, mod, mod); err != nil {
 		log.Printf("restore %s: terminal history not restored: %v", meta.Name, err)
 		return
 	}

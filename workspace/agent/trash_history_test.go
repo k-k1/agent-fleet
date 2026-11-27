@@ -17,6 +17,7 @@ func historyEnv(t *testing.T, days string) string {
 	t.Helper()
 	home := handoverEnv(t)
 	t.Setenv("AF_TERMINAL_HISTORY_DIR", "")
+	t.Setenv("TMPDIR", t.TempDir()) // the retention-off history lives under os.TempDir()
 	t.Setenv("AF_TERMINAL_HISTORY_RETENTION_DAYS", days)
 	return home
 }
@@ -219,6 +220,78 @@ func TestRestoreIgnoresAHistoryRecordNamedForAnotherSession(t *testing.T) {
 	}
 	if _, err := os.Stat(terminalHistoryPath("other01")); err == nil {
 		t.Fatal("history was written under a name the restore never locked")
+	}
+}
+
+func TestRestoreDoesNotReplaceAHistoryThatAppearsBeforePlacement(t *testing.T) {
+	home := historyEnv(t, "7")
+	m := shellSession(t, home, "hist009")
+	writeHistory(t, m.Name, "archived", time.Now())
+	arch, _, err := trashSession(m, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreAfterStage = func() { writeHistory(t, m.Name, "appeared", time.Now()) }
+	defer func() { restoreAfterStage = nil }()
+	if _, err := restoreCleanupArchive(arch); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, terminalHistoryPath(m.Name)); got != "appeared" {
+		t.Fatalf("history = %q, want the one that appeared first", got)
+	}
+}
+
+func TestRestoreSkipsHistoryWhenItsTimeCannotBeKept(t *testing.T) {
+	home := historyEnv(t, "7")
+	m := shellSession(t, home, "hist010")
+	writeHistory(t, m.Name, "archived", time.Now())
+	arch, _, err := trashSession(m, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chtimes = func(string, time.Time, time.Time) error { return os.ErrPermission }
+	defer func() { chtimes = os.Chtimes }()
+	if _, err := restoreCleanupArchive(arch); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := session.ReadMeta(m.Name); !ok {
+		t.Fatal("the shell must still be restored")
+	}
+	if _, err := os.Stat(terminalHistoryPath(m.Name)); err == nil {
+		t.Fatal("a history with a wrong mtime was placed")
+	}
+}
+
+func TestTrashFallsBackToAnArchiveWithoutHistoryWhenTheFirstWriteFails(t *testing.T) {
+	home := historyEnv(t, "7")
+	m := shellSession(t, home, "hist011")
+	writeHistory(t, m.Name, "big", time.Now())
+	calls := 0
+	cleanupBundleWriter = func(man *cleanupManifest, p map[string][]byte, pending bool) error {
+		calls++
+		if calls == 1 {
+			return os.ErrInvalid // stands for ENOSPC
+		}
+		return writeCleanupBundle(man, p, pending)
+	}
+	defer func() { cleanupBundleWriter = writeCleanupBundle }()
+	arch, _, err := trashSession(m, false)
+	if err != nil || calls != 2 {
+		t.Fatalf("trash = %v after %d writes, want success on the second", err, calls)
+	}
+	for _, a := range listCleanupArchives() {
+		if a.ID == arch && a.Sessions[0].History != "" {
+			t.Fatal("the fallback archive still names a history")
+		}
+	}
+	// And when the second write fails too, the delete is refused and the shell is still there.
+	m2 := shellSession(t, home, "hist012")
+	cleanupBundleWriter = func(*cleanupManifest, map[string][]byte, bool) error { return os.ErrInvalid }
+	if _, _, err := trashSession(m2, false); err == nil {
+		t.Fatal("the delete succeeded with nothing archived")
+	}
+	if _, ok := session.ReadMeta(m2.Name); !ok {
+		t.Fatal("the meta was removed although no archive was written")
 	}
 }
 
