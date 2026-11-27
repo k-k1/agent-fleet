@@ -68,8 +68,8 @@ type spaceTombstone struct {
 	Shelved []string `json:"shelved,omitempty"`
 }
 
-// spaceTrashDir is where the folder of archive id waits.
-func spaceTrashDir(id string) string { return filepath.Join(cleanupStoreDir(), id+".space") }
+// spaceTrashName is the folder for this archive, relative to the opened trash directory.
+func spaceTrashName(id string) string { return id + ".space" }
 
 // newSpaceArchiveID is a trash entry id for the space in folder: the usual time-sortable prefix,
 // then the folder's start and a random token, so two entries never share an id (a purge of one
@@ -87,29 +87,22 @@ var newSpaceArchiveID = func(now time.Time, folder string) string {
 }
 
 // entryIDFree reports whether no file of a trash entry with this id exists.
-func entryIDFree(id string) bool {
-	for _, p := range []string{id + ".json", id + ".tar.gz", id + ".space", id + ".restoring"} {
-		if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), p)); !errors.Is(err, fs.ErrNotExist) {
+func entryIDFree(trash *os.Root, id string) bool {
+	if !validArchiveID(id) {
+		return false
+	}
+	for _, name := range []string{id + ".json", id + ".tar.gz", spaceTrashName(id), restoringMarkerName(id), spaceRestoreRecordName(id)} {
+		if _, err := trash.Lstat(name); !errors.Is(err, fs.ErrNotExist) {
 			return false
 		}
 	}
 	return true
 }
 
-// sidecarReadable reports whether the listing's file for id exists and parses to id.
-func sidecarReadable(id string) bool {
-	b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json"))
-	if err != nil {
-		return false
-	}
-	var m cleanupManifest
-	return json.Unmarshal(b, &m) == nil && m.ID == id
-}
-
 // removeOwnEntry discards a failed delete's own archive files. It leaves any folder in the trash.
-func removeOwnEntry(id string) {
-	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
-	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
+func removeOwnEntry(trash *os.Root, id string) {
+	_ = trash.Remove(id + ".json")
+	_ = trash.Remove(id + ".tar.gz")
 }
 
 // deleteSpaceResponse is DELETE /spaces/{folder}'s answer: the folder, and the id of the trash entry
@@ -152,7 +145,14 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("could not open the trash, so the space was not deleted: %v", err))
 		return
 	}
-	if same, err := spacex.SameDevice(dir, store); err != nil || !same {
+	trash, err := os.OpenRoot(store)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFailed,
+			fmt.Sprintf("could not open the trash, so the space was not deleted: %v", err))
+		return
+	}
+	defer trash.Close()
+	if same, err := spacex.SameDevice(dir, trash); err != nil || !same {
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFS,
 			"the trash is on another file system than ~/spaces, so the space cannot be moved to it; nothing was deleted")
 		return
@@ -207,7 +207,7 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	// trash (which would leave the files with nothing to name them).
 	failed, moveErr := gitx.RemoveWithShellTrash(dir, settle, func() error {
 		var err error
-		sessionx.WithCleanupLock(func() { err = moveSpaceToTrash(folder, now, &man) })
+		sessionx.WithCleanupLock(func() { err = moveSpaceToTrash(trash, folder, now, &man) })
 		return err
 	})
 	if moveErr != nil {
@@ -233,21 +233,21 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, deleteSpaceResponse{Deleted: folder, Archive: man.ID})
 }
 
-func moveSpaceToTrash(folder string, now time.Time, man *cleanupManifest) error {
+func moveSpaceToTrash(trash *os.Root, folder string, now time.Time, man *cleanupManifest) error {
 	// An id none of whose files exists yet, checked under the lock that space deletes and
 	// purges take (the other archive writers claim their id with O_EXCL on the tarball
 	// instead, and their ids have another shape, so they cannot draw this one): whatever is
 	// found under it afterwards is this attempt's own, and a clean-up of a failed attempt
 	// removes nothing that was there before.
 	for attempt := 0; man.ID == "" && attempt < 4; attempt++ {
-		if id := newSpaceArchiveID(now, folder); entryIDFree(id) {
+		if id := newSpaceArchiveID(now, folder); entryIDFree(trash, id) {
 			man.ID = id
 		}
 	}
 	if man.ID == "" {
 		return errors.New("could not find a free trash id")
 	}
-	if err := writeCleanupArchive(man, nil); err != nil {
+	if err := writeCleanupBundleIn(trash, man, nil, false); err != nil {
 		return fmt.Errorf("could not record the space in the trash: %w", err)
 	}
 	if spaceAfterManifest != nil {
@@ -256,13 +256,13 @@ func moveSpaceToTrash(folder string, now time.Time, man *cleanupManifest) error 
 	// The list reads the sidecar alone; one that could not be written (missing, or cut short)
 	// would hide a row whose folder is in the trash. Refused here, with nothing moved, rather
 	// than found out later.
-	if !sidecarReadable(man.ID) {
-		removeOwnEntry(man.ID)
+	if _, err := readArchiveSidecar(trash, man.ID); err != nil {
+		removeOwnEntry(trash, man.ID)
 		return errors.New("could not list the space in the trash")
 	}
-	if err := spacex.MoveOut(folder, spaceTrashDir(man.ID)); err != nil {
+	if err := spacex.MoveOut(folder, trash, spaceTrashName(man.ID)); err != nil {
 		// Only the files this attempt wrote go, never a .space directory: none of ours exists.
-		removeOwnEntry(man.ID)
+		removeOwnEntry(trash, man.ID)
 		return err
 	}
 	return nil
@@ -348,58 +348,144 @@ func decideDeleteSpace(w http.ResponseWriter, folder, dir string) (end func()) {
 	return release
 }
 
-// restoreDeletedSpace puts a deleted space back from the trash entry id, then takes the sessions
-// its delete shelved off the shelf. A space that is already back (the entry was restored before,
-// or the folder was recreated) is left as it is and only the sessions are restored, which makes
-// restoring twice safe.
-func restoreDeletedSpace(id string, t spaceTombstone) error {
+// A record written before moving the directory proves which directory can resume an
+// interrupted restore. Shelf revisions keep the retries from undoing a later shelf action.
+type spaceRestoreRecord struct {
+	ID       string               `json:"id"`
+	Folder   string               `json:"folder"`
+	Identity spacex.TrashIdentity `json:"identity"`
+	Shelved  map[string]string    `json:"shelved"`
+	Complete bool                 `json:"complete,omitempty"`
+}
+
+func spaceRestoreRecordName(id string) string { return id + ".space-restore" }
+
+// Tests pause or fail completion after the folder and sessions are back.
+var spaceBeforeRestoreComplete func()
+
+func restoreDeletedSpace(trash *os.Root, id string, archive os.FileInfo, t spaceTombstone) error {
 	if !spacex.ValidFolder(t.Folder) {
 		return &restoreConflict{errCodeSpaceRestoreMissing, "the trash entry names no space folder"}
 	}
-	src := spaceTrashDir(id)
 	if spaceRestoreStart != nil {
 		spaceRestoreStart()
 	}
-	var err error
+	dir := filepath.Join(spacex.Root(), t.Folder)
+	var restoreErr error
+	// The delete holds its mark through shelving. Hold the gate through our own shelf work
+	// so a new delete cannot take a mark after the move but before the last session is back.
+	// Order: deletion gate, cleanup lock, space lifecycle or session meta lock.
 	sessionx.WithDeletionGate(func() {
-		if gitx.UnderDeletion(filepath.Join(spacex.Root(), t.Folder)) {
-			err = &restoreConflict{gitx.ErrCodeDeleteInProgress(), "a delete of this space is still in progress; try again in a moment"}
+		if gitx.UnderDeletion(dir) {
+			restoreErr = &restoreConflict{gitx.ErrCodeDeleteInProgress(), "a delete of this space is still in progress; try again in a moment"}
 			return
 		}
-		_, statErr := os.Lstat(src)
-		_, back := spacex.Lookup(t.Folder)
-		switch {
-		case statErr != nil && back:
-			// Moved back by an earlier restore.
-		case statErr != nil:
-			err = &restoreConflict{errCodeSpaceRestoreMissing, "the space's folder is no longer in the trash"}
-		default:
-			// Under the cleanup lock a purge takes, and only while the entry still exists: a
-			// purge that won removes the folder, and one that is removing it must not run
-			// alongside the move back.
-			var merr error
-			sessionx.WithCleanupLock(func() {
-				if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
-					merr = spacex.ErrNotFound
-					return
-				}
-				if spaceBeforeMoveIn != nil {
-					spaceBeforeMoveIn()
-				}
-				merr = spacex.MoveIn(src, t.Folder)
-			})
-			switch {
-			case errors.Is(merr, spacex.ErrExists):
-				err = &restoreConflict{errCodeSpaceRestoreExists, "something already exists at ~/spaces/" + t.Folder}
-			case errors.Is(merr, spacex.ErrNotFound):
-				err = &restoreConflict{errCodeSpaceRestoreMissing, "the space's folder in the trash is not a space any more"}
-			case merr != nil:
-				err = merr
+		sessionx.WithCleanupLock(func() {
+			if err := checkRestoreArchive(trash, id, archive); err != nil {
+				restoreErr = err
+				return
+			}
+			restoreErr = resumeSpaceRestore(trash, id, dir, t)
+		})
+	})
+	return restoreErr
+}
+
+func resumeSpaceRestore(trash *os.Root, id, dir string, t spaceTombstone) error {
+	var record spaceRestoreRecord
+	name := spaceRestoreRecordName(id)
+	data, err := readArchiveFile(trash, name)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		identity, err := spacex.ReadTrashIdentity(trash, spaceTrashName(id))
+		if err != nil {
+			return spaceRestoreMoveError(err, t.Folder)
+		}
+		record = spaceRestoreRecord{ID: id, Folder: t.Folder, Identity: identity, Shelved: map[string]string{}}
+		for _, sessionName := range t.Shelved {
+			if !session.ValidName(sessionName) {
+				return fmt.Errorf("archive %s has an invalid shelved session name", id)
+			}
+			m, state := session.ReadMetaState(sessionName)
+			if state == session.MetaUnreadable {
+				return fmt.Errorf("%w: could not read session %s", errRestoreStopped, sessionName)
+			}
+			if state == session.MetaOK && m.Archived {
+				record.Shelved[sessionName] = m.ShelfRevision
 			}
 		}
-	})
+		if err := writeSpaceRestoreRecord(trash, name, record); err != nil {
+			return err
+		}
+	case err != nil:
+		return fmt.Errorf("%w: could not read space restore progress: %w", errRestoreStopped, err)
+	default:
+		if err := json.Unmarshal(data, &record); err != nil || record.ID != id ||
+			record.Folder != t.Folder || record.Identity.Inode == 0 || record.Shelved == nil {
+			return fmt.Errorf("%w: invalid space restore progress for %s", errRestoreStopped, id)
+		}
+		if record.Complete {
+			return nil
+		}
+	}
+
+	root := spacex.Root()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	spaces, err := os.OpenRoot(root)
 	if err != nil {
 		return err
 	}
-	return restoreShelvedSessions(filepath.Clean(t.Path), t.Shelved)
+	defer spaces.Close()
+	entry := spaceTrashName(id)
+	if _, err := trash.Lstat(entry); errors.Is(err, fs.ErrNotExist) {
+		id, err := spacex.ReadTrashIdentity(spaces, t.Folder)
+		if err != nil {
+			return spaceRestoreMoveError(err, t.Folder)
+		}
+		if id != record.Identity {
+			return spaceRestoreMoveError(spacex.ErrExists, t.Folder)
+		}
+	} else {
+		if err != nil {
+			return err
+		}
+		if spaceBeforeMoveIn != nil {
+			spaceBeforeMoveIn()
+		}
+		if err := spacex.MoveIn(trash, entry, spaces, t.Folder, record.Identity); err != nil {
+			return spaceRestoreMoveError(err, t.Folder)
+		}
+	}
+	if err := restoreShelvedRevisions(dir, t.Shelved, record.Shelved); err != nil {
+		return err
+	}
+	if spaceBeforeRestoreComplete != nil {
+		spaceBeforeRestoreComplete()
+	}
+	record.Complete = true
+	return writeSpaceRestoreRecord(trash, name, record)
+}
+
+func writeSpaceRestoreRecord(trash *os.Root, name string, record spaceRestoreRecord) error {
+	data, err := json.Marshal(record)
+	if err == nil {
+		err = writeArchiveFile(trash, name, data)
+	}
+	if err != nil {
+		return fmt.Errorf("%w: could not record space restore progress: %w", errRestoreStopped, err)
+	}
+	return nil
+}
+
+func spaceRestoreMoveError(err error, folder string) error {
+	switch {
+	case errors.Is(err, spacex.ErrExists):
+		return &restoreConflict{errCodeSpaceRestoreExists, "something already exists at ~/spaces/" + folder}
+	case errors.Is(err, spacex.ErrNotFound):
+		return &restoreConflict{errCodeSpaceRestoreMissing, "the space's original folder is missing from its restore location"}
+	default:
+		return err
+	}
 }

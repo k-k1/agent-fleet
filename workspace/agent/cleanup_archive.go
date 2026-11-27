@@ -19,6 +19,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -114,6 +116,15 @@ func writeCleanupBundle(m *cleanupManifest, payloads map[string][]byte, pending 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return writeCleanupBundleIn(root, m, payloads, pending)
+}
+
+func writeCleanupBundleIn(root *os.Root, m *cleanupManifest, payloads map[string][]byte, pending bool) error {
 	base := m.ID
 	var f *os.File
 	for n := 1; ; n++ {
@@ -122,9 +133,9 @@ func writeCleanupBundle(m *cleanupManifest, payloads map[string][]byte, pending 
 		}
 		var err error
 		open := func() {
-			f, err = os.OpenFile(filepath.Join(dir, m.ID+".tar.gz"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			f, err = root.OpenFile(m.ID+".tar.gz", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 			if err == nil && pending {
-				pendingTrash.Store(filepath.Join(dir, m.ID), true)
+				pendingTrash.Store(filepath.Join(root.Name(), m.ID), true)
 			}
 		}
 		if pending {
@@ -143,7 +154,7 @@ func writeCleanupBundle(m *cleanupManifest, payloads map[string][]byte, pending 
 	defer func() {
 		if !ok {
 			_ = f.Close()
-			_ = os.Remove(filepath.Join(dir, m.ID+".tar.gz"))
+			_ = root.Remove(m.ID + ".tar.gz")
 			if pending {
 				releaseTrash(m.ID)
 			}
@@ -185,13 +196,13 @@ func writeCleanupBundle(m *cleanupManifest, payloads map[string][]byte, pending 
 		return err
 	}
 	if pending {
-		sidecar, err := os.OpenFile(filepath.Join(dir, m.ID+".json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		sidecar, err := root.OpenFile(m.ID+".json", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return err
 		}
 		_, werr := sidecar.Write(mj)
 		if err := errors.Join(werr, sidecar.Close()); err != nil {
-			_ = os.Remove(sidecar.Name())
+			_ = root.Remove(m.ID + ".json")
 			return err
 		}
 		ok = true
@@ -199,7 +210,7 @@ func writeCleanupBundle(m *cleanupManifest, payloads map[string][]byte, pending 
 	}
 	ok = true
 	// Sidecar manifest for listing; best-effort (the tar.gz is the source of truth).
-	_ = os.WriteFile(filepath.Join(dir, m.ID+".json"), mj, 0o600)
+	_ = writeArchiveFile(root, m.ID+".json", mj)
 	return nil
 }
 
@@ -225,32 +236,42 @@ func listCleanupArchivesSized() []cleanupManifest {
 }
 
 func listArchives(budget *int, includePending bool) []cleanupManifest {
-	entries, _ := os.ReadDir(cleanupStoreDir())
+	root, err := os.OpenRoot(cleanupStoreDir())
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	return listArchivesIn(root, budget, includePending)
+}
+
+func listArchivesIn(root *os.Root, budget *int, includePending bool) []cleanupManifest {
+	entries, _ := fs.ReadDir(root.FS(), ".")
 	var out []cleanupManifest
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		if !includePending && trashPending(strings.TrimSuffix(e.Name(), ".json")) {
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if !validArchiveID(id) || (!includePending && trashPending(id)) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), e.Name()))
+		m, err := readArchiveSidecar(root, id)
 		if err != nil {
 			continue
 		}
-		var m cleanupManifest
-		// The file name is the id: a sidecar that says another one is not trusted, or a purge by
-		// age could be steered at a different entry's folder.
-		if json.Unmarshal(b, &m) == nil && m.ID != "" && m.ID+".json" == e.Name() {
-			if info, err := os.Stat(filepath.Join(cleanupStoreDir(), m.ID+".tar.gz")); err == nil {
-				m.Bytes = info.Size()
-			}
-			if m.Space != nil && budget != nil {
-				b, _ := walkSize(spaceTrashDir(m.ID), budget)
+		if info, err := root.Lstat(id + ".tar.gz"); err == nil && info.Mode().IsRegular() {
+			m.Bytes = info.Size()
+		}
+		if m.Space != nil && budget != nil {
+			name := spaceTrashName(id)
+			if info, err := root.Lstat(name); err == nil && info.IsDir() {
+				b, _ := measureWalk(func(visit fs.WalkDirFunc) error {
+					return fs.WalkDir(root.FS(), name, visit)
+				}, budget)
 				m.Bytes += b
 			}
-			out = append(out, m)
 		}
+		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
 	return out
@@ -260,48 +281,112 @@ func listArchives(budget *int, includePending bool) []cleanupManifest {
 // an entry above it: such an archive would delete the original and then refuse to restore.
 const maxCleanupEntryBytes = 64 << 20
 
-// readCleanupArchive loads a manifest and the tar payloads for restore.
-func readCleanupArchive(id string) (cleanupManifest, map[string][]byte, error) {
+func validArchiveID(id string) bool {
+	return filepath.IsLocal(id) && filepath.Base(id) == id && id != "." && !strings.Contains(id, "..")
+}
+
+var errArchiveID = errors.New("archive manifest id does not match its filename")
+
+func decodeArchiveManifest(data []byte, id string) (cleanupManifest, error) {
 	var m cleanupManifest
-	if filepath.Base(id) != id || strings.Contains(id, "..") {
-		return m, nil, fmt.Errorf("invalid archive id")
+	if err := json.Unmarshal(data, &m); err != nil {
+		return cleanupManifest{}, err
 	}
-	b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
-	if err != nil {
-		return m, nil, err
+	if m.ID != id {
+		return cleanupManifest{}, fmt.Errorf("%w: %s", errArchiveID, id)
 	}
-	gr, err := gzip.NewReader(bytes.NewReader(b))
+	return m, nil
+}
+
+// openArchiveFile verifies the identity after OpenFile because os.Root can resolve a symlink
+// within the root even with O_NOFOLLOW. NONBLOCK keeps a raced-in FIFO from blocking.
+func openArchiveFile(root *os.Root, name string) (*os.File, os.FileInfo, error) {
+	want, err := root.Lstat(name)
 	if err != nil {
-		return m, nil, err
+		return nil, nil, err
+	}
+	if !want.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("trash file %s is not a regular file", name)
+	}
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	got, err := f.Stat()
+	if err != nil || !os.SameFile(want, got) {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("trash file %s changed while opening", name)
+	}
+	return f, got, nil
+}
+
+func readArchiveFile(root *os.Root, name string) ([]byte, error) {
+	f, _, err := openArchiveFile(root, name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+func writeArchiveFile(root *os.Root, name string, data []byte) error {
+	tmp := ".archive-" + rand.Text()
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tmp)
+	_, werr := f.Write(data)
+	if err := errors.Join(werr, f.Close()); err != nil {
+		return err
+	}
+	return root.Rename(tmp, name)
+}
+
+func readArchiveSidecar(root *os.Root, id string) (cleanupManifest, error) {
+	b, err := readArchiveFile(root, id+".json")
+	if err != nil {
+		return cleanupManifest{}, err
+	}
+	return decodeArchiveManifest(b, id)
+}
+
+func readCleanupTar(f io.Reader, id string) (cleanupManifest, map[string][]byte, error) {
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		return cleanupManifest{}, nil, err
 	}
 	defer gr.Close()
-	payloads := map[string][]byte{}
 	tr := tar.NewReader(gr)
+	m, err := readTarManifest(tr, id, maxCleanupEntryBytes)
+	if err != nil {
+		return cleanupManifest{}, nil, err
+	}
+	payloads := map[string][]byte{}
 	for {
 		h, err := tr.Next()
-		if err != nil {
+		if errors.Is(err, io.EOF) {
 			break
 		}
-		// Cap the per-entry allocation: h.Size comes straight from the (possibly
-		// corrupt) tar header, and a huge value would OOM this memory-constrained host.
+		if err != nil {
+			return m, nil, err
+		}
+		if h.Name == "manifest.json" {
+			return m, nil, fmt.Errorf("archive %s has duplicate manifests", id)
+		}
+		// Cap the allocation even for a corrupt header.
 		if h.Size < 0 || h.Size > maxCleanupEntryBytes {
 			return m, nil, fmt.Errorf("archive %s: entry %s too large (%d bytes)", id, h.Name, h.Size)
 		}
 		data := make([]byte, h.Size)
-		_, _ = io.ReadFull(tr, data)
-		if h.Name == "manifest.json" {
-			_ = json.Unmarshal(data, &m)
-		} else {
-			payloads[h.Name] = data
+		if _, err := io.ReadFull(tr, data); err != nil {
+			return m, nil, err
 		}
-	}
-	if m.ID == "" {
-		return m, nil, fmt.Errorf("archive %s has no manifest", id)
+		payloads[h.Name] = data
 	}
 	return m, payloads, nil
 }
 
-// purgeCleanupArchive permanently removes an archive (reclaims its space for good).
 // errRestoreIncomplete refuses a purge while a restore of the same archive has not finished:
 // transcripts it placed may already point at the session's cache, and with neither the meta
 // nor the archive left, the cache scan would take that cache as orphaned.
@@ -309,13 +394,13 @@ var errRestoreIncomplete = errors.New("a restore of this archive did not finish;
 
 // restoringMarker is the file that says a restore of archive id started and has not finished.
 // Written before anything is placed and removed only when every session is back.
-func restoringMarker(id string) string { return filepath.Join(cleanupStoreDir(), id+".restoring") }
+func restoringMarkerName(id string) string { return id + ".restoring" }
 
 // manifestAtHead reads manifest.json, the first entry writeCleanupArchive writes, from the
 // archive's tarball and stops there.
-func manifestAtHead(id string) (cleanupManifest, error) {
+func manifestAtHead(root *os.Root, id string) (cleanupManifest, error) {
 	var m cleanupManifest
-	f, err := os.Open(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
+	f, _, err := openArchiveFile(root, id+".tar.gz")
 	if err != nil {
 		return m, err
 	}
@@ -325,19 +410,22 @@ func manifestAtHead(id string) (cleanupManifest, error) {
 		return m, err
 	}
 	defer gr.Close()
-	tr := tar.NewReader(gr)
+	return readTarManifest(tar.NewReader(gr), id, 4<<20)
+}
+
+func readTarManifest(tr *tar.Reader, id string, limit int64) (cleanupManifest, error) {
 	h, err := tr.Next()
 	if err != nil {
-		return m, err
+		return cleanupManifest{}, err
 	}
-	if h.Name != "manifest.json" || h.Size < 0 || h.Size > 4<<20 {
-		return m, fmt.Errorf("archive %s: no manifest at its head", id)
+	if h.Name != "manifest.json" || h.Size < 0 || h.Size > limit {
+		return cleanupManifest{}, fmt.Errorf("archive %s: no readable manifest at its head", id)
 	}
 	b, err := io.ReadAll(tr)
 	if err != nil {
-		return m, err
+		return cleanupManifest{}, err
 	}
-	return m, json.Unmarshal(b, &m)
+	return decodeArchiveManifest(b, id)
 }
 
 // errRestoreStopped wraps a restore that stopped part way: it reports what failed, promises
@@ -351,15 +439,10 @@ var errRestoreStopped = errors.New("the restore stopped part way; nothing was un
 // An archive whose manifest cannot be read at all counts as half done, erring toward keeping
 // it: that is the one case a purge can be refused for good, and ADR 0097 says so. It is also
 // the case where nothing else could be done with the archive — a restore needs the same
-// manifest. Only the manifest is read (the sidecar, else the tarball's first entry), never
-// the transcripts behind it, because this runs under the cleanup lock.
-func restoreLeftHalfDone(id string) bool {
-	var m cleanupManifest
-	b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json"))
-	if err != nil || json.Unmarshal(b, &m) != nil {
-		if m, err = manifestAtHead(id); err != nil {
-			return true
-		}
+// manifest. The caller reads only the tarball's first entry under the cleanup lock.
+func restoreLeftHalfDone(m cleanupManifest) bool {
+	if m.ID == "" {
+		return true
 	}
 	for _, s := range m.Sessions {
 		var meta session.Meta
@@ -382,37 +465,52 @@ func restoreLeftHalfDone(id string) bool {
 // managed ledgers: whether a session's ledger may go depends on every OTHER archive too, which
 // the caller checks once for everything it purged (dropPurgedLedgers).
 func purgeCleanupArchive(id string) (cleanupManifest, error) {
-	var man cleanupManifest
-	if filepath.Base(id) != id || strings.Contains(id, "..") {
-		return man, fmt.Errorf("invalid archive id")
+	root, err := os.OpenRoot(cleanupStoreDir())
+	if err != nil {
+		return cleanupManifest{}, err
+	}
+	defer root.Close()
+	return purgeCleanupArchiveIn(root, id)
+}
+
+func purgeCleanupArchiveIn(root *os.Root, id string) (cleanupManifest, error) {
+	var empty cleanupManifest
+	if !validArchiveID(id) {
+		return empty, fmt.Errorf("invalid archive id")
 	}
 	if trashPending(id) {
-		return man, errTrashPending
+		return empty, errTrashPending
 	}
-	// A mark alone does not block: only a session actually left half back does. So a mark
-	// that outlived its reason (an earlier attempt placed a transcript, and the session was
-	// since deleted again) never makes the archive impossible to purge.
-	if _, err := os.Lstat(restoringMarker(id)); err == nil {
-		if restoreLeftHalfDone(id) {
-			return man, errRestoreIncomplete
+	// Check both identities before removing anything. The embedded manifest is authoritative
+	// for effects outside the trash, such as releasing a worktree pin or a session ledger.
+	_, sideErr := readArchiveSidecar(root, id)
+	if errors.Is(sideErr, errArchiveID) {
+		return empty, sideErr
+	}
+	man, tarErr := manifestAtHead(root, id)
+	if errors.Is(tarErr, errArchiveID) {
+		return empty, tarErr
+	}
+	// Only a half-placed session needs its archive retained. A space restore stores its own
+	// progress, and a purge that wins after a failed restore may discard that progress.
+	if _, err := root.Lstat(restoringMarkerName(id)); err == nil {
+		if restoreLeftHalfDone(man) {
+			return empty, errRestoreIncomplete
 		}
-		_ = os.Remove(restoringMarker(id))
+		_ = root.Remove(restoringMarkerName(id))
 	}
-	if b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json")); err == nil {
-		_ = json.Unmarshal(b, &man)
+	// The requested id owns this folder even if its manifest is unreadable. Keep the
+	// archive if removing the folder stops part way, so purge can be retried.
+	if err := rmtree.RemoveAllIn(root, spaceTrashName(id)); err != nil {
+		return empty, err
 	}
-	// A deleted space's folder goes first, whatever the manifest says (it may be unreadable): with
-	// the archive gone nothing could name the folder again, and it would stay for ever. A removal
-	// that stops part way leaves the archive, so the purge can be pressed again.
-	if err := rmtree.RemoveAll(spaceTrashDir(id)); err != nil {
-		return man, err
-	}
-	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
-	if err := os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
-		return man, err
+	for _, name := range []string{spaceRestoreRecordName(id), id + ".json", id + ".tar.gz"} {
+		if err := root.Remove(name); err != nil && (!errors.Is(err, fs.ErrNotExist) || name == id+".tar.gz") {
+			return empty, err
+		}
 	}
 	if man.Worktree != nil {
-		gitx.UnpinDeletedWorktree(*man.Worktree) // nothing can bring it back now; let gc have it
+		gitx.UnpinDeletedWorktree(*man.Worktree)
 	}
 	return man, nil
 }
@@ -495,15 +593,41 @@ func placeNoReplace(tmp, dest string) (created bool, err error) {
 var restoreAfterStage func()
 
 func restoreCleanupArchive(id string) (map[string]any, error) {
+	if !validArchiveID(id) {
+		return nil, fmt.Errorf("invalid archive id")
+	}
 	if trashPending(id) {
 		return nil, errTrashPending
 	}
-	m, payloads, err := readCleanupArchive(id)
+	root, err := os.OpenRoot(cleanupStoreDir())
 	if err != nil {
 		return nil, err
 	}
-	restored := map[string]any{"sessions": []string{}, "branches": []string{}}
+	defer root.Close()
+	f, archiveInfo, err := openArchiveFile(root, id+".tar.gz")
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	m, payloads, err := readCleanupTar(f, id)
+	if err != nil {
+		return nil, err
+	}
 	var sessions, branches []string
+	restored := map[string]any{"sessions": sessions, "branches": branches}
+	if m.Space != nil {
+		if len(m.Sessions) != 0 || len(m.Branches) != 0 || m.Worktree != nil {
+			return nil, fmt.Errorf("archive %s: a space cannot share an archive with other items", id)
+		}
+		if restoreAfterStage != nil {
+			restoreAfterStage()
+		}
+		if err := restoreDeletedSpace(root, id, archiveInfo, *m.Space); err != nil {
+			return nil, err
+		}
+		restored["space"] = m.Space.Folder
+		return restored, nil
+	}
 	type archivedMeta struct {
 		record cleanupArchivedSession
 		meta   session.Meta
@@ -587,22 +711,25 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	// conversation back without its files is the one outcome this lock exists to prevent.
 	var handErr error
 	sessionx.WithCleanupLock(func() {
-		if trashPending(id) {
-			handErr = errTrashPending
-			return
-		}
-		if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
-			handErr = fmt.Errorf("archive %s was purged while it was being restored", id)
+		if err := checkRestoreArchive(root, id, archiveInfo); err != nil {
+			handErr = err
 			return
 		}
 		// Mark the restore as under way before anything is placed. While the mark stands and
 		// something is left half done, the archive cannot be purged, so that half stays
 		// reachable through the archive (purgeCleanupArchive).
-		_, statErr := os.Lstat(restoringMarker(id))
-		markedBefore := statErr == nil
-		if err := os.WriteFile(restoringMarker(id), nil, 0o600); err != nil {
-			handErr = fmt.Errorf("%w: archive %s: cannot mark the restore: %w", errRestoreStopped, id, err)
-			return
+		marker := restoringMarkerName(id)
+		info, statErr := root.Lstat(marker)
+		markedBefore := statErr == nil && info.Mode().IsRegular()
+		if !markedBefore {
+			f, err := root.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err == nil {
+				err = f.Close()
+			}
+			if err != nil {
+				handErr = fmt.Errorf("%w: archive %s: cannot mark the restore: %w", errRestoreStopped, id, err)
+				return
+			}
 		}
 		changed := false
 		// A failure that changed nothing, on an archive no earlier attempt left half done,
@@ -610,7 +737,7 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 		// hard links) would make its archive impossible to purge.
 		stop := func(err error) {
 			if !changed && !markedBefore {
-				_ = os.Remove(restoringMarker(id))
+				_ = root.Remove(marker)
 			}
 			handErr = fmt.Errorf("%w: %w", errRestoreStopped, err)
 		}
@@ -633,7 +760,7 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			}
 			changed = changed || created
 		}
-		_ = os.Remove(restoringMarker(id))
+		_ = root.Remove(marker)
 	})
 	dropStaged() // placed ones are hard links, so the staging names are only temporary
 	if handErr != nil {
@@ -659,13 +786,22 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 		}
 		restored["worktree"] = m.Worktree.Name
 	}
-	if m.Space != nil {
-		// The id the request named, which was checked to be a bare file name; a manifest that
-		// says another id is not used to build a path.
-		if err := restoreDeletedSpace(id, *m.Space); err != nil {
-			return nil, err
-		}
-		restored["space"] = m.Space.Folder
-	}
+
 	return restored, nil
+}
+
+// checkRestoreArchive is called under the cleanup lock before placing anything. A purge may
+// have won while the restore was reading the archive or staging its transcripts.
+func checkRestoreArchive(root *os.Root, id string, original os.FileInfo) error {
+	if trashPending(id) {
+		return errTrashPending
+	}
+	current, err := root.Lstat(id + ".tar.gz")
+	if err != nil || !os.SameFile(original, current) {
+		return fmt.Errorf("archive %s was removed or replaced while it was being restored", id)
+	}
+	if _, err := readArchiveSidecar(root, id); errors.Is(err, errArchiveID) {
+		return err
+	}
+	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -196,7 +197,14 @@ func trashSessionIn(m session.Meta, stop bool, belongs func(session.Meta) bool) 
 }
 
 func discardPreparedTrash(id string) {
-	sessionx.WithCleanupLock(func() { removeOwnEntry(id) })
+	sessionx.WithCleanupLock(func() {
+		root, err := os.OpenRoot(cleanupStoreDir())
+		if err != nil {
+			return
+		}
+		defer root.Close()
+		removeOwnEntry(root, id)
+	})
 }
 
 // finishTrashedSession runs only after the meta is gone and the archive can restore it.
@@ -762,7 +770,17 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 	purged, kept := 0, 0
 	var bytes int64
 	var gone []cleanupManifest
-	for _, m := range listCleanupArchivesSized() {
+	var archives []cleanupManifest
+	root, openErr := os.OpenRoot(cleanupStoreDir())
+	if openErr == nil {
+		defer root.Close()
+		budget := cleanupUsageMaxEntries
+		archives = listArchivesIn(root, &budget, false)
+	} else if !errors.Is(openErr, fs.ErrNotExist) {
+		httpx.WriteErr(w, http.StatusInternalServerError, "purge_failed", openErr.Error())
+		return
+	}
+	for _, m := range archives {
 		at, err := time.Parse(time.RFC3339, m.At)
 		if err != nil {
 			kept++ // no readable date: it cannot be said to be old, so it stays, and says so
@@ -773,7 +791,7 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 		}
 		var perr error
 		var man cleanupManifest
-		sessionx.WithCleanupLock(func() { man, perr = purgeCleanupArchive(m.ID) })
+		sessionx.WithCleanupLock(func() { man, perr = purgeCleanupArchiveIn(root, m.ID) })
 		if perr != nil {
 			kept++
 			continue

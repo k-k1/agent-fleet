@@ -5,6 +5,7 @@ package sessionx
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1508,6 +1509,9 @@ func stampHalted(m session.Meta) session.Meta {
 // markArchived puts m on the shelf. A row that is already archived keeps its date: archiving
 // twice must not push back the removal of its ~/.af-work folder.
 func markArchived(m *session.Meta) {
+	if !m.Archived {
+		m.ShelfRevision = rand.Text()
+	}
 	if !m.Archived || m.ArchivedAt == "" {
 		m.ArchivedAt = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -1519,6 +1523,7 @@ func markArchived(m *session.Meta) {
 func clearArchived(m *session.Meta) {
 	m.Archived = false
 	m.ArchivedAt = ""
+	m.ShelfRevision = ""
 }
 
 // HandleArchiveSession hides a session from the active list but KEEPS its meta (and

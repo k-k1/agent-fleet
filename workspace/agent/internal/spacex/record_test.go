@@ -162,7 +162,7 @@ func TestMoveOutForgetsAndMoveInRemembers(t *testing.T) {
 	home := withHome(t)
 	sp, _ := Create("Draft")
 	dest := filepath.Join(home, "trash-entry")
-	if err := MoveOut(sp.Folder, dest); err != nil {
+	if err := moveOutPath(sp.Folder, dest); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := recorded(sp.Folder); ok {
@@ -177,7 +177,7 @@ func TestMoveOutForgetsAndMoveInRemembers(t *testing.T) {
 	if err := os.Remove(sp.Dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveIn(dest, sp.Folder); err != nil {
+	if err := moveInPath(dest, sp.Folder); err != nil {
 		t.Fatal(err)
 	}
 	if e, ok := recorded(sp.Folder); !ok || e.Name != "Draft" {
@@ -313,7 +313,7 @@ func TestSyncAfterADeleteDoesNotRecordTheSpaceAgain(t *testing.T) {
 	home := withHome(t)
 	sp, _ := Create("Draft")
 	rows, _ := List()
-	if err := MoveOut(sp.Folder, filepath.Join(home, "trash-entry")); err != nil {
+	if err := moveOutPath(sp.Folder, filepath.Join(home, "trash-entry")); err != nil {
 		t.Fatal(err)
 	}
 	syncRecord(rows)
@@ -417,10 +417,10 @@ func TestMoveInRecordsAMarkerWithoutAName(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(home, "trash-entry")
-	if err := MoveOut(sp.Folder, dest); err != nil {
+	if err := moveOutPath(sp.Folder, dest); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveIn(dest, sp.Folder); err != nil {
+	if err := moveInPath(dest, sp.Folder); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.Remove(filepath.Join(sp.Dir, MarkerFile))

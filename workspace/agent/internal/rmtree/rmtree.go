@@ -26,36 +26,52 @@ import (
 // chmod goes by path, so a directory swapped for a symlink between the check and the chmod
 // would be followed. Callers hold the folder out of use first (the delete mark, the trash).
 func RemoveAll(p string) error {
-	err := os.RemoveAll(p)
+	p = filepath.Clean(p)
+	parent, err := os.OpenRoot(filepath.Dir(p))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return RemoveAllIn(parent, filepath.Base(p))
+}
+
+// RemoveAllIn applies the read-only directory retry relative to an already opened parent.
+func RemoveAllIn(parent *os.Root, name string) error {
+	err := parent.RemoveAll(name)
 	if err == nil || !errors.Is(err, fs.ErrPermission) {
 		return err
 	}
 	var root uint64
-	if fi, serr := os.Lstat(p); serr == nil {
+	if fi, serr := parent.Lstat(name); serr == nil && fi.IsDir() {
 		root = devOf(fi)
+	} else {
+		return err
 	}
 	crossed := false
-	_ = filepath.WalkDir(p, func(q string, d fs.DirEntry, werr error) error {
+	_ = fs.WalkDir(parent.FS(), name, func(q string, d fs.DirEntry, werr error) error {
 		if werr != nil || !d.IsDir() { // d.IsDir() is false for a symlink, even one to a directory
 			return nil
 		}
 		// The callback runs before WalkDir reads the directory, so a 0300 or 0000 one is
 		// opened up in time to be listed.
-		fi, serr := os.Lstat(q)
+		fi, serr := parent.Lstat(q)
 		if serr != nil || !fi.IsDir() {
 			return nil
 		}
 		if devOf(fi) != root {
 			crossed = true
-			return filepath.SkipDir // a mount point: leave it and what it holds alone
+			return fs.SkipDir // a mount point: leave it and what it holds alone
 		}
-		_ = os.Chmod(q, fi.Mode().Perm()|0o700)
+		_ = parent.Chmod(q, fi.Mode().Perm()|0o700)
 		return nil
 	})
 	if crossed {
 		return err
 	}
-	return os.RemoveAll(p)
+	return parent.RemoveAll(name)
 }
 
 // devOf is the device a file lives on; a seam so a test can stand in for a mount point, which

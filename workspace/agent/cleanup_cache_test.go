@@ -55,6 +55,10 @@ func oldCacheDir(t *testing.T, feature, name string, n int) string {
 // TestCacheScanSeesRealCleanupArchive pins the format seam: the scan reads the gz trash with
 // its own minimal decoder, so an archive written by the real writer — both with its sidecar
 // and with the sidecar lost — must keep that session's cache.
+func restoringMarker(id string) string {
+	return filepath.Join(cleanupStoreDir(), restoringMarkerName(id))
+}
+
 func TestCacheScanSeesRealCleanupArchive(t *testing.T) {
 	for _, dropSidecar := range []bool{false, true} {
 		cacheTestHome(t)

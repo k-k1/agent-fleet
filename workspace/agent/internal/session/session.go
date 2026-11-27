@@ -815,6 +815,8 @@ type Meta struct {
 	// a row archived before the field existed. The af-work prune stamps such a row the first
 	// time it sees it, and removes ~/.af-work/<name> once the stamp is a week old.
 	ArchivedAt string `json:"archivedAt,omitempty"`
+	// ShelfRevision identifies one stay on the shelf across an incomplete space restore.
+	ShelfRevision string `json:"shelfRevision,omitempty"`
 	// Locked pins the session against deletion: /stop (forgetting the meta), DELETE
 	// /sessions/{name}, the stopped-TTL auto prune and being taken down together with a
 	// deleted working copy are all refused while it is locked (archiving is reversible, so

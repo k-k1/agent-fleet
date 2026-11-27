@@ -1183,13 +1183,13 @@ func TestMoveOutAndInKeepTheWholeFolder(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveOut(sp.Folder, dest); err != nil {
+	if err := moveOutPath(sp.Folder, dest); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := Lookup(sp.Folder); ok {
 		t.Fatal("the moved space is still a space")
 	}
-	if err := MoveOut(sp.Folder, dest+"2"); !errors.Is(err, ErrNotFound) {
+	if err := moveOutPath(sp.Folder, dest+"2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("moving a space that is gone = %v, want ErrNotFound", err)
 	}
 	// Something already at the folder's name wins, an empty directory included (a rename would
@@ -1197,13 +1197,13 @@ func TestMoveOutAndInKeepTheWholeFolder(t *testing.T) {
 	if err := os.MkdirAll(sp.Dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveIn(dest, sp.Folder); !errors.Is(err, ErrExists) {
+	if err := moveInPath(dest, sp.Folder); !errors.Is(err, ErrExists) {
 		t.Fatalf("MoveIn onto an empty directory = %v, want ErrExists", err)
 	}
 	if err := os.Remove(sp.Dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveIn(dest, sp.Folder); err != nil {
+	if err := moveInPath(dest, sp.Folder); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(filepath.Join(sp.Dir, "a", "b", "f.txt"))
@@ -1229,7 +1229,7 @@ func TestMoveOutRefusesWhatIsNoSpace(t *testing.T) {
 	}
 	dest := filepath.Join(home, "x.space")
 	for _, folder := range []string{"plain", "link", "../repos", "", "nope"} {
-		if err := MoveOut(folder, dest); !errors.Is(err, ErrNotFound) {
+		if err := moveOutPath(folder, dest); !errors.Is(err, ErrNotFound) {
 			t.Errorf("MoveOut(%q) = %v, want ErrNotFound", folder, err)
 		}
 	}
@@ -1241,7 +1241,7 @@ func TestMoveOutRefusesWhatIsNoSpace(t *testing.T) {
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveIn(src, "back-abc123"); !errors.Is(err, ErrNotFound) {
+	if err := moveInPath(src, "back-abc123"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("MoveIn of an unmarked folder = %v, want ErrNotFound", err)
 	}
 }
@@ -1268,7 +1268,7 @@ func TestMoveOutWaitsForWritesInTheSpace(t *testing.T) {
 	}()
 	<-started
 	moved := make(chan error, 1)
-	go func() { moved <- MoveOut(sp.Folder, dest) }()
+	go func() { moved <- moveOutPath(sp.Folder, dest) }()
 	select {
 	case err := <-moved:
 		t.Fatalf("the move did not wait for the copy in flight: %v", err)
@@ -1307,7 +1307,7 @@ func TestMoveOutWaitsForARename(t *testing.T) {
 	}()
 	<-reached
 	moved := make(chan error, 1)
-	go func() { moved <- MoveOut(sp.Folder, dest) }()
+	go func() { moved <- moveOutPath(sp.Folder, dest) }()
 	select {
 	case err := <-moved:
 		t.Fatalf("the move did not wait for the rename: %v", err)
@@ -1340,4 +1340,32 @@ func (b blockingReader) Read(p []byte) (int, error) {
 	}
 	<-b.release
 	return copy(p, b.data), io.EOF
+}
+
+func moveOutPath(folder, dest string) error {
+	trash, err := os.OpenRoot(filepath.Dir(dest))
+	if err != nil {
+		return err
+	}
+	defer trash.Close()
+	return MoveOut(folder, trash, filepath.Base(dest))
+}
+
+func moveInPath(src, folder string) error {
+	trash, err := os.OpenRoot(filepath.Dir(src))
+	if err != nil {
+		return err
+	}
+	defer trash.Close()
+	entry := filepath.Base(src)
+	identity, err := ReadTrashIdentity(trash, entry)
+	if err != nil {
+		return err
+	}
+	spaces, err := os.OpenRoot(Root())
+	if err != nil {
+		return err
+	}
+	defer spaces.Close()
+	return MoveIn(trash, entry, spaces, folder, identity)
 }

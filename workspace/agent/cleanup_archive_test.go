@@ -80,7 +80,7 @@ func TestCleanupArchiveRoundTrip(t *testing.T) {
 
 func TestCleanupArchiveIDTraversalGuard(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if _, _, err := readCleanupArchive("../etc/passwd"); err == nil {
+	if _, err := restoreCleanupArchive("../etc/passwd"); err == nil {
 		t.Fatal("expected traversal id to be rejected")
 	}
 	if _, err := purgeCleanupArchive("../../x"); err == nil {
@@ -101,4 +101,19 @@ func TestIDSlug(t *testing.T) {
 			t.Errorf("idSlug(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// readCleanupArchive inspects a fixture through the same reader as restore.
+func readCleanupArchive(id string) (cleanupManifest, map[string][]byte, error) {
+	root, err := os.OpenRoot(cleanupStoreDir())
+	if err != nil {
+		return cleanupManifest{}, nil, err
+	}
+	defer root.Close()
+	f, _, err := openArchiveFile(root, id+".tar.gz")
+	if err != nil {
+		return cleanupManifest{}, nil, err
+	}
+	defer f.Close()
+	return readCleanupTar(f, id)
 }
