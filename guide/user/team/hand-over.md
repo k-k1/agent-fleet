@@ -72,7 +72,17 @@ in your home and never reach the recipient. They get the handoff text and nothin
   "**Send handoff**" is enabled. The tick is for that warning alone: if the dialog's state changes to another warning
   while it is open, it starts unticked again. Put what the recipient needs into the handoff text
 - A space that is also a git working copy is still checked like a repository: unpushed commits block the send, and
-  "**Push, then send**" is offered
+  "**Push, then send**" is offered. The recipient gets a space handoff. Put any repository or branch details
+  they need in the handoff text
+
+### "Hand off to a member…" is not in the menu
+
+The workspace is stopped, or the session's working folder is gone. Start the workspace and open the menu again.
+Shell and SSM terminal sessions cannot be handed off.
+
+### The person is not in "Hand off to"
+
+The session is not shared with them yet. Share it from "**Share this session**".
 
 ## After you send
 
@@ -93,15 +103,6 @@ There is no button just for withdrawing. While the offer waits, press "**Start n
 ("**Withdraw and start**") the offer is withdrawn and the launch dialog opens. This keeps the same work from starting on both sides.
 
 To change the text, withdraw this way and send again.
-
-### "Hand off to a member…" is not in the menu
-
-The workspace is stopped, or the session's working folder is gone. Start the workspace and open the menu again.
-Shell and SSM terminal sessions cannot be handed off.
-
-### The person is not in "Hand off to"
-
-The session is not shared with them yet. Share it from "**Share this session**".
 
 ## Take over a handoff you received
 
