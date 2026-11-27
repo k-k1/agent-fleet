@@ -251,21 +251,25 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     (chat ? openSessionChat : openSessionTerminal)(res.name);
     // The created session's name is returned so that accepting a handoff (docs/log/77) can
     // tell the owner WHICH session took it. Callers may look at ok alone.
-    // The session exists, so this is still ok; the draft's missing part is reported apart so
-    // that no caller deletes the memo or clears the draft the person would resend from.
+    // Keep the launch seed memo on incomplete delivery. The launch form uses the result
+    // to know when responsibility for the draft has passed to the recovery UI.
     if (retryFiles.length) {
+      // Keep the same text backstop as a launch whose files could not be saved as a memo.
+      // The notification holds the full draft during this Console page's lifetime.
+      const backedUp = !!prompt.trim() && (await stashLaunchDraft(repo, prompt, [])).ok;
       const dialog = { open: false };
-      toast(createElement(LaunchDeliveryRetry, { session: res.name, kind, prompt, files: retryFiles, dialog }), {
+      toast(createElement(LaunchDeliveryRetry, { session: res.name, kind, repo, prompt, files: retryFiles, dialog }), {
         kind: "warn",
         key: launchDeliveryKey(res.name),
         duration: 0,
         closeLabel: t("rp.delivery_discard"),
         canClose: () => !dialog.open,
       });
+      if (backedUp) toast(t("rp.delivery_text_backup"), { kind: "info" });
       return {
         ok: true,
         name: res.name,
-        incomplete: { files: retryFiles.filter((entry) => !entry.path).map((entry) => entry.file.name), prompt: true, saved: false },
+        incomplete: { files: retryFiles.filter((entry) => !entry.path).map((entry) => entry.file.name), prompt: true, saved: false, held: true },
       };
     }
     if (promptLost) {

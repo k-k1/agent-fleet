@@ -285,6 +285,8 @@ export const repos = {
   "rp.delivery_pending": "アップロード待ち",
   "rp.delivery_add_files": "ファイルを追加",
   "rp.delivery_send": "セッションに送信",
+  "rp.delivery_text_backup": "元のメッセージの本文をメモにも保存しました。",
+  "rp.delivery_remove_file": "{name} を削除",
   "rp.delivery_discard": "未送信の下書きを破棄",
   "rp.draft_saved": "下書きの一部がセッションに届かなかったため、下書き全体をメモに保存しました。そこから送り直してください（元のメモがあれば残してあります）。",
   "rp.draft_saved_text": "下書きの一部がセッションに届かず、本文だけをメモに保存しました（ファイルは保存できませんでした）。元のメモがあれば残してあります。",

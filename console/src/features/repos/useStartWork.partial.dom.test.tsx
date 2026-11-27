@@ -18,6 +18,8 @@ vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTer
 const { useStartWork } = await import("./useStartWork.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { takeLaunchSeed, subscribeLaunchSeed } = await import("../../lib/launchSeed.ts");
+const { readPromptHistory } = await import("../../lib/promptHistory.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -30,6 +32,8 @@ const toasts = () => [...document.querySelectorAll(".ui-toast-msg")].map((n) => 
 const file = (name: string) => new File(["x"], name, { type: "image/png" });
 
 beforeEach(async () => {
+  localStorage.clear();
+  takeLaunchSeed("s1");
   apiJSON.mockReset();
   pasteImage.mockReset();
   stash.mockReset();
@@ -83,8 +87,8 @@ describe("partial draft delivery", () => {
     pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" }).mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large" } });
     const r = await launch([file("a.png"), file("b.png")]);
     expect(r.ok).toBe(true);
-    expect(r.incomplete).toEqual({ files: ["b.png"], prompt: true, saved: false });
-    expect(stash).not.toHaveBeenCalled();
+    expect(r.incomplete).toEqual({ files: ["b.png"], prompt: true, saved: false, held: true });
+    expect(stash).toHaveBeenCalledExactlyOnceWith("x", "look at these", []);
     expect(apiJSON).toHaveBeenCalledTimes(1);
     const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
     await act(async () => review.click());
@@ -124,11 +128,62 @@ describe("partial draft delivery", () => {
     expect(review.isConnected).toBe(false);
   });
 
+  it("keeps the retry draft if the session refuses the input", async () => {
+    apiJSON.mockImplementation((p: string) => created(p, { error: { code: "busy" } }));
+    pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/b.png" });
+    await launch([file("b.png")]);
+    const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
+    await act(async () => review.click());
+    const dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
+    const submit = () => act(async () => {
+      dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    await submit();
+    const refusedCall = apiJSON.mock.lastCall;
+    expect(dialog.isConnected).toBe(true);
+    expect(dialog.querySelector("textarea")?.value).toBe("look at these");
+    expect(dialog.textContent).toContain("b.png");
+    expect(readPromptHistory("x")).toEqual([]);
+
+    const onSeed = vi.fn(() => takeLaunchSeed("s1"));
+    const unsubscribe = subscribeLaunchSeed("s1", onSeed);
+    try {
+      apiJSON.mockImplementation((p: string) => created(p));
+      await submit();
+      expect(apiJSON).toHaveBeenCalledTimes(3);
+      expect(apiJSON.mock.lastCall).toEqual(refusedCall);
+      expect(pasteImage).toHaveBeenCalledTimes(2);
+      expect(onSeed).toHaveBeenCalledTimes(1);
+      expect(onSeed.mock.results[0]?.value).toContain("/p/b.png");
+      expect(readPromptHistory("x")).toEqual(["look at these"]);
+      expect(dialog.isConnected).toBe(false);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("discards a held draft only after the retry dialog is closed", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("b.png")]);
+    const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
+    const discard = document.querySelector<HTMLButtonElement>(`[aria-label="${t("rp.delivery_discard")}"]`)!;
+    await act(async () => review.click());
+    const dialog = document.querySelector("form[role=dialog]")!;
+    await act(async () => discard.click());
+    expect(dialog.isConnected).toBe(true);
+    await act(async () => dialog.querySelector<HTMLButtonElement>("header button")!.click());
+    await act(async () => discard.click());
+    expect(review.isConnected).toBe(false);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
   it("reports the file whose upload failed on the network", async () => {
     apiJSON.mockImplementation((p: string) => created(p));
     pasteImage.mockRejectedValue(new Error("offline"));
     const r = await launch([file("a.png")]);
-    expect(r.incomplete).toEqual({ files: ["a.png"], prompt: true, saved: false });
+    expect(r.incomplete).toEqual({ files: ["a.png"], prompt: true, saved: false, held: true });
   });
 
   it("reports a first prompt the Agent refused", async () => {

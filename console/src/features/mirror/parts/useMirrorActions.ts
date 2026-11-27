@@ -21,7 +21,7 @@ import type { BackgroundShell, SessionWatch, Discard, InteractionAnswer, Permiss
 import type { Attachment } from "../../../lib/attachDraft.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
-import { takeLaunchSeed } from "../../../lib/launchSeed.ts";
+import { subscribeLaunchSeed, takeLaunchSeed } from "../../../lib/launchSeed.ts";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
 import { withoutDiscarded, withoutStoppedEcho } from "../pendingEcho.ts";
 import { closeStep, restoreStep } from "../stopQueue.ts";
@@ -197,12 +197,17 @@ export function useMirrorActions({
     seededRef.current = false; // new session → allow its own seed
   }, [session]);
   useEffect(() => {
-    if (seededRef.current || stateSession !== session) return;
-    const seed = takeLaunchSeed(session);
-    if (!seed) return;
-    seededRef.current = true;
-    const echoId = nextEchoId();
-    applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, launch: true, at: Date.now() }]);
+    if (stateSession !== session) return;
+    const consume = () => {
+      if (seededRef.current) return;
+      const seed = takeLaunchSeed(session);
+      if (!seed) return;
+      seededRef.current = true;
+      const echoId = nextEchoId();
+      applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, launch: true, at: Date.now() }]);
+    };
+    consume();
+    return subscribeLaunchSeed(session, consume);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, stateSession]);
 

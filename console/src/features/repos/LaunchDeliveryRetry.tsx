@@ -1,4 +1,7 @@
 import { useRef, useState } from "react";
+import { agentOf } from "../../agents/registry.ts";
+import { setLaunchSeed } from "../../lib/launchSeed.ts";
+import { pushPromptHistory } from "../../lib/promptHistory.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -10,9 +13,10 @@ export function launchDeliveryKey(session: string): string {
 }
 
 /** The sticky notification owns the draft so closing any launch surface cannot unmount it. */
-export function LaunchDeliveryRetry({ session, kind, prompt: initialPrompt, files: initialFiles, dialog }: {
+export function LaunchDeliveryRetry({ session, kind, repo, prompt: initialPrompt, files: initialFiles, dialog }: {
   session: string;
   kind: string;
+  repo: string;
   prompt: string;
   files: LaunchFile[];
   dialog: { open: boolean };
@@ -37,7 +41,10 @@ export function LaunchDeliveryRetry({ session, kind, prompt: initialPrompt, file
       setFiles(uploaded);
       if (uploaded.some((entry) => !entry.path)) return;
       const result = await deliverLaunchPrompt(session, kind, prompt.trim(), uploaded, toast);
-      if (result.ok) dismissToast(launchDeliveryKey(session));
+      if (!result.ok) return;
+      if (agentOf(kind).caps.chat) setLaunchSeed(session, result.seed);
+      pushPromptHistory(repo, prompt);
+      dismissToast(launchDeliveryKey(session));
     } finally {
       sending.current = false;
       setBusy(false);
@@ -66,7 +73,12 @@ export function LaunchDeliveryRetry({ session, kind, prompt: initialPrompt, file
               {files.map(({ file, path }, i) => (
                 <li key={i}>
                   {file.name}{!path && (" · " + tr("rp.delivery_pending"))}{" "}
-                  <button type="button" className="ghost" onClick={() => setFiles((list) => list.filter((_, index) => index !== i))}>
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-label={tr("rp.delivery_remove_file", { name: file.name })}
+                    onClick={() => setFiles((list) => list.filter((_, index) => index !== i))}
+                  >
                     {tr("chat.remove")}
                   </button>
                 </li>
