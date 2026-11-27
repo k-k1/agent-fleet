@@ -220,7 +220,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       // A missing entry is NOT treated as "no access": the store may simply not have
       // loaded yet, and the server is the authority — it answers 404 if the share is gone.
       const first = cursor.current === 0;
-      const url = first ? `${path}/messages?since=0&tail=1&limit=${WINDOW}` : `${path}/messages?since=${cursor.current}`;
+      const url = first
+        ? `${path}/messages?since=0&tail=1&limit=${WINDOW}`
+        : `${path}/messages?since=${cursor.current}&from=${firstLine.current}`;
       const d = await api(url).catch(() => ({ error: { message: tr("share.load_failed") } }));
       if (!live) return;
       const payload = JSON.stringify(d);

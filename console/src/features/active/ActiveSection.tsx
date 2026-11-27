@@ -27,8 +27,9 @@ import { useQueueSettings } from "../memo/queueSettingsCache.ts";
 import { useShownSchedules } from "../schedules/store.ts";
 import { spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
 import { SessionCard } from "../overview/SessionCard.tsx";
-import { activeGroups, isUnattendedKind } from "./active.ts";
+import { activeGroups, activeLaunchCopies, isUnattendedKind } from "./active.ts";
 import type { ActiveGroup } from "./active.ts";
+import { ActiveRepoLaunch } from "./ActiveRepoLaunch.tsx";
 import { useActiveExpanded, useActiveFoldedGroups, useActiveOpenedGroups } from "./store.ts";
 import "../overview/overview.css";
 
@@ -73,8 +74,7 @@ export const ActiveSection = memo(function ActiveSection() {
   const tenant = useTenantStore((s) => s.tenant);
   const identity = useTenantStore((s) => s.identityRev);
   const { queues } = useQueueSettings((tenant ?? "") + "\u0000" + identity);
-  // Derived from the layout here rather than through useRepoRailContext, which also reads
-  // the connections and the launch catalogue: a card launches nothing.
+  // The app-level StartHost owns connection and catalogue reads for the launch dialog.
   const running = useWorkspaceStore((s) => s.state) === "running";
   const layout = useLayoutStore((s) => s.layout);
   const sPanes = useMemo(() => (paneCount(layout) > 1 ? sessionPanes(layout) : null), [layout]);
@@ -94,8 +94,9 @@ export const ActiveSection = memo(function ActiveSection() {
     if (g.hint) return tr("active.queue_group", { category: g.label, repo: g.hint });
     return g.label || tr("memo.autorun");
   };
-  // Headings are sorted with the locale's collation, so the order is the locale's too.
+  // Headings and checkout choices are sorted with the locale's collation.
   const locale = useLocale();
+  const launchCopies = useMemo(() => activeLaunchCopies(repos), [repos, locale]);
 
   const now = useNow(60_000);
   const expandedSet = useMemo(() => new Set(expanded), [expanded]);
@@ -122,23 +123,25 @@ export const ActiveSection = memo(function ActiveSection() {
           {groups.map((g) => (
             <section className="act-group" key={g.key} data-active-group={g.key}>
               {/* The full queue heading is available when its text is truncated. */}
-              <h3 className="ovw-gtitle act-gtitle" title={(g.kind === "autorun" ? groupName(g) : g.hint) || undefined}>
-                {/* The heading is a disclosure button: Enter / Space fold it, and a screen reader says which way it is. */}
-                <button type="button" className="act-gfold" aria-expanded={!isFolded(g)}
-                  aria-label={[groupName(g), tr("ovw.group_count", { alive: g.alive, n: g.total }), g.waiting > 0 ? tCount("active.group_waiting_hint", g.waiting) : ""].filter(Boolean).join(", ")}
-                  onClick={() => (isUnattendedKind(g.kind) ? toggleOpened(g.key) : toggleGroup(g.key))}>
-                  <Icon name={isFolded(g) ? "chevron-right" : "chevron-down"} />
-                  <Icon name={GROUP_ICON[g.kind]} />
-                  <span className="ovw-gname">{groupName(g)}</span>
-                  <span className="ovw-gcount">{tr("ovw.group_count", { alive: g.alive, n: g.total })}</span>
-                  {g.waiting > 0 && (
-                    <span className="act-gwait" title={tCount("active.group_waiting_hint", g.waiting)}>
-                      <Icon name="question" />
-                      {g.waiting}
-                    </span>
-                  )}
-                </button>
-              </h3>
+              <div className="ovw-gtitle act-gtitle">
+                <h3 className="act-gheading" title={(g.kind === "autorun" ? groupName(g) : g.hint) || undefined}>
+                  <button type="button" className="act-gfold" aria-expanded={!isFolded(g)}
+                    aria-label={[groupName(g), tr("ovw.group_count", { alive: g.alive, n: g.total }), g.waiting > 0 ? tCount("active.group_waiting_hint", g.waiting) : ""].filter(Boolean).join(", ")}
+                    onClick={() => (isUnattendedKind(g.kind) ? toggleOpened(g.key) : toggleGroup(g.key))}>
+                    <Icon name={isFolded(g) ? "chevron-right" : "chevron-down"} />
+                    <Icon name={GROUP_ICON[g.kind]} />
+                    <span className="ovw-gname">{groupName(g)}</span>
+                    <span className="ovw-gcount">{tr("ovw.group_count", { alive: g.alive, n: g.total })}</span>
+                    {g.waiting > 0 && (
+                      <span className="act-gwait" title={tCount("active.group_waiting_hint", g.waiting)}>
+                        <Icon name="question" />
+                        {g.waiting}
+                      </span>
+                    )}
+                  </button>
+                </h3>
+                {g.kind === "repo" && <ActiveRepoLaunch label={g.hint} copies={launchCopies.get(g.key) ?? []} running={running} />}
+              </div>
               {!isFolded(g) && (
               <div className="act-cards" role="list">
                 {g.sessions.map((s) => {

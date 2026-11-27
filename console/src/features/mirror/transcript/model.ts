@@ -385,6 +385,8 @@ export function groupTurns(turns: Turn[], breaks: number[] = []): Group[] {
       !t.bash &&
       !last.cmd &&
       !t.cmd &&
+      // A checkpoint can omit the prompt that separates a saved failed turn from its neighbor.
+      !(t.role === "assistant" && (last.parts.some(isAgyExecutorFailure) || parts.some(isAgyExecutorFailure))) &&
       // A queue entry is its own bubble: its actions act on one id, and folding two entries
       // would put one entry's buttons on another's text.
       !last.queueId &&
@@ -459,6 +461,10 @@ export function groupTurns(turns: Turn[], breaks: number[] = []): Group[] {
     }
   }
   return out;
+}
+
+export function isAgyExecutorFailure(part: Pick<Part, "kind" | "cause">): boolean {
+  return part.kind === "error" && part.cause === "agy_executor_failure";
 }
 
 // latestContext returns the newest assistant turn's prompt breakdown (reused-cache,

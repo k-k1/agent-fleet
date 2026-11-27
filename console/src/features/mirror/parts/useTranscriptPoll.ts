@@ -14,6 +14,7 @@ import { type InteractionAnswerWire, patchAnswers } from "../interactionAnswers.
 import { emptyDiscardNotices } from "../stopQueue.ts";
 import type { Turn } from "../transcript/types.ts";
 import { isPendingApproval } from "../transcript/types.ts";
+import { mergeTurns } from "../transcript/model.ts";
 import { parsePendingPeers } from "./PendingPeersNotice.tsx";
 import { parseBackgroundShells } from "./BackgroundShellsPanel.tsx";
 import { parseWatches, sameWatches } from "./WatchesPanel.tsx";
@@ -151,6 +152,8 @@ export function useTranscriptPoll({
   useEffect(() => {
     if (!session) return;
     let alive = true;
+    let stepIndexed = false;
+    let heldStepWindow = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       // Hidden tab: skip the fetch entirely (mobile data / battery); the
@@ -172,9 +175,10 @@ export function useTranscriptPoll({
         // live=1 asks for the reply still being written. Left off when the setting is, so the
         // request and its response stay exactly what they were before the setting existed.
         const live = liveOnRef.current ? "&live=1" : "";
+        const from = stepIndexed ? `&from=${firstLineRef.current}` : "";
         const url = first
           ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}${live}`
-          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}${agg}${live}`;
+          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}${from}${agg}${live}`;
         const d = await api(url);
         if (!alive) return;
         // Refreshing marks rides the transcript poll rather than adding a cycle of its own;
@@ -194,6 +198,7 @@ export function useTranscriptPoll({
           } else {
             lastPayloadRef.current = payload;
             unchangedRef.current = 0;
+            stepIndexed = d.stepIndexed === true;
             if (typeof d.cursor === "number") cursorRef.current = d.cursor;
             setLogId(typeof d.jsonlPath === "string" ? d.jsonlPath : "");
             // reset: the server's jsonl shrank or was replaced (compaction, or a
@@ -217,13 +222,15 @@ export function useTranscriptPoll({
               // (notably OpenCode) also update the parts of their current assistant turn
               // while its stable idx stays the same, so replace that overlapping turn.
               // A quick re-poll after sending can likewise overlap safely.
+              const incomingTurns = d.messages as Turn[];
               setTurns((t) => {
+                if (d.stepIndexed === true) return patchAnswers(mergeTurns(t, incomingTurns), answers);
                 const byIdx = new Map<number, number>();
                 for (let i = 0; i < t.length; i++) {
                   if (t[i].idx !== undefined) byIdx.set(t[i].idx as number, i);
                 }
                 let next = t;
-                for (const incoming of d.messages as Turn[]) {
+                for (const incoming of incomingTurns) {
                   const at = incoming.idx === undefined ? undefined : byIdx.get(incoming.idx);
                   if (at === undefined) {
                     if (next === t) next = [...t];
@@ -244,8 +251,13 @@ export function useTranscriptPoll({
             }
             // Windowed (initial tail) response carries the oldest line we now hold.
             if (typeof d.firstLine === "number") {
-              firstLineRef.current = d.firstLine;
-              setHasMore(!!d.hasMore);
+              // An echo resync merges a newer tail into the history already held.
+              // Keep paging and live backfill anchored to the older loaded range.
+              if (!stepIndexed || !heldStepWindow || d.reset || d.firstLine <= firstLineRef.current) {
+                firstLineRef.current = d.firstLine;
+                setHasMore(!!d.hasMore);
+              }
+              heldStepWindow = stepIndexed && d.cursor > 0;
             }
             // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
             // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
@@ -468,9 +480,9 @@ export function useOlderHistory({
       if (d && !d.error && Array.isArray(d.messages)) {
         if (d.messages.length) {
           scroll.capturePrependAnchor(); // keep the viewport steady across the prepend
-          const older = d.messages;
+          const older: Turn[] = d.messages;
           for (const t of older) if (typeof t.idx === "number" && t.idx < oldestRef.current) oldestRef.current = t.idx;
-          setTurns((t) => [...older, ...t]);
+          setTurns((t) => d.stepIndexed === true ? mergeTurns(older, t) : [...older, ...t]);
         }
         if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
         setHasMore(!!d.hasMore);

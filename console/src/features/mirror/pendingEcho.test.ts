@@ -143,6 +143,13 @@ describe("echoLanded", () => {
     ).toBe(false);
   });
 
+  it("keeps an echo pending when an Antigravity failure is backfilled after the send", () => {
+    const error = { role: "assistant", idx: 11, parts: [{ kind: "error", cause: "agy_executor_failure" }] };
+    const echo = { text: "continue", sinceIdx: 10 };
+    expect(echoLanded(echo, [error], notNoise)).toBe(false);
+    expect(echoLanded(echo, [error, { role: "user", idx: 18, text: echo.text }], notNoise)).toBe(true);
+  });
+
   // claude logs a mistyped slash command only as a CLI warning (errors.go cliWarning). It settles
   // that command's echo, but not a plain prompt sent in the same window, which is still coming.
   it("resolves a slash-command echo against a CLI warning, and only that", () => {

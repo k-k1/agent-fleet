@@ -79,12 +79,13 @@ func TestCompletedCommandSteps(t *testing.T) {
 		`{"step_index":6,"source":"MODEL","type":"GENERIC","status":"RUNNING","content":"Tool is running as a background task with task id: ` + conv + `/task-6\nTask Description: sleep 20"}`,
 		`{"step_index":8,"source":"MODEL","type":"GENERIC","status":"DONE","content":"Task: ` + conv + `/task-6\nStatus: RUNNING\nLog: file:///tmp/task-6.log"}`,
 		`{"step_index":9,"source":"MODEL","type":"GENERIC","status":"DONE","content":"Command exited with code 0."}`,
-		`{"source":"MODEL","type":"GENERIC","status":"DONE","content":"Command exited with code 2."}`,
 		`{"step_index":10,"source":"MODEL","type":"GENERIC","status":"DONE","content":"Unrecognized result"}`,
 		`{"step_index":11,"source":"MODEL","type":"GENERIC","status":"DONE","content":"The user changed the command to be run to: true\nThe command exited with code 0."}`,
+		`{"source":"MODEL","type":"GENERIC","status":"DONE","content":"Command exited with code 2."}`,
 	}, "\n"))
 	hook("PostToolUse", "current-launch", args(conv, "failed or unknown", "10"))
 	hook("PostToolUse", "current-launch", args(conv, "possibly stale proposal", "11"))
+	hook("PostToolUse", "current-launch", args(conv, "guessed index", "12"))
 	td, _ := agentImpl{}.Transcript(m)
 	if len(td.Turns) != 1 || len(td.Turns[0].Parts) != 7 {
 		t.Fatalf("unexpected turns: %+v", td.Turns)
@@ -95,9 +96,9 @@ func TestCompletedCommandSteps(t *testing.T) {
 		{"RUN_COMMAND", launch + " · task-6 · started in background", launch},
 		{"Check task status", "task-6 · running when checked", ""},
 		{"RUN_COMMAND", "exit code 0", ""},
+		{"GENERIC", "", ""},
+		{"GENERIC", "", ""},
 		{"RUN_COMMAND", "exit code 2", ""},
-		{"GENERIC", "", ""},
-		{"GENERIC", "", ""},
 	} {
 		p := parts[i]
 		if p.Tool != want.tool || p.Info != want.info || p.Command != want.command {
