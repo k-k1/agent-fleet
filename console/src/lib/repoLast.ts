@@ -5,7 +5,7 @@
 // the right-click menu — so the default tracks real usage, not just modal launches.
 import { CLAUDE_MODELS, DEFAULT_MODEL, getSettings } from "./settings.ts";
 import { isModelHidden, modelMatchesHidden } from "./modelDeny.ts";
-import { repoLaunchKinds } from "../agents/registry.ts";
+import { agentOf, repoLaunchKinds } from "../agents/registry.ts";
 
 const KIND_KEY = (repo: string) => "af.repo-lastkind." + repo;
 // The model memory is per (kind, repo): a codex model id must never leak into a
@@ -113,10 +113,15 @@ export function forgetHiddenRepoModels(kind: string, hidden: string[]): void {
   }
 }
 
-export function resolveEffort(kind: string, repo: string, defaultEffort = ""): string {
-  if (!repo) return defaultEffort;
-  const last = readRemembered(EFFORT_KEY(repo, kind));
+export function resolveEffortChoice(kind: string, repo: string, defaultEffort: string): string {
+  const last = repo ? readRemembered(EFFORT_KEY(repo, kind)) : { found: false, value: "" };
+  // Legacy empty and default choices follow Settings for kinds that inherit it.
+  if (agentOf(kind).launchEffortUsesSettings) return last.value === "default" ? "" : last.value;
   return last.found ? last.value : defaultEffort;
+}
+
+export function resolveEffortOverride(kind: string, choice: string, defaultEffort: string): string {
+  return agentOf(kind).launchEffortUsesSettings && !choice ? defaultEffort : choice;
 }
 
 export function resolveStartMode(kind: string, repo: string, defaultMode: string): "normal" | "plan" {

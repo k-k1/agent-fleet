@@ -19,7 +19,8 @@ vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
   getUser: () => "",
   api: async (url: string) =>
-    url.includes("api/env/ui-prefs") ? (prefsReads++, Promise.resolve(prefsGate).then(() => (onPrefsAnswer?.(), serverPrefs))) : url.includes("api/ssm/profiles") ? [] : url.includes("api/me/ui-state") ? {} : { branches: [] },
+    url.includes("agents/codex/models") ? { models: [{ id: "gpt-6-sol", label: "GPT-6 Sol", efforts: ["low", "medium", "high"], defaultEffort: "low" }] }
+      : url.includes("api/env/ui-prefs") ? (prefsReads++, Promise.resolve(prefsGate).then(() => (onPrefsAnswer?.(), serverPrefs))) : url.includes("api/ssm/profiles") ? [] : url.includes("api/me/ui-state") ? {} : { branches: [] },
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",
   errDetail: (e: { message?: string }) => e?.message ?? "",
@@ -28,7 +29,7 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { LaunchModal, SpaceLaunchForm } = await import("./LaunchModal.tsx");
 const { resetAttachDraftDB, useAttachDraft } = await import("../../lib/attachDraft.ts");
-const { setSettings, cancelPrefsTimersForTest } = await import("../../lib/settings.ts");
+const { getSettings, setSettings, cancelPrefsTimersForTest } = await import("../../lib/settings.ts");
 const { resumePrefsTimersForTest } = await import("../../lib/settings/sync.ts");
 const { readRecentModels, rememberRecentModel } = await import("../../lib/recentModels.ts");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
@@ -68,12 +69,12 @@ function Hub({ kinds }: { kinds: string[] }) {
   );
 }
 
-async function renderDialog(kinds: string[]): Promise<void> {
+async function renderDialog(kinds: string[], home = false): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <LaunchModal repo="app" branch="main" kinds={kinds} access={access} onClose={() => {}} onLaunch={onLaunch} />
+          <LaunchModal repo={home ? "" : "app"} home={home} branch="main" kinds={kinds} access={access} onClose={() => {}} onLaunch={onLaunch} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -119,6 +120,19 @@ const sendKey = async () => {
 const primary = () => document.querySelector<HTMLButtonElement>("button.ui-btn-primary")!;
 const detailsSection = () => [...document.querySelectorAll(".launch-sec")].find((s) => s.querySelector(".launch-sec-label")?.textContent === "Details")!;
 
+function setCodexEffort(effort: string, model = "gpt-6-sol") {
+  const defaults = getSettings().agentLaunchDefaults;
+  const route = model ? { route: "chatgpt-subscription" } : undefined;
+  setSettings({ agentLaunchDefaults: { ...defaults, codex: { ...defaults.codex, model, effort, route } } });
+  settleSaves();
+}
+
+async function openEffortPicker(): Promise<HTMLSelectElement> {
+  const options = () => [...detailsSection().querySelectorAll<HTMLSelectElement>("select")].find((el) => [...el.options].some((o) => o.value === "high"));
+  if (!options()) await click(detailsSection().querySelector(".launch-sec-head")!);
+  return options()!;
+}
+
 beforeEach(() => {
   localStorage.clear();
   globalThis.indexedDB = new IDBFactory();
@@ -137,6 +151,69 @@ afterEach(() => {
   root = null;
   host.remove();
   setSettings({ claudeCustomModels: [] });
+});
+
+describe("Codex launch effort", () => {
+  const effortKey = "af.repo-effort.codex.app";
+  beforeEach(() => setCodexEffort("high"));
+  afterEach(() => setCodexEffort("", ""));
+
+  it("follows the current setting even when the model catalog advertises a different default", async () => {
+    await renderDialog(["codex"]);
+    expect(detailsSection().querySelector(".launch-sec-sum")?.textContent).toContain("effort Use setting (high)");
+    const picker = await openEffortPicker();
+    expect(picker.selectedOptions[0].textContent).toBe("Use setting (high)");
+    expect([...picker.options].map((o) => o.value)).toEqual(["", "low", "medium", "high"]);
+    await act(async () => setCodexEffort("medium"));
+    expect(picker.selectedOptions[0].textContent).toBe("Use setting (medium)");
+    await click(primary());
+    expect(onLaunch).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-6-sol", effort: "medium", effortChoice: "" }));
+  });
+
+  it("restores a concrete choice and discards edits when the form closes", async () => {
+    localStorage.setItem(effortKey, "low");
+    await renderDialog(["codex"]);
+    const picker = await openEffortPicker();
+    expect(picker.value).toBe("low");
+    await act(async () => {
+      picker.value = "";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => root!.render(null));
+    expect(onLaunch).not.toHaveBeenCalled();
+    await renderDialog(["codex"]);
+    expect((await openEffortPicker()).value).toBe("low");
+    await click(primary());
+    expect(onLaunch).toHaveBeenCalledWith(expect.objectContaining({ effort: "low", effortChoice: "low" }));
+  });
+
+  it.each(["", "low"])("keeps effort choice '%s' available in Terminal (CLI)", async (effort) => {
+    setCodexEffort("");
+    await renderDialog(["codex"]);
+    await openEffortPicker();
+    const terminal = [...detailsSection().querySelectorAll("button")].find((b) => b.textContent?.includes("Terminal (CLI)"))!;
+    await click(terminal);
+    const picker = await openEffortPicker();
+    expect(picker.selectedOptions[0].textContent).toBe("Use setting (unspecified)");
+    if (effort) {
+      await act(async () => {
+        picker.value = effort;
+        picker.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    await click(primary());
+    expect(onLaunch).toHaveBeenCalledWith(expect.objectContaining({ driver: "", effort, effortChoice: effort }));
+  });
+
+  it.each([
+    ["home", () => renderDialog(["codex"], true)],
+    ["space", () => renderHub(["codex"])],
+  ])("starts %s with Use setting even when a repo remembers a concrete effort", async (_place, render) => {
+    localStorage.setItem(effortKey, "low");
+    setCodexEffort("");
+    await render();
+    expect((await openEffortPicker()).selectedOptions[0].textContent).toBe("Use setting (unspecified)");
+  });
 });
 
 describe.each([

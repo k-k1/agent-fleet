@@ -139,11 +139,12 @@ interface EffortPickerProps {
   kind: string;
   model: string;
   effort: string;
+  emptyLabel?: string;
   onChange: (effort: string) => void;
 }
 
-export function EffortPicker({ kind, model, effort, onChange }: EffortPickerProps) {
-  const options = useEffortOptions(kind, model);
+export function EffortPicker({ kind, model, effort, emptyLabel, onChange }: EffortPickerProps) {
+  const options = useEffortOptions(kind, model, emptyLabel);
   const opts = options.some(([v]) => v === effort) ? options : [...options, [effort, effort] as [string, string]];
   return (
     <select value={effort} onChange={(e) => onChange(e.target.value)}>

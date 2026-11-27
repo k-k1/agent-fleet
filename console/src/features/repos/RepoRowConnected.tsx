@@ -9,7 +9,7 @@ import { apiJSON, errDetail, errText, repoSetLock } from "../../core/api/client.
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { resolveEffort, writeRepoLast, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
+import { resolveEffortChoice, resolveEffortOverride, writeRepoLast, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { resolveQuickLaunchModel } from "../../lib/agentModels.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -187,14 +187,15 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, termChip, unrea
       onOpenArchived={r.path ? () => useSessionUI.getState().openArchived(r.path) : undefined}
       // Quick launch (▼ / right-click): no prompt, straight to a session.
       onLaunch={async (kind, split) => {
-        const hasModel = agentOf(kind).caps.model;
+        const { model: hasModel, effort: hasEffort } = agentOf(kind).caps;
         const defaults = agentLaunchDefault(settings, kind);
         // Shared per-kind chain: repo last-used → kind default (repoLast.ts resolveModel).
         // resolveQuickLaunchModel is a no-op for every kind but lcpp — it exists because this
         // path has no mounted picker to react to a catalog fetch the way useAutoConcreteModel
         // does (docs/log/109), so it awaits the live catalog once here instead.
         const model = hasModel ? await resolveQuickLaunchModel(kind, resolveModel(kind, r.name, defaults.model)) : "";
-        const effort = agentOf(kind).caps.effort ? resolveEffort(kind, r.name, defaults.effort) : "";
+        const effortChoice = hasEffort ? resolveEffortChoice(kind, r.name, defaults.effort) : "";
+        const effort = hasEffort ? resolveEffortOverride(kind, effortChoice, defaults.effort) : "";
         // Kinds that can start in plan mode (planMode or tuiStartMode) honour the saved
         // default, so the per-repo start mode picked in the launch modal also applies to a
         // quick launch.
@@ -240,7 +241,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, termChip, unrea
           toast(tr("rp.launch_failed", { err: errDetail(res.error) }));
           return;
         }
-        writeRepoLast(r.name, kind, hasModel ? model : undefined, effort, startMode);
+        writeRepoLast(r.name, kind, hasModel ? model : undefined, effortChoice, startMode);
         void refreshSessions();
         const chat = agentOf(kind).caps.chat;
         (chat

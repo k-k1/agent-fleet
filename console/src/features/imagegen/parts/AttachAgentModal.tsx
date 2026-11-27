@@ -14,7 +14,7 @@ import { api, getTenant, isTransientErr } from "../../../core/api/client.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindColorClasses, kindDisplayName } from "../../../lib/sessionkind.ts";
-import { resolveEffort, resolveModel } from "../../../lib/repoLast.ts";
+import { resolveModel } from "../../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../../lib/settings.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -196,7 +196,7 @@ export function AttachAgentModal({
     seeded.current = "";
     const d = agentLaunchDefault(settings, kind);
     setModel(resolveModel(kind, "", d.model));
-    setEffort(resolveEffort(kind, "", d.effort));
+    setEffort(d.effort);
     setSkipPerm(undefined);
     // Only on a kind change: re-running on every settings sync would reset a picked model.
     // eslint-disable-next-line react-hooks/exhaustive-deps

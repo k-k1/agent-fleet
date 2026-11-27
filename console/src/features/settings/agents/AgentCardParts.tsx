@@ -114,7 +114,7 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
   const desc = agentOf(kind);
   const row = agentLaunchDefault(s, kind);
   const models = useModelOptions(kind) || [["", tr("common.default")]] as [string, string][];
-  const efforts = useEffortOptions(kind, row.model);
+  const efforts = useEffortOptions(kind, row.model, desc.launchEffortUsesSettings ? tr("agents.effort_unspecified") : undefined);
   const update = (patch: Partial<typeof row>) => {
     const next = { ...row, ...patch };
     setSettings({
