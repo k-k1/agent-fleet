@@ -14,10 +14,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// oldRateLimitWatched is rateLimitWatched as it was before the capability.
+// oldRateLimitWatched is the watched population: the switch as it was before the capability,
+// plus agy, whose Terminal quota banner joined it afterwards.
 func oldRateLimitWatched(m session.Meta) bool {
 	switch NormalizeKind(m.Kind) {
-	case session.KindClaude, session.KindMuse:
+	case session.KindClaude, session.KindMuse, session.KindAgy:
 		return true
 	case session.KindCodex:
 		return m.DriverKind() == session.DriverManaged
