@@ -108,6 +108,24 @@ var (
 	commandArgsRe = regexp.MustCompile(`<command-args>([\s\S]*?)</command-args>`)
 )
 
+// CommandSlashForm recovers the "/name args" a sender actually posted from claude's
+// command-tag user turn. "" when the text is not a command block. The leading tag is
+// required (not just a regex hit anywhere) so prose merely quoting the tags can't match.
+func CommandSlashForm(text string) string {
+	if !strings.HasPrefix(text, "<command-name>") && !strings.HasPrefix(text, "<command-message>") {
+		return ""
+	}
+	m := commandNameRe.FindStringSubmatch(text)
+	if m == nil || strings.TrimSpace(m[1]) == "" {
+		return ""
+	}
+	out := strings.TrimSpace(m[1])
+	if a := commandArgsRe.FindStringSubmatch(text); a != nil && strings.TrimSpace(a[1]) != "" {
+		out += " " + strings.TrimSpace(a[1])
+	}
+	return out
+}
+
 func applyCommand(r *agents.RecalledSettings, cmd, args, out string) {
 	switch cmd {
 	case "/model":

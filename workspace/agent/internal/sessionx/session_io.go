@@ -878,8 +878,8 @@ func submitPromptTUI(ctx context.Context, lease *lifegate.Lease, w http.Response
 			httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session")
 			return "", false
 		}
-		if NormalizeKind(meta.Kind) == session.KindClaude {
-			return "", submitObservedClaudePrompt(ctx, w, meta, pane, prompt)
+		if observe := normalizedTerminalTraits(meta.Kind).ObserveSubmit; observe != nil {
+			return "", submitObservedClaudePrompt(ctx, w, meta, pane, prompt, observe)
 		}
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a

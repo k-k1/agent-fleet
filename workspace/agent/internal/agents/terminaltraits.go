@@ -50,6 +50,9 @@ type TerminalTraits struct {
 	// SubmitDelay is the pause between typing and Enter; 0 means the default. A kind whose
 	// composer submits reliably back-to-back takes a token pause.
 	SubmitDelay time.Duration
+	// ObserveSubmit snapshots the transcript before typing and returns a read-only test
+	// for whether the current submit produced a matching user turn.
+	ObserveSubmit func(sid, prompt string) func() bool
 	// RemoteControlURL is the session's remote-control URL, "" when it was never used; a stop
 	// disconnects it first so the remote end is not left attached to a dead pane.
 	RemoteControlURL func(sid string) string

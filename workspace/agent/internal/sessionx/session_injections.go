@@ -12,7 +12,6 @@ package sessionx
 // matching user turn with that origin (transcript.Turn.Source → a Console badge).
 
 import (
-	"regexp"
 	"strings"
 	"sync"
 
@@ -247,7 +246,7 @@ func operatorInjections(name string) []string {
 // raw "/scout arg" the sender posted, but claude logs the turn as a
 // `<command-name>/<command-message>` tag block (either tag first — measured on 2.1.215,
 // skills are message-first), so an exact text compare never hits and the badge silently
-// vanished for every injected slash command. commandSlashForm recovers "/name args" from the
+// vanished for every injected slash command. claude.CommandSlashForm recovers "/name args" from the
 // tag block so those turns tag too.
 func tagInjectedTurns(name string, turns []transcript.Turn) {
 	if len(turns) == 0 {
@@ -272,7 +271,7 @@ func tagInjectedTurns(name string, turns []transcript.Turn) {
 		text := strings.TrimSpace(turns[i].Text)
 		src, hit := bySource[text]
 		if !hit {
-			if slash := commandSlashForm(text); slash != "" {
+			if slash := claude.CommandSlashForm(text); slash != "" {
 				src, hit = bySource[slash]
 			}
 		}
@@ -287,27 +286,6 @@ func tagInjectedTurns(name string, turns []transcript.Turn) {
 			turns[i].Source = src
 		}
 	}
-}
-
-var commandNameRe = regexp.MustCompile(`<command-name>([\s\S]*?)</command-name>`)
-var commandArgsRe = regexp.MustCompile(`<command-args>([\s\S]*?)</command-args>`)
-
-// commandSlashForm recovers the "/name args" a sender actually posted from claude's
-// command-tag user turn. "" when the text is not a command block. The leading tag is
-// required (not just a regex hit anywhere) so prose merely quoting the tags can't match.
-func commandSlashForm(text string) string {
-	if !strings.HasPrefix(text, "<command-name>") && !strings.HasPrefix(text, "<command-message>") {
-		return ""
-	}
-	m := commandNameRe.FindStringSubmatch(text)
-	if m == nil || strings.TrimSpace(m[1]) == "" {
-		return ""
-	}
-	out := strings.TrimSpace(m[1])
-	if a := commandArgsRe.FindStringSubmatch(text); a != nil && strings.TrimSpace(a[1]) != "" {
-		out += " " + strings.TrimSpace(a[1])
-	}
-	return out
 }
 
 // turnOrigin is the TurnInput origin for an injection whose badge is badge (badgeOriginOf's

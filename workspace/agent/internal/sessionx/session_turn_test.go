@@ -118,6 +118,14 @@ func TestHandleSessionTurnConfirmsClaudeSubmitOnce(t *testing.T) {
 			}
 			t.Setenv("TMUX_TEST_TRANSCRIPT", transcript)
 			t.Setenv("TMUX_TEST_USER_ROW", rowPath)
+			framePath := filepath.Join(dir, "frame")
+			t.Setenv("TMUX_TEST_FRAME", framePath)
+			setFrame := func(frame string) {
+				t.Helper()
+				if err := os.WriteFile(framePath, []byte(frame), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if tc.confirmed {
 				t.Setenv("TMUX_TEST_CONFIRM", "1")
 			} else {
@@ -127,6 +135,7 @@ func TestHandleSessionTurnConfirmsClaudeSubmitOnce(t *testing.T) {
 printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
 case "$1" in
   list-panes) printf '1 %%7\n' ;;
+  capture-pane) /bin/cat "$TMUX_TEST_FRAME" ;;
   send-keys)
     if [ "$4" = Enter ]; then
       printf '%s\n' '{"type":"user","message":{"role":"user","content":"Another prompt"}}' >> "$TMUX_TEST_TRANSCRIPT"
@@ -139,20 +148,19 @@ esac
 			if err := os.WriteFile(filepath.Join(filepath.Dir(logPath), "tmux"), []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			oldCapture, oldWindow, oldPoll := reclaimCapture, claudeSubmitWindow, deliveryPoll
-			frame := "❯ 1. Yes, I trust this folder\n  2. No, exit\n"
-			reclaimCapture = func(string) string { return frame }
+			oldWindow, oldPoll := claudeSubmitWindow, deliveryPoll
+			setFrame("❯ 1. Yes, I trust this folder\n  2. No, exit\n")
 			claudeSubmitWindow, deliveryPoll = 80*time.Millisecond, 10*time.Millisecond
 			if tc.confirmed {
 				claudeSubmitWindow = 3 * time.Second
 			}
-			t.Cleanup(func() { reclaimCapture, claudeSubmitWindow, deliveryPoll = oldCapture, oldWindow, oldPoll })
+			t.Cleanup(func() { claudeSubmitWindow, deliveryPoll = oldWindow, oldPoll })
 			body := fmt.Sprintf(`{"op":"start","prompt":%q,"confirm_submit":true}`, prompt)
 			if boot := postTurn(t, name, body); boot.Code != http.StatusConflict ||
 				!strings.Contains(boot.Body.String(), "composer_not_ready") {
 				t.Fatalf("send during startup = %d %s", boot.Code, boot.Body.String())
 			}
-			frame = box("")
+			setFrame(box("\x1b[7mT\x1b[0;2mry \"fix lint errors\"\x1b[0m"))
 			rec := postTurn(t, name, body)
 			if tc.confirmed {
 				if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"submit_confirmed":true`) {
@@ -166,7 +174,7 @@ esac
 				if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "delivery_unconfirmed") {
 					t.Fatalf("submit = %d %s, want unconfirmed", rec.Code, rec.Body.String())
 				}
-				frame = box(prompt)
+				setFrame(box("\x1b[7mP\x1b[0m" + prompt[1:]))
 				if again := postTurn(t, name, body); again.Code != http.StatusConflict ||
 					!strings.Contains(again.Body.String(), "composer_not_empty") {
 					t.Fatalf("send over retained draft = %d %s", again.Code, again.Body.String())
@@ -176,6 +184,30 @@ esac
 			if err != nil || strings.Count(string(got), "send-keys -t %7 Enter\n") != 1 ||
 				strings.Count(string(got), "send-keys -t %7 -l -- "+prompt+"\n") != 1 {
 				t.Fatalf("tmux commands = %q (%v), want exactly one prompt and one Enter", got, err)
+			}
+		})
+	}
+}
+
+func TestHandleSessionTurnSubmitReceiptCompatibility(t *testing.T) {
+	for _, managed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("managed=%t", managed), func(t *testing.T) {
+			fakeTmux(t)
+			const name = "turn_receipt"
+			var handle *originFakeHandle
+			if managed {
+				handle, _ = useOriginFake(t, name)
+			} else {
+				session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
+			}
+			for _, confirm := range []bool{false, true} {
+				rec := postTurn(t, name, fmt.Sprintf(`{"op":"start","prompt":"a memo","confirm_submit":%t}`, confirm))
+				if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "submit_confirmed") != confirm {
+					t.Fatalf("confirm=%t: got %d %s", confirm, rec.Code, rec.Body.String())
+				}
+				if handle != nil && handle.next(t).Prompt != "a memo" {
+					t.Fatal("managed driver received the wrong prompt")
+				}
 			}
 		})
 	}

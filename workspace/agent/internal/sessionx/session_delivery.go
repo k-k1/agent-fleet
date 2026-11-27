@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -49,16 +50,15 @@ import (
 // send cannot supply the evidence. Keep this wait shorter than an interrupt's lock wait.
 var claudeSubmitWindow = 8 * time.Second
 
-func submitObservedClaudePrompt(ctx context.Context, w http.ResponseWriter, m session.Meta, pane, prompt string) bool {
-	sid := session.UUID(m.Dir, m.Name)
-	baseline := claude.TranscriptSnapshot(sid)
-	frame := reclaimCapture(pane)
-	draft, _, hasBox := claudeBox(frame)
-	if !hasBox || !tmuxx.ClaudeMainComposer(frame) {
+func submitObservedClaudePrompt(ctx context.Context, w http.ResponseWriter, m session.Meta, pane, prompt string, observe func(string, string) func() bool) bool {
+	submitted := observe(session.UUID(m.Dir, m.Name), prompt)
+	frame, err := tmuxx.Output("capture-pane", "-p", "-e", "-t", pane)
+	draft, ready := claudeSubmitComposer(string(frame))
+	if err != nil || !ready {
 		httpx.WriteErr(w, http.StatusConflict, "composer_not_ready", "Claude's conversation composer is not ready. Check the terminal before sending again.")
 		return false
 	}
-	if strings.TrimSpace(draft) != "" {
+	if draft {
 		httpx.WriteErr(w, http.StatusConflict, "composer_not_empty", "Claude's composer already holds a draft. Clear or submit it in the terminal before sending again.")
 		return false
 	}
@@ -75,25 +75,56 @@ func submitObservedClaudePrompt(ctx context.Context, w http.ResponseWriter, m se
 	}
 	// Claude's hooks own the working state. The tmux exit status and the spinner can both
 	// precede a user turn or belong to other work, so neither settles this send.
-	if !awaitClaudeSubmit(ctx, sid, baseline, claude.ShapePrompt(prompt)) {
+	if !awaitClaudeSubmit(ctx, submitted) {
 		httpx.WriteErr(w, http.StatusBadGateway, "delivery_unconfirmed", "Claude did not record the prompt as a user turn within the observation window. Check the terminal before sending again.")
 		return false
 	}
 	return true
 }
 
-func awaitClaudeSubmit(ctx context.Context, sid string, baseline map[string]int64, prompt string) bool {
+// The ghost text is faint. Claude 2.1.332 renders its first cell in reverse video while
+// the cursor is at the start, then resets the cursor style and paints the rest faint.
+// An ordinary draft has visible text outside that span even if the cursor is at its start.
+var claudeComposerHint = regexp.MustCompile(`^[\x{a0} ]*(?:\x1b\[7m[^\x1b\n])?\x1b\[(?:0;)?2m[^\x1b\n]+\x1b\[(?:0|22)m *$`)
+
+func claudeSubmitComposer(styled string) (hasDraft, ready bool) {
+	rows := strings.Split(styled, "\n")
+	plain := make([]string, len(rows))
+	for i, row := range rows {
+		plain[i] = agents.AnsiRe.ReplaceAllString(row, "")
+	}
+	frame := strings.Join(plain, "\n")
+	draft, _, promptRow, hasBox := claudeBoxAt(frame)
+	if !hasBox || !tmuxx.ClaudeMainComposer(frame) {
+		return false, false
+	}
+	if strings.TrimSpace(draft) == "" {
+		return false, true
+	}
+	_, after, _ := strings.Cut(rows[promptRow], "❯")
+	if !claudeComposerHint.MatchString(after) {
+		return true, true
+	}
+	for i, end := promptRow+1, promptRow+1+strings.Count(draft, "\n"); i < end; i++ {
+		if strings.TrimSpace(plain[i]) != "" && !claudeComposerHint.MatchString(rows[i]) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+func awaitClaudeSubmit(ctx context.Context, submitted func() bool) bool {
 	ctx, cancel := context.WithTimeout(ctx, claudeSubmitWindow)
 	defer cancel()
 	poll := time.NewTicker(deliveryPoll)
 	defer poll.Stop()
 	for {
-		if claude.PromptSubmittedSince(sid, baseline, prompt) {
+		if submitted() {
 			return true
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return ctx.Err() == context.DeadlineExceeded && submitted()
 		case <-poll.C:
 		}
 	}
