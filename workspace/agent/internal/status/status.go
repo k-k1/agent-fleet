@@ -289,15 +289,36 @@ func persistTurnEnd(sid, state, reason, promptID, rev string, onlyIfRev bool) bo
 	// nothing, and the hook then broadcasts a result the schedule routed (measured by delaying the
 	// second write). Outside the lock, a heal's "working" write would remove the key in between
 	// and the closed turn would be left without one.
-	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
+	unlock, locked := lockSid(sid)
 	defer unlock()
-	if onlyIfRev {
-		if cur, ok := Read(sid); !ok || cur.Rev != rev {
-			return false
-		}
+	if !onlyIfRev {
+		// A lock timeout still writes: the hook's record is authoritative, only the heal
+		// (PersistIf) gives way.
+		WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
+		persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
+		return true
 	}
-	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
-	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
+	// A conditional end is only a verdict some poll reached, so it gives way like the heal: without
+	// the lock the Rev check proves nothing, and it reports whether the record was really written.
+	if !locked {
+		return false
+	}
+	if cur, ok := Read(sid); !ok || cur.Rev != rev {
+		return false
+	}
+	_, hadKey := ReadCompletionKey(sid)
+	WriteCompletionKey(sid, at)
+	end := SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID, TS: time.Now().Format(time.RFC3339), Rev: newRev()}
+	if err := statusFiles.Write(sid, end); err != nil {
+		log.Printf("session-status: write %s: %v", statusFiles.Path(sid), err)
+		if !hadKey {
+			RemoveCompletionKey(sid) // the key this attempt made must not outlive the end it announces
+		}
+		return false
+	}
+	// An idle end reads nothing of the record it replaces, so the ledgers can follow the write.
+	noteFirstTurnWrite(sid, end)
+	noteTurnStart(sid, end)
 	return true
 }
 

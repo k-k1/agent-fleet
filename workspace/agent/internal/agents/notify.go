@@ -244,6 +244,9 @@ func MarkTurnEndErr(sid string, st TurnState, failure string) {
 // and notified, only while the status record is still the one named by rev
 // (status.PersistTurnEndIfRev). It reports whether it was.
 func MarkTurnEndIfRev(sid string, st TurnState, failure, rev string) bool {
+	if st != TurnCompleted && st != TurnFailed {
+		return false // the other states write or note things the Rev condition does not cover
+	}
 	return markTurnEnd(sid, st, failure, rev, true)
 }
 

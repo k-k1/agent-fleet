@@ -1,8 +1,12 @@
 package status
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 )
 
 func armed(t *testing.T, sid string, noReason bool) {
@@ -239,5 +243,58 @@ func TestPersistTurnEndIfRevRefusesANewerRecord(t *testing.T) {
 	}
 	if now, _ := Read(sid); now.State != "working" || now.Rev != cur.Rev || now.TurnEnd {
 		t.Fatalf("the newer record was changed: %+v", now)
+	}
+}
+
+// A conditional end gives way when the status lock cannot be taken, and when the record cannot be
+// written; in both cases nothing is announced: no key, no end.
+func TestPersistTurnEndIfRevGivesWayWithoutTheLockOrTheWrite(t *testing.T) {
+	isolate(t)
+	sid := "ifrev-fail"
+	defer func(d time.Duration) { lockWait = d }(lockWait)
+	lockWait = 30 * time.Millisecond
+	Persist(sid, "working")
+	cur, _ := Read(sid)
+
+	// Lock held by someone else for longer than lockWait.
+	unlock, ok := lockSid(sid)
+	if !ok {
+		t.Fatal("control: lock not taken")
+	}
+	done := make(chan bool)
+	go func() { done <- PersistTurnEndIfRev(sid, "idle", "", "", cur.Rev) }()
+	if <-done {
+		t.Fatal("an end was written without the lock")
+	}
+	unlock()
+	if st, _ := Read(sid); st.State != "working" || st.TurnEnd {
+		t.Fatalf("record changed without the lock: %+v", st)
+	}
+	if _, has := ReadCompletionKey(sid); has {
+		t.Fatal("a completion key was left without the lock")
+	}
+
+	// The record cannot be written: the staging directory is a file.
+	staging := filepath.Join(statusFiles.Dir(), fstore.StagingSubdir)
+	_ = os.RemoveAll(staging)
+	if err := os.WriteFile(staging, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if PersistTurnEndIfRev(sid, "idle", "", "", cur.Rev) {
+		t.Fatal("a failed write reported success")
+	}
+	if st, _ := Read(sid); st.State != "working" || st.TurnEnd {
+		t.Fatalf("record changed by a failed write: %+v", st)
+	}
+	if _, has := ReadCompletionKey(sid); has {
+		t.Fatal("the failed write left its completion key")
+	}
+	// A key that existed before the attempt stays.
+	_ = os.Remove(staging)
+	WriteCompletionKey(sid, "earlier")
+	_ = os.WriteFile(staging, []byte("x"), 0o600)
+	PersistTurnEndIfRev(sid, "idle", "", "", cur.Rev)
+	if k, has := ReadCompletionKey(sid); !has || k != "earlier" {
+		t.Fatalf("an earlier key was disturbed: %q %v", k, has)
 	}
 }
