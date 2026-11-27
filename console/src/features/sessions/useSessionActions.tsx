@@ -81,12 +81,15 @@ export function useSessionActions(): SessionActions {
 
   const confirmArchive = async (s: Session, reason?: string) => {
     const body = tr("srow.archive_body");
-    if (!(await askConfirm({
-      title: tr("srow.archive_title", { name: displayName(s) }),
-      body: reason ? `${reason} ${body}` : body,
-      confirmLabel: tr("srow.archive_confirm"),
-      safeFocus: true,
-    }))) return;
+    if (
+      !(await askConfirm({
+        title: tr("srow.archive_title", { name: displayName(s) }),
+        body: reason ? <>{reason}<br />{body}</> : body,
+        confirmLabel: tr("srow.archive_confirm"),
+        danger: false,
+      }))
+    )
+      return;
 
     const { ok } = await tidyOne(s, "archive");
     if (!ok) {
