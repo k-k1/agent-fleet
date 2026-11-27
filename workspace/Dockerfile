@@ -68,7 +68,13 @@ FROM node:22-trixie-slim
 LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
       org.opencontainers.image.description="Agent Fleet per-user workspace — isolated container running the agent CLIs" \
       org.opencontainers.image.licenses="Apache-2.0"
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The upgrade takes Debian security fixes for packages the base already ships, as in
+# control-plane/Dockerfile: node:22-trixie-slim lags trixie-security, so without it a rebuild
+# keeps a fixed CVE (libzstd1 CVE-2026-124851 survived the 0.51.0 rebuild that way). The
+# native rootfs is built from this Dockerfile too, so it gets the same fixes.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && apt-get install -y --no-install-recommends \
       git git-lfs git-delta subversion tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
       ripgrep fd-find bat jq unzip zip \
       build-essential pkg-config \

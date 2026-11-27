@@ -8,8 +8,7 @@ source_of_truth: ".github/workflows/image-vuln-scan.yml, deploy/local/vuln-scan-
 English | [日本語](94-patch-release.ja.md)
 
 The shipped images build from floating base tags (`debian:trixie-slim`, `node:22-trixie-slim`,
-`golang:1.26-trixie`) with no `apt-get upgrade`, and a Go binary only gets a newer standard
-library when it is rebuilt. A release therefore carries what was current on its build day, and
+`golang:1.26-trixie`), and a Go binary only gets a newer standard library when it is rebuilt. A release therefore carries what was current on its build day, and
 nothing moves until the next release. Hosts are covered elsewhere (Fargate, SSM-resolved AMIs).
 This chapter covers the images: how a missing fix is **detected**, and the cheap path from the
 detection to a **patch release**. Scheduled patch releases are not adopted; the maintainer
@@ -57,7 +56,8 @@ Each row has a **Remedy**:
 
 - `rebuild`: an OS package that the Dockerfile does not pin, or the Go standard library in `af-cp` / `workspace-agent`. A rebuild
   with a refreshed base image and Go toolchain cures it, so it is a patch-release case. The control-plane
-  image runs `apt-get upgrade`, so its Debian fixes arrive on a rebuild even before the base tag is refreshed.
+  and workspace images (and so the native rootfs, built from the workspace Dockerfile) run `apt-get upgrade`,
+  so their Debian fixes arrive on a rebuild even before the base tag is refreshed.
 - `bump`: a Debian package the Dockerfile pins to an exact version (`chromium`, `chromium-common`, `chromium-sandbox` via `CHROMIUM_VERSION`: a fresh base reinstalls the same build), a Go module, an npm package, or a tool we bake in (its own pin, e.g. a Go tool built with
   an old toolchain). A rebuild does not move it. Fix it with a normal PR to `main`, which the next
   release carries; if it cannot wait, the patch release has to carry that bump too (see below).

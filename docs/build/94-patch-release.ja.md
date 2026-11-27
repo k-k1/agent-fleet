@@ -8,7 +8,7 @@ source_of_truth: ".github/workflows/image-vuln-scan.yml、deploy/local/vuln-scan
 [English](94-patch-release.md) | 日本語
 
 配布イメージは浮動ベースタグ（`debian:trixie-slim`・`node:22-trixie-slim`・`golang:1.26-trixie`）から
-`apt-get upgrade` なしでビルドされ、Go のバイナリは再ビルドされるまで新しい標準ライブラリを取り込まない。
+ビルドされ、Go のバイナリは再ビルドされるまで新しい標準ライブラリを取り込まない。
 そのためリリースにはビルド当日の状態が入り、次のリリースまで何も動かない。ホスト側は別の仕組み
 （Fargate・SSM 解決の AMI）で足りている。本書はイメージ側、つまり未適用の修正を**検知**する方法と、
 検知から**パッチリリース**までの安い経路を扱う。定期的なパッチリリースは採用していない。出すかどうかは
@@ -52,7 +52,7 @@ issue をそのままにする。
 各行の **Remedy**:
 
 - `rebuild`: Dockerfile でピンしていない OS パッケージ、または `af-cp` / `workspace-agent` 内の Go 標準ライブラリ。ベースイメージと
-  Go toolchain を新しくして再ビルドすれば直るので、パッチリリースの対象。control-plane のイメージは
+  Go toolchain を新しくして再ビルドすれば直るので、パッチリリースの対象。control-plane と workspace のイメージ（と、workspace の Dockerfile から作るネイティブ rootfs）は
   `apt-get upgrade` を走らせるので、ベースのタグが更新される前でも再ビルドで Debian の修正が入る。
 - `bump`: Dockerfile が版を固定している Debian パッケージ（`CHROMIUM_VERSION` の `chromium`・`chromium-common`・`chromium-sandbox`。新しいベースでも同じビルドが入り直る）、Go モジュール、npm パッケージ、焼き込んだツール（古い toolchain でビルドされたツール自身のピン）。
   再ビルドでは動かない。通常の PR で `main` に入れ、次のリリースに載せる。待てない場合はパッチリリースにも
