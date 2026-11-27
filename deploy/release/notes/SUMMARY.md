@@ -13,6 +13,34 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.51.0](0.51.0.md) — 2026-11-27
+
+**CLI pins** — OpenCode 2.4.2 / Copilot 1.0.116 / Antigravity 1.5.18
+
+**New / Improved**
+
+- **[spaces]** Inbox, image studio, memo queue, handoff, plan review and child launches support spaces ([#5220](https://github.com/k-k1/agent-fleet/issues/5220), [#5222](https://github.com/k-k1/agent-fleet/issues/5222), [#5223](https://github.com/k-k1/agent-fleet/issues/5223), [#5232](https://github.com/k-k1/agent-fleet/issues/5232))
+- **[memory]** A member's spaces share one Agent memory project ([#5221](https://github.com/k-k1/agent-fleet/issues/5221))
+- **[mcp]** Explicit scopes, shared sign-in for distributed HTTPS servers, and Google Workspace OAuth compatibility ([#5173](https://github.com/k-k1/agent-fleet/issues/5173), [#5175](https://github.com/k-k1/agent-fleet/issues/5175))
+- **[bedrock]** Marked AWS profiles can supply Claude Code and OpenCode's Bedrock route without the rollout switches ([#3282](https://github.com/k-k1/agent-fleet/issues/3282))
+- **[sessions]** Cards for stops within 24 hours and a count for older or undated stops ([#5155](https://github.com/k-k1/agent-fleet/issues/5155))
+- **[schedules]** Open a reused session from schedule details ([#5298](https://github.com/k-k1/agent-fleet/issues/5298))
+- **[watch]** Watch service recovery on GitHub and Atlassian cloud status pages ([#5204](https://github.com/k-k1/agent-fleet/issues/5204))
+- **[mirror]** Fleet watch names and branches, and timer due times in the browser time zone ([#5305](https://github.com/k-k1/agent-fleet/issues/5305), [#5324](https://github.com/k-k1/agent-fleet/issues/5324))
+- **[guide]** Search keywords and updated Console guidance in both languages ([#5064](https://github.com/k-k1/agent-fleet/issues/5064), [#5321](https://github.com/k-k1/agent-fleet/issues/5321))
+- **[workspace]** AWS CLI 2.42.4, GitHub CLI 2.106.0 and bkt 0.41.1 alongside the agent CLI updates ([#5211](https://github.com/k-k1/agent-fleet/issues/5211))
+
+**Fixed**
+
+- **[memos]** Usage-limit auto-resumes are released, stopped runs can be moved, and moved runs retain their slot ([#5212](https://github.com/k-k1/agent-fleet/issues/5212), [#5292](https://github.com/k-k1/agent-fleet/issues/5292), [#5293](https://github.com/k-k1/agent-fleet/issues/5293))
+- **[memos]** Keep runs open for peer messages and keep memos after partial launches ([#5270](https://github.com/k-k1/agent-fleet/issues/5270), [#5077](https://github.com/k-k1/agent-fleet/issues/5077))
+- **[spaces]** Confirm launches in busy spaces and guard space and working-copy deletion ([#5230](https://github.com/k-k1/agent-fleet/issues/5230), [#5122](https://github.com/k-k1/agent-fleet/issues/5122))
+- **[spaces]** Protect space folders and markers, and place sessions under the right heading ([#5231](https://github.com/k-k1/agent-fleet/issues/5231), [#5219](https://github.com/k-k1/agent-fleet/issues/5219), [#5278](https://github.com/k-k1/agent-fleet/issues/5278))
+- **[handoff]** Space handoffs start in a new space for the recipient; Japanese handovers locate the summary boundary ([#5233](https://github.com/k-k1/agent-fleet/issues/5233), [#5291](https://github.com/k-k1/agent-fleet/issues/5291))
+- **[pull requests]** Show Bitbucket merge blockers and point to Bitbucket when details are unavailable ([#5306](https://github.com/k-k1/agent-fleet/issues/5306))
+- **[mirror]** Separate watch notices from member messages and attach AWS profile badges to the correct Codex call ([#5299](https://github.com/k-k1/agent-fleet/issues/5299), [#5295](https://github.com/k-k1/agent-fleet/issues/5295))
+- **[docker]** Repair a stale Agent address on Docker workspace start ([#5257](https://github.com/k-k1/agent-fleet/issues/5257))
+
 ## [0.50.0](0.50.0.md) — 2026-11-25
 
 **CLI pins** — Claude Code 2.1.332 / OpenCode 2.4.1 / Codex 0.172.0 / Copilot 1.0.115 / Antigravity 1.5.17
