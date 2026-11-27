@@ -58,13 +58,16 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 					// RemoveMetaAndLineage (ADR 0096 decision 6) is RemoveMeta plus a
 					// fleet-graph erasure; this invariant applies to both equally.
 					if isPkg(fn.X, "/internal/session") &&
-						(fn.Sel.Name == "RemoveMeta" || fn.Sel.Name == "RemoveMetaAndLineage") {
+						(fn.Sel.Name == "RemoveMeta" || fn.Sel.Name == "RemoveMetaAndLineage" || fn.Sel.Name == "StageMetaRemoval") {
 						removes = true
 					}
 					if isPkg(fn.X, "/internal/usagesvc") && fn.Sel.Name == "FinalizeSessionUsage" {
 						finalizes = true
 					}
 				case *ast.Ident:
+					if fn.Name == "stageShellMetaRemoval" {
+						removes = true
+					}
 					if fn.Name == "FinalizeSessionUsage" {
 						finalizes = true
 					}
@@ -76,7 +79,7 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 			}
 			checked++
 			if !finalizes {
-				t.Errorf("%s: %s calls session.RemoveMeta/RemoveMetaAndLineage but not FinalizeSessionUsage"+
+				t.Errorf("%s: %s removes a session meta but does not call FinalizeSessionUsage"+
 					" (docs/log/46 §3-b: settle the trailing turn before forgetting the meta)", name, fd.Name.Name)
 			}
 		}

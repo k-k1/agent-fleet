@@ -130,7 +130,11 @@ func TestWriteMetaDeleteInTheGapStaysDeleted(t *testing.T) {
 	t.Cleanup(func() { metaWriteGap = nil })
 	WriteMeta(Meta{Name: "d1", Kind: KindShell})
 	release := holdWriter(t, Meta{Name: "d1", Kind: KindShell, Title: "stale"})
-	RemoveMetaAndLineage("d1")
+	releaseTrash, err := RemoveMetaAndLineage("d1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseTrash()
 	release()
 	if _, st := ReadMetaState("d1"); st != MetaAbsent {
 		t.Fatalf("state = %v, want MetaAbsent: the write brought a deleted meta back", st)

@@ -420,9 +420,10 @@ func createRefusalCases() []createRefusalCase {
 			body: inRepo(map[string]any{"studio": probeStudio}), code: "tmux_failed"},
 		{name: "move_target_meta_write_failed", setup: func(p *createProbe) {
 			launchTmuxFn = func(session.Meta, bool) error { return nil }
-			prev := writeMoveTargetMeta
+			prev, prevStop := writeMoveTargetMeta, stopUnpublishedLaunch
 			writeMoveTargetMeta = func(session.Meta) error { return errors.New("no space left on device") }
-			p.t.Cleanup(func() { writeMoveTargetMeta = prev })
+			stopUnpublishedLaunch = func(session.Meta) error { return nil }
+			p.t.Cleanup(func() { writeMoveTargetMeta, stopUnpublishedLaunch = prev, prevStop })
 		}, booked: "mv1", body: inRepo(map[string]any{"initial_prompt": "hi"}), code: "meta_write_failed"},
 	}
 }

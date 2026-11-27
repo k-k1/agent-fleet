@@ -1256,16 +1256,14 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 			writeRuntimeErr(w, err)
 			return
 		}
-		session.WriteMeta(meta)
-		recordFleetGraphBirth(meta)
-		httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
-		return
-	}
-	if err := startSessionTmux(meta, false); err != nil {
+	} else if err := startSessionTmux(meta, false); err != nil {
 		writeTmuxLaunchErr(w, err)
 		return
 	}
-	session.WriteMeta(meta)
+	if err := persistLaunchedMeta(meta, session.WriteMetaChecked); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMetaWriteFailed, err.Error())
+		return
+	}
 	recordFleetGraphBirth(meta)
 	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 }
@@ -1537,7 +1535,10 @@ func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	ArchiveSession(m)
+	if err := ArchiveSession(m); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMetaWriteFailed, "could not shelve the session: "+err.Error())
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
 }
 
@@ -1545,7 +1546,7 @@ func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 // (killing a live pane or dropping the managed handle) and move it to the shelf. Deleting a
 // working copy calls it too, for the stopped AI sessions that lived in it (ADR 0101
 // decision 4): the working copy goes, the conversation stays on the shelf.
-func ArchiveSession(m session.Meta) {
+func ArchiveSession(m session.Meta) error {
 	name := m.Name
 	// Captured BEFORE the kill below: HandleListSessions (write site ②) never sees this
 	// session again once it is archived (`if m.Archived { continue }`), so this is the
@@ -1564,9 +1565,6 @@ func ArchiveSession(m session.Meta) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
-	// A held input waits for the next start, and an archived session has none.
-	agents.DropHeld(name, agents.DropArchived)
-	dropPendingPeers(name, "archived")
 	forgetSessionCaches(name)
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
@@ -1576,17 +1574,23 @@ func ArchiveSession(m session.Meta) {
 	// Written onto the meta as it is now: m is a snapshot (a working-copy delete passes one from
 	// ListMetas), and writing it back would roll back a lock set meanwhile — or bring back a
 	// session deleted meanwhile.
-	if _, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+	_, wrote, err := updateSessionMetaChecked(name, func(cur *session.Meta) bool {
 		markArchived(cur)
 		// Archiving folds the session away too, so it consumes the stop-after-turn arm for the
 		// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
 		// session again at the end of a turn nobody armed.
 		cur.StopAfterTurnAt = ""
 		return true
-	}); !ok {
-		return
+	})
+	if !wrote {
+		return err
 	}
+	// Dropping inputs is irreversible. The next start can still consume them if the shelf
+	// write failed and left the session active.
+	agents.DropHeld(name, agents.DropArchived)
+	dropPendingPeers(name, "archived")
 	fleetgraph.RecordArchived(name, true) // write site ④, part 2: AFTER the death above, never before
+	return nil
 }
 
 // HandleRestoreSession brings an archived session back into the active list as a
@@ -1597,11 +1601,11 @@ func HandleRestoreSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	if _, ok := session.ReadMeta(name); !ok {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+	m, ok, err := restoreSession(name, nil)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMetaWriteFailed, "could not restore the session: "+err.Error())
 		return
 	}
-	m, ok := RestoreSession(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -1609,24 +1613,37 @@ func HandleRestoreSession(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
 }
 
-// RestoreSession takes a session off the shelf, without the HTTP shell. Restoring a deleted
-// worktree from the trash calls it too, for the sessions that delete shelved.
+// RestoreSession takes a session off the shelf without the HTTP shell.
 func RestoreSession(name string) (session.Meta, bool) {
+	m, ok, _ := restoreSession(name, nil)
+	return m, ok
+}
+
+// RestoreShelvedSession rechecks the folder and shelf state under the meta lock.
+func RestoreShelvedSession(name string, belongs func(session.Meta) bool) error {
+	_, _, err := restoreSession(name, belongs)
+	return err
+}
+
+func restoreSession(name string, belongs func(session.Meta) bool) (session.Meta, bool, error) {
 	// Under the meta lock, on the meta as it is now: a lock set, or a delete, since the read
 	// above must not be rolled back (ADR 0101).
-	m, ok := UpdateSessionMeta(name, func(m *session.Meta) bool {
+	m, ok, err := updateSessionMetaChecked(name, func(m *session.Meta) bool {
+		if belongs != nil && (!m.Archived || !belongs(*m)) {
+			return false
+		}
 		clearArchived(m)
 		m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
 		return true
 	})
 	if !ok {
-		return m, false
+		return m, false, err
 	}
 	// Restore only un-hides the row (§101.8: it never starts anything — the caller answers a
 	// STOPPED session). RecordRevive belongs to the branch in HandleListSessions that observes
 	// the slot actually come back alive.
 	fleetgraph.RecordArchived(name, false)
-	return m, true
+	return m, true, nil
 }
 
 // sortSessionsNewestFirst orders newest first. CreatedAt has one-second precision and the
@@ -1735,8 +1752,6 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
-	agents.DropHeld(m.Name, agents.DropRecreated)
-	dropPendingPeers(m.Name, "recreated: the old session is archived")
 	forgetSessionCaches(m.Name)
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
@@ -1746,13 +1761,20 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// Onto the meta as it is now, not m: the kill above takes seconds, and m written back would
 	// roll back a lock set meanwhile (issue #950). Gone meanwhile = deleted, and a recreate of a
 	// deleted session would bring its slot back, so stop here.
-	if _, ok := UpdateSessionMeta(m.Name, func(cur *session.Meta) bool {
+	_, wrote, err := updateSessionMetaChecked(m.Name, func(cur *session.Meta) bool {
 		markArchived(cur)
 		return true
-	}); !ok {
+	})
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMetaWriteFailed, "could not shelve the old session: "+err.Error())
+		return
+	}
+	if !wrote {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	agents.DropHeld(m.Name, agents.DropRecreated)
+	dropPendingPeers(m.Name, "recreated: the old session is archived")
 	fleetgraph.RecordArchived(m.Name, true) // write site ④, part 2: AFTER the death above, never before
 
 	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
@@ -1808,13 +1830,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 			writeRuntimeErr(w, err)
 			return
 		}
-		session.WriteMeta(newMeta)
-		recordFleetGraphBirth(newMeta)
-		handOverSpawnLineage(m.Name)
-		httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
-		return
-	}
-	if err := launchTmuxFn(newMeta, false); err != nil {
+	} else if err := launchTmuxFn(newMeta, false); err != nil {
 		undoStudio()
 		// Un-archive the old session so a launch failure doesn't silently drop it from
 		// the active list.
@@ -1822,7 +1838,14 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		writeTmuxLaunchErr(w, err)
 		return
 	}
-	session.WriteMeta(newMeta)
+	if err := persistLaunchedMeta(newMeta, session.WriteMetaChecked); err != nil {
+		undoStudio()
+		if restoreErr := unarchiveAfterFailedRecreate(m.Name); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("could not return old session %s to the active list; retry from the shelf: %w", m.Name, restoreErr))
+		}
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMetaWriteFailed, err.Error())
+		return
+	}
 	recordFleetGraphBirth(newMeta)
 	handOverSpawnLineage(m.Name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
@@ -1831,13 +1854,15 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 // unarchiveAfterFailedRecreate puts the old slot back on the active list when the successor
 // never launched, so a launch failure does not silently drop it. On the meta as it is now: the
 // failed launch took seconds, and a lock set meanwhile must survive (issue #950).
-func unarchiveAfterFailedRecreate(name string) {
-	if _, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
+func unarchiveAfterFailedRecreate(name string) error {
+	_, wrote, err := updateSessionMetaChecked(name, func(cur *session.Meta) bool {
 		clearArchived(cur)
 		return true
-	}); ok {
+	})
+	if wrote {
 		fleetgraph.RecordArchived(name, false)
 	}
+	return err
 }
 
 // forkSids is the ancestry a fork of src records: src's own, then src. The whole chain, not

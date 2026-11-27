@@ -85,12 +85,18 @@ func testDeps() Deps {
 		LockedRepoDirs:    func() map[string]bool { unreached("LockedRepoDirs"); return nil },
 		LiveSessionsInDir: func(string) []string { unreached("LiveSessionsInDir"); return nil },
 		ManagedAlive:      func(session.Meta) bool { unreached("ManagedAlive"); return false },
-		ShelveSession:     func(session.Meta) { unreached("ShelveSession") },
+		ShelveSession:     func(session.Meta) error { unreached("ShelveSession"); return nil },
 		TrashSession:      func(session.Meta, func(session.Meta) bool) error { unreached("TrashSession"); return nil },
-		WithDeletionGate:  func(fn func()) { fn() },
-		RecordDeletedWorktree: func(WorktreeTombstone) (func(), error) {
+		RemoveWithShellTrash: func(shells []session.Meta, _ func(session.Meta) bool, remove func() error) (string, error) {
+			if len(shells) > 0 {
+				unreached("RemoveWithShellTrash")
+			}
+			return "", remove()
+		},
+		WithDeletionGate: func(fn func()) { fn() },
+		RecordDeletedWorktree: func(WorktreeTombstone) (func(bool), error) {
 			unreached("RecordDeletedWorktree")
-			return func() {}, nil
+			return func(bool) {}, nil
 		},
 		RepoJobActive: func(string) bool { unreached("RepoJobActive"); return false },
 		StartRepoJob: func(string, string, string, string, func(context.Context, RepoJobSink) error) any {

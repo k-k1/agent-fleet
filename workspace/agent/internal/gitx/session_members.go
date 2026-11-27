@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -114,12 +115,31 @@ type DirSessions struct {
 	live             map[string]bool
 }
 
+// unpublishedLaunches covers a launch whose meta write and subsequent stop both failed.
+// The launch reservation is still held when the entry is recorded. A later checked
+// observation releases it once the process is gone.
+var unpublishedLaunches sync.Map
+
+func NoteUnpublishedLaunch(m session.Meta) {
+	unpublishedLaunches.Store(session.MetaPath(m.Name), &m)
+}
+
 // ReadDirSessions reads every session meta and tmux's running sessions once and keeps the sessions
 // in dir. It fails rather than answer a short list when the sessions directory cannot be listed,
 // when a meta file exists but cannot be read (it may be a session running or locked in dir), or
 // when tmux cannot say what runs: a delete that took any of these for "nothing there" would remove
 // a folder under a running or locked session.
 func ReadDirSessions(dir string) (DirSessions, error) {
+	// Snapshot before checking tmux, so a probe started before the failure cannot discard
+	// a record for a process it did not yet see.
+	var unpublished []*session.Meta
+	unpublishedLaunches.Range(func(key, value any) bool {
+		m := value.(*session.Meta)
+		if key == session.MetaPath(m.Name) {
+			unpublished = append(unpublished, m)
+		}
+		return true
+	})
 	metas, unreadable, err := session.ListMetasChecked()
 	if err != nil {
 		return DirSessions{}, fmt.Errorf("the sessions could not be listed: %w", err)
@@ -142,6 +162,13 @@ func ReadDirSessions(dir string) (DirSessions, error) {
 			out.guarded = append(out.guarded, m)
 		case d.mayRun(m):
 			out.guarded = append(out.guarded, m)
+		}
+	}
+	for _, m := range unpublished {
+		if !out.alive(*m) {
+			unpublishedLaunches.CompareAndDelete(session.MetaPath(m.Name), m)
+		} else if d.mayRun(*m) {
+			out.guarded = append(out.guarded, *m)
 		}
 	}
 	return out, nil
@@ -205,26 +232,18 @@ func (s DirSessions) ToSettle() []session.Meta {
 // the session is left as it is, and the delete goes on.
 var ErrSessionLeftFolder = errors.New("the session no longer lives in the folder being deleted")
 
-// TrashShellsBeforeRemoval moves the stopped shell / ssm sessions among settle to the trash before
-// dir is removed, so a trash that fails (a full disk) stops the delete with nothing removed rather
-// than leave a session listed with no folder. Each must still live in dir when the trash reads it
-// and again when it removes it (ErrSessionLeftFolder otherwise, and it is left alone); one deleted
-// on its own since the list was read is left out too. It answers the session that could not be
-// trashed, and why.
-func TrashShellsBeforeRemoval(dir string, settle []session.Meta) (failed string, err error) {
+// RemoveWithShellTrash prepares the decided shell / ssm sessions' archives before remove runs.
+// Each must still belong to dir when its meta goes. On a failed remove their metas come back.
+// A nonempty failed name identifies a shell whose trash preparation failed.
+func RemoveWithShellTrash(dir string, settle []session.Meta, remove func() error) (failed string, err error) {
+	var shells []session.Meta
 	in := newDirMatch(dir)
 	for _, m := range settle {
-		if m.Kind != session.KindShell && m.Kind != session.KindSSM {
-			continue
-		}
-		if err := trashSession(m, in.has); err != nil {
-			if _, st := session.ReadMetaState(m.Name); st == session.MetaAbsent || errors.Is(err, ErrSessionLeftFolder) {
-				continue
-			}
-			return m.Name, err
+		if m.Kind == session.KindShell || m.Kind == session.KindSSM {
+			shells = append(shells, m)
 		}
 	}
-	return "", nil
+	return deps.RemoveWithShellTrash(shells, in.has, remove)
 }
 
 // settleAfterRemoval settles the stopped sessions of dir once it has been removed or moved: AI
@@ -238,7 +257,7 @@ func TrashShellsBeforeRemoval(dir string, settle []session.Meta) (failed string,
 // dialog's expect): nothing it was not shown is settled. When tmux cannot be asked, the decided
 // sessions are settled all the same, since the mark keeps every launch out of dir (ReserveLaunch)
 // and they are still stopped; only the search for others is given up.
-func settleAfterRemoval(dir string, before []session.Meta, onlyDecided bool) {
+func settleAfterRemoval(dir string, before []session.Meta, onlyDecided bool) error {
 	decided := map[string]bool{}
 	for _, b := range before {
 		decided[b.Name] = true
@@ -248,13 +267,7 @@ func settleAfterRemoval(dir string, before []session.Meta, onlyDecided bool) {
 	if err != nil {
 		log.Printf("delete %s: could not tell which sessions run, so only the sessions decided before the removal are settled: %v", dir, err)
 		live = map[string]bool{}
-		for _, b := range before {
-			if m, ok := session.ReadMeta(b.Name); ok {
-				metas = append(metas, m)
-			}
-		}
 	} else {
-		// An unreadable meta is left out: nothing can be settled for a record that cannot be read.
 		metas = session.ListMetas()
 	}
 	d := newDirMatch(dir)
@@ -266,17 +279,31 @@ func settleAfterRemoval(dir string, before []session.Meta, onlyDecided bool) {
 	}
 	s := DirSessions{live: live}
 	for _, m := range metas {
-		if belongs(m) {
+		if !decided[m.Name] && belongs(m) {
 			s.members = append(s.members, m)
+		}
+	}
+	var settleErr error
+	for _, b := range before {
+		switch m, st := session.ReadMetaState(b.Name); st {
+		case session.MetaUnreadable:
+			settleErr = errors.Join(settleErr, fmt.Errorf("could not read session %s", b.Name))
+		case session.MetaOK:
+			if belongs(m) {
+				s.members = append(s.members, m)
+			}
 		}
 	}
 	for _, m := range s.ToSettle() {
 		if m.Kind == session.KindShell || m.Kind == session.KindSSM {
 			if err := trashSession(m, belongs); err != nil && !errors.Is(err, ErrSessionLeftFolder) {
-				log.Printf("delete %s: could not move %s to the trash, leaving it listed: %v", dir, m.Name, err)
+				if _, st := session.ReadMetaState(m.Name); st != session.MetaAbsent {
+					settleErr = errors.Join(settleErr, fmt.Errorf("could not trash session %s: %w", m.Name, err))
+				}
 			}
-			continue
+		} else if err := deps.ShelveSession(m); err != nil {
+			settleErr = errors.Join(settleErr, fmt.Errorf("could not shelve session %s: %w", m.Name, err))
 		}
-		shelveSession(m)
 	}
+	return settleErr
 }

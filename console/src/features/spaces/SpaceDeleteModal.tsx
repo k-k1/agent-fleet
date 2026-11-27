@@ -23,6 +23,7 @@ const DELETE_ERRORS = {
   space_sessions_running: "pj.space_delete_running_error",
   space_locked_sessions: "pj.space_delete_locked_error",
   space_sessions_trash_failed: "pj.space_delete_sessions_trash_failed",
+  space_sessions_settle_failed: "pj.space_delete_sessions_settle_failed",
   space_sessions_unobservable: "pj.space_delete_unobservable",
   space_sessions_changed: "pj.space_delete_changed_agent",
   space_trash_failed: "pj.space_delete_trash_failed",
@@ -128,12 +129,18 @@ export function SpaceDeleteModal({
         // What could not be observed (which record, what tmux said) is the only clue when it does
         // not pass on its own, so it is shown after the wording.
         const detail =
-          code === "space_sessions_unobservable" && typeof err === "object" && err?.message
+          (code === "space_sessions_unobservable" || code === "space_sessions_settle_failed") &&
+          typeof err === "object" && err?.message
             ? " " + err.message
             : "";
         toast(
           key ? tr(key) + detail : tr("pj.space_delete_error", { detail: errText(err) }),
         );
+        if (code === "space_sessions_settle_failed") {
+          void useSpacesStore.getState().refresh();
+          void useSessionsStore.getState().refresh();
+          onClose();
+        }
         return;
       }
       for (const s of reviewed) closeSessionPanes(s.name);

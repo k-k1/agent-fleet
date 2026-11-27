@@ -246,6 +246,7 @@ export const repos = {
   "pj.space_delete_unobservable": "このスペースにどのセッションがあるかを確かめられなかった（セッションの記録を読めない、または tmux が応答しない）ため、スペースは削除していません。少し待ってからもう一度試してください。繰り返すときは、Agent が示す次の箇所を直してください:",
   "pj.space_delete_sessions_trash_failed": "このスペースのシェル / SSM セッションをごみ箱へ移せなかったため、スペースは削除していません（ディスクの空きを確認してください）。",
   "pj.space_delete_trash_failed": "スペースをごみ箱へ移せなかったため、削除していません（ディスクの空きを確認してください）。",
+  "pj.space_delete_sessions_settle_failed": "スペースはごみ箱に移動しました。残っているセッションは、セッション一覧から棚上げまたは削除をやり直してください。",
   "pj.space_delete_other_fs": "ごみ箱が ~/spaces と別のファイルシステムにあるため、スペースを移せません。何も削除していません。",
   "pj.space_delete_in_progress": "このスペースはすでに削除中です。",
   "terms.title": "ターミナル",

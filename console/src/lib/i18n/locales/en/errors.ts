@@ -311,7 +311,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.move_delivery_done": "The first prompt has already arrived (or the session is gone).",
   "err.move_delivery_in_flight": "The first prompt is being sent right now.",
   "err.move_target_not_created": "The move has not created this session yet. Finish or cancel it from the source session.",
-  "err.meta_write_failed": "The session started, but its record could not be written to disk.",
+  "err.meta_write_failed": "The session record could not be written to disk.",
   "err.session_gate": "Could not wait for this session's move to finish. Try again.",
   "err.bad_kind": "Unknown agent kind.",
   "err.title_feature_disabled": "This AI feature is off (turn it on under \"Features that use AI assistance\" in Settings > AI assistance).",

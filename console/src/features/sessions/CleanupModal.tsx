@@ -313,11 +313,16 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
     if (!ok) return;
     setBusy(true);
     try {
-      // A refusal has to be seen: the one the Agent gives on purpose (409) is an archive
-      // whose restore did not finish, which only restoring it again resolves.
       const res = await raw(`api/cleanup/archives/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => null);
       if (!res || !res.ok) {
-        toast(res?.status === 409 ? t("clean.purge_restore_incomplete") : t("clean.purge_failed"));
+        const code = res?.status === 409 ? (await res.json().catch(() => null))?.error?.code : undefined;
+        toast(
+          code === "delete_in_progress"
+            ? errText({ code, message: t("clean.purge_failed") })
+            : res?.status === 409
+              ? t("clean.purge_restore_incomplete")
+              : t("clean.purge_failed"),
+        );
       }
       await loadArchives();
     } finally {

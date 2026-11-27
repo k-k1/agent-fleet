@@ -11,11 +11,18 @@ func TestWriteMetaRefusesADeletedName(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 	m := Meta{Name: "dead001", Kind: KindShell}
 	WriteMeta(m)
-	RemoveMetaAndLineage(m.Name)
+	release, err := RemoveMetaAndLineage(m.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
 	WriteMeta(m)
 	if _, ok := ReadMeta(m.Name); ok {
 		t.Fatal("WriteMeta brought a deleted session back")
 	}
+	if created, err := CreateMetaIfAbsent(m); err == nil || created {
+		t.Fatalf("restore during trash: created=%v err=%v", created, err)
+	}
+	release()
 	if created, err := CreateMetaIfAbsent(m); err != nil || !created {
 		t.Fatalf("restore: created=%v err=%v", created, err)
 	}

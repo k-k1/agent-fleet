@@ -875,18 +875,14 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 	return meta, true
 }
 
-// publish writes the meta. A move's target is written checked: the move commits, and stops
-// its source, on the strength of that meta, and a target running without one is listed
-// nowhere. Its first prompt follows the write, so a failed write leaves a target that has
-// not been told to work.
+// publish writes the meta before the first prompt or releasing the folder reservation.
 func (c *createRun) publish(m session.Meta) bool {
-	if c.req.name == "" {
-		c.slot.publish(m)
-		return true
+	write := c.slot.publish
+	if c.req.name != "" {
+		write = writeMoveTargetMeta
 	}
-	if err := writeMoveTargetMeta(m); err != nil {
-		log.Printf("move target %s: writing its meta: %v", c.name, err)
-		httpx.WriteErr(c.w, http.StatusInternalServerError, errCodeMetaWriteFailed, "the session started but its meta could not be written: "+err.Error())
+	if err := persistLaunchedMeta(m, write); err != nil {
+		httpx.WriteErr(c.w, http.StatusInternalServerError, errCodeMetaWriteFailed, err.Error())
 		return false
 	}
 	return true
@@ -896,15 +892,11 @@ func (c *createRun) publish(m session.Meta) bool {
 // the session is started and published: a launch refused after `git worktree add` keeps the "no
 // session" record gitx wrote at creation, and never names a session that does not exist. A failed
 // write only leaves the copy "no session", which clients never treat as proof.
-//
-// WriteMeta reports no failure, so the meta file is looked for first: naming a session whose meta
-// never reached disk would make a copy's creator one that is listed nowhere. Only a file that is
-// absent skips the write; any other stat error proceeds, as before the check, so a transient read
-// fault cannot leave the copy "no session" for good.
 func (c *createRun) recordCreator() {
 	if c.createdWorktree == "" {
 		return
 	}
+	// The name can have moved to the trash since publication.
 	if _, err := os.Stat(session.MetaPath(c.name)); os.IsNotExist(err) {
 		log.Printf("not recording %s as creator of %s: its meta is not on disk", c.name, c.createdWorktree)
 		return
@@ -936,9 +928,7 @@ func (c *createRun) launch(meta session.Meta) {
 	}
 	defer releaseLaunch()
 	// dropLedger forgets the ledger armed below when the start itself failed, so no session
-	// came of the create. It is not called when publish answers false: by then the session
-	// has started, and the ledger may still belong to it (see the sweep,
-	// status.SweepOrphanFirstTurns, for the case where it does not).
+	// came of the create. Publication failures also discard it; no first prompt was sent.
 	dropLedger := func() {}
 	if req.QueueDelivery != nil {
 		// Before anything can start a turn: the ledger counts the starts that follow
@@ -963,6 +953,8 @@ func (c *createRun) launch(meta session.Meta) {
 			return
 		}
 		if !c.publish(meta) {
+			dropLedger()
+			unbindStudioAfterFailedLaunch(c.studio, name)
 			return
 		}
 		releaseLaunch()
@@ -1000,6 +992,8 @@ func (c *createRun) launch(meta session.Meta) {
 		return
 	}
 	if !c.publish(meta) {
+		dropLedger()
+		unbindStudioAfterFailedLaunch(c.studio, name)
 		return
 	}
 	releaseLaunch()

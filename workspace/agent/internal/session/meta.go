@@ -138,8 +138,9 @@ func WriteMetaChecked(m Meta) error {
 // never shadows another's). Together they make "read a meta, work, write it back" safe against
 // a delete landing in between, at every one of the writers at once.
 var (
-	metaWriteMu  sync.Mutex
-	deletedMetas = map[string]bool{}
+	metaWriteMu     sync.Mutex
+	deletedMetas    = map[string]bool{}
+	trashInProgress = map[string]bool{}
 )
 
 // CreateMetaIfAbsent writes m only when no meta of that name exists, and reports whether it
@@ -167,7 +168,11 @@ func CreateMetaIfAbsent(m Meta) (created bool, err error) {
 	}
 	metaWriteMu.Lock()
 	defer metaWriteMu.Unlock()
-	if err := os.Link(tmp.Name(), MetaPath(m.Name)); err != nil {
+	path := MetaPath(m.Name)
+	if trashInProgress[path] {
+		return false, errors.New("the session is being moved to the trash")
+	}
+	if err := os.Link(tmp.Name(), path); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return false, nil
 		}
@@ -240,14 +245,92 @@ func RemoveMeta(name string) { _ = os.Remove(MetaPath(name)) }
 // "deleted", not "still has a line in the graph"). Its one caller is main's trashSession
 // (ADR 0101 decision 1), which every delete goes through — DELETE /sessions/{name}, its old
 // name /stop, and the shell / ssm of a deleted working copy — after the gz archive is
-// written. Never call it from anywhere else: that would be a delete skipping the trash. Erasure is
-// best-effort and logged, never fatal: the meta is already gone by the time this runs, so
-// failing the request over it would be strictly worse than a leftover lineage row.
-func RemoveMetaAndLineage(name string) {
+// written. The caller releases the name after cleanup, so a restore from another archive
+// cannot bring the meta back while the trash is still removing files under that name.
+func RemoveMetaAndLineage(name string) (release func(), err error) {
 	metaWriteMu.Lock()
-	deletedMetas[MetaPath(name)] = true
-	RemoveMeta(name)
+	path := MetaPath(name)
+	err = os.Remove(path)
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		deletedMetas[path] = true
+		trashInProgress[path] = true
+	}
 	metaWriteMu.Unlock()
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	eraseLineage(name)
+	return func() { releaseMetaTrash(path) }, nil
+}
+
+// StagedMeta retains the original file until the folder operation has succeeded.
+type StagedMeta struct {
+	name, path, backup string
+}
+
+// StageMetaRemoval hides a meta after its trash archive is complete. Renaming it back can
+// roll back the operation without writing the meta again, even on a full disk.
+func StageMetaRemoval(name string) (StagedMeta, error) {
+	path := MetaPath(name)
+	f, err := os.CreateTemp(filepath.Dir(path), ".trash-meta-*.tmp")
+	if err != nil {
+		return StagedMeta{}, err
+	}
+	backup := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(backup)
+		return StagedMeta{}, err
+	}
+	metaWriteMu.Lock()
+	defer metaWriteMu.Unlock()
+	if err := os.Rename(path, backup); err != nil {
+		_ = os.Remove(backup)
+		return StagedMeta{}, err
+	}
+	trashInProgress[path] = true
+	deletedMetas[path] = true
+	return StagedMeta{name, path, backup}, nil
+}
+
+// Rollback restores the original meta. If it is blocked, leave the trash archive available
+// for a later restore and keep the original file as a backup.
+func (s StagedMeta) Rollback() error {
+	metaWriteMu.Lock()
+	defer metaWriteMu.Unlock()
+	defer delete(trashInProgress, s.path)
+	if _, err := os.Lstat(s.path); !errors.Is(err, fs.ErrNotExist) {
+		if err != nil {
+			return err
+		}
+		return fs.ErrExist
+	}
+	if err := os.Rename(s.backup, s.path); err != nil {
+		return err
+	}
+	delete(deletedMetas, s.path)
+	return nil
+}
+
+// Commit erases lineage while the staged name is still blocked against restore.
+// Release must follow the other per-session cleanup, which still owns files under the name.
+func (s StagedMeta) Commit() {
+	eraseLineage(s.name)
+	if err := os.Remove(s.backup); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		log.Printf("trash %s: could not remove staged meta: %v", s.name, err)
+	}
+}
+
+func (s StagedMeta) Release() {
+	releaseMetaTrash(s.path)
+}
+
+func releaseMetaTrash(path string) {
+	metaWriteMu.Lock()
+	defer metaWriteMu.Unlock()
+	delete(trashInProgress, path)
+}
+
+func eraseLineage(name string) {
 	if err := fleetgraph.EraseLineage(name); err != nil {
 		log.Printf("fleet-graph: erase lineage for %s: %v", name, err)
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
@@ -29,6 +30,7 @@ func spaceDeleteSetup(t *testing.T) spaceEnv {
 	mux.HandleFunc("DELETE /spaces/{folder}", handleDeleteSpace)
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return spaceEnv{srv: srv, home: home}
@@ -319,6 +321,130 @@ func TestDeleteSpaceWithoutATrashDirectoryChangesNothing(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
 		t.Fatal("the space was changed")
+	}
+}
+
+func TestDeleteSpaceRollsBackShellsOnPartialFailure(t *testing.T) {
+	for _, failure := range []string{"second archive", "second stage", "manifest", "move"} {
+		t.Run(failure, func(t *testing.T) {
+			e := spaceDeleteSetup(t)
+			tmuxSays(t, tmuxNoServer)
+			sp := newSpace(t, "Rollback")
+			writeAt(t, filepath.Join(sp.Dir, "f.md"), "contents")
+			names := []string{"shroll1", "shroll2"}
+			for _, name := range names {
+				session.WriteMeta(session.Meta{Name: name, Kind: session.KindShell, Dir: sp.Dir, Title: name})
+				writeAt(t, terminalHistoryPath(name), "terminal "+name)
+			}
+			oldClock, oldShell, oldSpace := nowUTC, trashAfterArchive, spaceAfterManifest
+			oldStage := stageShellMetaRemoval
+			t.Cleanup(func() { nowUTC, trashAfterArchive, spaceAfterManifest = oldClock, oldShell, oldSpace })
+			t.Cleanup(func() { stageShellMetaRemoval = oldStage })
+			nowUTC = func() time.Time { return time.Date(2026, 1, 1, 1, 1, 1, 0, time.UTC) }
+			wantCode := errCodeSpaceTrashFailed
+			switch failure {
+			case "second archive":
+				wantCode = errCodeSpaceSessionsTrashFailed
+				trashAfterArchive = func(m session.Meta) {
+					if m.Name == names[0] {
+						conflict := filepath.Join(cleanupStoreDir(), newCleanupID(nowUTC(), names[1])+".json")
+						_ = os.Mkdir(conflict, 0o700)
+					}
+				}
+			case "second stage":
+				wantCode = errCodeSpaceSessionsTrashFailed
+				stageShellMetaRemoval = func(name string) (session.StagedMeta, error) {
+					if name == names[1] {
+						if _, st := session.ReadMetaState(names[0]); st != session.MetaAbsent {
+							t.Error("the first meta was never staged")
+						}
+						return session.StagedMeta{}, os.ErrPermission
+					}
+					return oldStage(name)
+				}
+			case "manifest":
+				spaceAfterManifest = func(id string) { _ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json")) }
+			case "move":
+				spaceAfterManifest = func(id string) { _ = os.Mkdir(spaceTrashDir(id), 0o700) }
+			}
+			if code := errCodeOf(t, e.srv, "DELETE", "/spaces/"+sp.Folder, http.StatusInternalServerError); code != wantCode {
+				t.Fatalf("delete code = %q, want %q", code, wantCode)
+			}
+			if got, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(got) != "contents" {
+				t.Fatalf("space contents = %q", got)
+			}
+			for _, name := range names {
+				if m, ok := session.ReadMeta(name); !ok || m.Archived || m.Title != name {
+					t.Fatalf("session %s after failure = %+v, present %v", name, m, ok)
+				}
+				if got, _ := os.ReadFile(terminalHistoryPath(name)); string(got) != "terminal "+name {
+					t.Fatalf("session %s lost history: %q", name, got)
+				}
+				if trashHolds(t, name) {
+					t.Fatalf("failed delete left a duplicate archive for %s", name)
+				}
+			}
+			trashAfterArchive, spaceAfterManifest = nil, nil
+			stageShellMetaRemoval = oldStage
+			if failure == "second archive" {
+				if err := os.Remove(filepath.Join(cleanupStoreDir(), newCleanupID(nowUTC(), names[1])+".json")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, nil)
+			for _, name := range names {
+				if _, ok := session.ReadMeta(name); ok || !trashHolds(t, name) {
+					t.Fatalf("session %s was not trashed on retry", name)
+				}
+			}
+		})
+	}
+}
+
+func TestDeleteAndRestoreSpaceReportShelfWriteFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	e := spaceDeleteSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	sp := newSpace(t, "Shelf")
+	name := "aishelf"
+	session.WriteMeta(session.Meta{Name: name, Kind: session.KindClaude, Dir: sp.Dir})
+	old := spaceAfterManifest
+	t.Cleanup(func() { spaceAfterManifest = old; _ = os.Chmod(session.MetaDir(), 0o700) })
+	var id string
+	setMode := func(mode os.FileMode) {
+		t.Helper()
+		if err := os.Chmod(session.MetaDir(), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spaceAfterManifest = func(archive string) {
+		id = archive
+		if err := os.Chmod(session.MetaDir(), 0o500); err != nil {
+			t.Error(err)
+		}
+	}
+	if code := errCodeOf(t, e.srv, "DELETE", "/spaces/"+sp.Folder, http.StatusInternalServerError); code != errCodeSpaceSessionsSettleFailed {
+		t.Fatalf("delete code = %q, want %q", code, errCodeSpaceSessionsSettleFailed)
+	}
+	if m, ok := session.ReadMeta(name); !ok || m.Archived {
+		t.Fatalf("failed shelf no longer leaves a session to retry: %+v, present %v", m, ok)
+	}
+	setMode(0o700)
+	do(t, e.srv, "POST", "/sessions/"+name+"/archive", nil, http.StatusOK, nil)
+	setMode(0o500)
+	path := "/cleanup/archives/" + id + "/restore"
+	if code := errCodeOf(t, e.srv, "POST", path, http.StatusConflict); code != "restore_incomplete" {
+		t.Fatalf("restore code = %q, want restore_incomplete", code)
+	}
+	if m, ok := session.ReadMeta(name); !ok || !m.Archived {
+		t.Fatalf("failed restore no longer leaves a session to retry: %+v, present %v", m, ok)
+	}
+	setMode(0o700)
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	if m, ok := session.ReadMeta(name); !ok || m.Archived {
+		t.Fatalf("restore retry did not unshelve the session: %+v, present %v", m, ok)
 	}
 }
 

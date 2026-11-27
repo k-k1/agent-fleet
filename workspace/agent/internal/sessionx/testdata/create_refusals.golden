@@ -321,4 +321,4 @@ body "{\"error\":{\"code\":\"tmux_failed\",\"message\":\"probe: launch refused\"
 == move_target_meta_write_failed
 status 500
 header Content-Type: application/json
-body "{\"error\":{\"code\":\"meta_write_failed\",\"message\":\"the session started but its meta could not be written: no space left on device\"}}\n"
+body "{\"error\":{\"code\":\"meta_write_failed\",\"message\":\"could not write the session meta: no space left on device\"}}\n"
