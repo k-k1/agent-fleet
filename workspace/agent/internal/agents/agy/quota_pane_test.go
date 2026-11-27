@@ -239,3 +239,36 @@ func TestRanTurnSinceCountsAShortTurnRightAfterTheEpisode(t *testing.T) {
 		t.Fatal("a turn completed 500ms after the episode was ignored")
 	}
 }
+
+// A later turn that ends in an executor error is a failed turn: it must not cancel the booking.
+func TestRanTurnSinceIgnoresAFailedRun(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	rows := [][3]any{{14, stepStatusDone, []byte("x")}, {stepTypeError, stepStatusDone, []byte("x")}}
+	m, now := staleFixture(t, "slot-failed-run", rows, [][]byte{executorRow(4, 1)}, time.Minute)
+	capturePaneFrame = func(string) string { return idleFrame() }
+	if ranTurnSince(m, now.Add(-time.Hour)) {
+		t.Fatal("an executor-error turn counted as a successful one")
+	}
+}
+
+// A new input that reached the conversation before the pane repainted leaves the previous turn's
+// refusal on screen: that is not a limit of the new turn.
+func TestAtQuotaLimitWaitsForTheStateSourceToAgree(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	capturePaneFrame = func(string) string { return quotaLine + idleChrome }
+	// ended: user, model, run ended at 1
+	ended := [][3]any{{14, stepStatusDone, []byte("x")}, {15, stepStatusDone, []byte("x")}}
+	m, _ := staleFixture(t, "slot-lag-ended", ended, [][]byte{executorRow(4, 1)}, time.Minute)
+	defer forgetQuota(m.Name)
+	if _, at := atQuotaLimit(m); !at {
+		t.Fatal("control: the ended refusal was not read")
+	}
+	// the next input landed (user step 2) and no run ended after it
+	inflight := append(append([][3]any{}, ended...), [3]any{14, stepStatusDone, []byte("x")})
+	m2, _ := staleFixture(t, "slot-lag-new", inflight, [][]byte{executorRow(4, 1)}, time.Minute)
+	if _, at := atQuotaLimit(m2); at {
+		t.Fatal("the previous turn's refusal was read as the new turn's limit")
+	}
+}

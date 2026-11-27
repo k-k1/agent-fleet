@@ -171,6 +171,12 @@ func atQuotaLimit(m session.Meta) (agents.LimitKind, bool) {
 		}
 		return agents.LimitWindow, false
 	}
+	// The screen is only evidence about the newest turn once the state source agrees that turn
+	// has ended: a new input that reached the conversation before the pane repainted would
+	// otherwise leave the previous turn's refusal looking current.
+	if LiveState(m) != "idle" {
+		return agents.LimitWindow, false
+	}
 	firstSeenQuota(m.Name, text, quotaNow())
 	return agents.LimitWindow, true
 }
@@ -225,10 +231,13 @@ func lastRunCompleted(conv string) bool {
 	if !ok || !found || kind != executorCompleted {
 		return false
 	}
-	var last int
-	if db.QueryRow(`SELECT MAX(idx) FROM steps`).Scan(&last) != nil {
+	// One snapshot answers both "where did the run end" and "how": an executor error is a run
+	// that completed (field 1 = 4) with an error step last, which is a failed turn, not a
+	// successful one.
+	var last, lastType int
+	if db.QueryRow(`SELECT idx, step_type FROM steps ORDER BY idx DESC LIMIT 1`).Scan(&last, &lastType) != nil {
 		return false
 	}
 	end, state := turnEnd(db)
-	return state == turnLogRead && end >= last
+	return state == turnLogRead && end >= last && lastType != stepTypeError
 }

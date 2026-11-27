@@ -231,3 +231,47 @@ func TestAgyQueueFailureNotifiesAfterEveryFailureWithItsObservedText(t *testing.
 		}
 	}
 }
+
+// agyFakePane puts a tmux on PATH that answers list-panes and capture-pane with the frame, so the
+// agy pane reads see a refused turn without a terminal.
+func agyFakePane(t *testing.T, frame string) {
+	t.Helper()
+	dir := t.TempDir()
+	f := filepath.Join(dir, "frame")
+	if err := os.WriteFile(f, []byte(frame), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncase \"$1\" in\nlist-panes) echo '1 %1';;\ncapture-pane) cat " + f + ";;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+const agyQuotaFrame = "partial answer\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h39m46s.\n─────\n> \n─────\n? for shortcuts      Gemini · high\n"
+
+// A queue run whose agy turn was quota-refused reads limited in the list BEFORE the sweep opened an
+// episode, and the same session reads limited after it: the queue closes an idle run as finished
+// and waits on a limited one, so the answer must not depend on which came first. A clean turn, and
+// a session that is not a queue run, stay idle.
+func TestWireSessionAgyQueueRunQuotaRefusalReadsLimitedBeforeTheSweep(t *testing.T) {
+	for _, tc := range []struct {
+		name, frame, delivery, want string
+	}{
+		{"refused queue run", agyQuotaFrame, "d1", agents.StateLimited},
+		{"clean queue run", "done\n─────\n> \n─────\n? for shortcuts      Gemini · high\n", "d1", "idle"},
+		{"refused, not a queue run", agyQuotaFrame, "", "idle"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, sid, add := agyIdentityFixture(t, "agy_quota_list_"+strings.ReplaceAll(tc.name, " ", "_"))
+			m.QueueDelivery = tc.delivery
+			session.WriteMeta(m)
+			add([][2]int{{0, 14}, {1, 15}}, 1)
+			status.Persist(sid, "working")
+			agyFakePane(t, tc.frame)
+			if got := wireSession(m, true).State; got != tc.want {
+				t.Fatalf("state %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

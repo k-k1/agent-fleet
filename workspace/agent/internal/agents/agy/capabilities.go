@@ -54,5 +54,5 @@ func (agentImpl) ProgressSignals() agents.ProgressTraits {
 // UsageLimitTraits is agents.UsageLimiter: the quota refusal the TUI draws as the last line of a
 // refused turn (quota_pane.go). A quota is a window that waiting clears.
 func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
-	return agents.UsageLimitTraits{AtLimit: atQuotaLimit, ResetAt: quotaResetAt, RanTurnSince: ranTurnSince}
+	return agents.UsageLimitTraits{AtLimit: atQuotaLimit, ResetAt: quotaResetAt, RanTurnSince: ranTurnSince, ListProbe: true}
 }

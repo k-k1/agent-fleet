@@ -201,6 +201,16 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.RateLimitResumeAt = at
 		}
 	}
+	// A queue run that stopped on a quota refusal must read limited before the sweep opened an
+	// episode: an idle read is taken for a finished run and closes it (control-plane
+	// memoSessionLimit). Same AtLimit the sweep asks, so the list and the sweep cannot disagree.
+	if alive && s.State == "idle" && m.QueueDelivery != "" && rateLimitWatched(m) {
+		if tr, ok := usageLimitTraits(m); ok && tr.ListProbe && tr.AtLimit != nil {
+			if _, atLimit := tr.AtLimit(m); atLimit {
+				s.State = agents.StateLimited
+			}
+		}
+	}
 	if !alive && rateLimitWatched(m) {
 		now := time.Now()
 		episode, limit := currentRateLimitEpisode(m, now)
