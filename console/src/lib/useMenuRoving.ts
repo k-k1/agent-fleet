@@ -15,6 +15,7 @@ export function useMenuRoving(menuRef: RefObject<HTMLElement | null>, open: bool
     // The ref may point at the .ui-menu itself or at a wrapper that contains it.
     const menu = root.classList.contains("ui-menu") ? root : root.querySelector<HTMLElement>(".ui-menu");
     if (!menu) return;
+    const doc = menu.ownerDocument;
     menu.setAttribute("role", "menu");
     const items = () =>
       Array.from(menu.querySelectorAll<HTMLElement>(".ui-menu-item")).filter(
@@ -37,17 +38,24 @@ export function useMenuRoving(menuRef: RefObject<HTMLElement | null>, open: bool
       } else {
         // Removing a focused node can fire focusout before it leaves the menu.
         queueMicrotask(() => {
-          if (focused === leaving && menu.contains(leaving.item)) focused = undefined;
+          if (focused === leaving && menu.contains(leaving.item) && doc.activeElement !== leaving.item) {
+            focused = undefined;
+          }
         });
       }
     };
     // Polling can remove a focused item without delivering a focus event to the menu.
     const observer = new MutationObserver(() => {
-      if (!focused || menu.contains(focused.item)) return;
+      if (!focused || !menu.isConnected) return;
+      const list = items();
+      if (menu.contains(focused.item)) {
+        const index = list.indexOf(focused.item);
+        if (index >= 0) focused.index = index;
+        return;
+      }
       const { index } = focused;
       focused = undefined;
-      if (!menu.isConnected || menu.ownerDocument.activeElement !== menu.ownerDocument.body) return;
-      const list = items();
+      if (doc.activeElement !== doc.body) return;
       list[Math.min(index, list.length - 1)]?.focus({ preventScroll: true });
     });
     observer.observe(menu, { childList: true, subtree: true });
@@ -58,7 +66,7 @@ export function useMenuRoving(menuRef: RefObject<HTMLElement | null>, open: bool
     const onKey = (e: KeyboardEvent) => {
       const list = items();
       if (list.length === 0) return;
-      const idx = list.indexOf(document.activeElement as HTMLElement);
+      const idx = list.indexOf(doc.activeElement as HTMLElement);
       if (e.key === "ArrowDown") {
         e.preventDefault();
         list[idx < 0 ? 0 : (idx + 1) % list.length].focus();
