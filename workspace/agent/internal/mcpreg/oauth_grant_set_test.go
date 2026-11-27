@@ -1349,6 +1349,19 @@ func TestRefusedSetRenewalStopsRenewalsWhenItsWriteFails(t *testing.T) {
 	if failOnce {
 		t.Fatal("nothing was written")
 	}
+	if _, err := AccessToken(context.Background(), "t-a"); !errors.Is(err, ErrNotSignedIn) {
+		t.Fatalf("refused bearer returned: %v", err)
+	}
+	if st := statusOf(t, "t-a"); st.State != OAuthStateNotSignedIn {
+		t.Fatalf("refused member appears connected: %+v", st)
+	}
+	if tok, err := AccessToken(context.Background(), "t-b"); err != nil || tok != "at-0" {
+		t.Fatalf("other member lost bearer: %q, %v", tok, err)
+	}
+	stored, _ := secrets.Load()
+	if len(stored.MCPOAuth) != 1 || !containsString(stored.MCPOAuth[0].Left, "t-a") {
+		t.Fatalf("pending departure not persisted: %+v", stored.MCPOAuth)
+	}
 	before := f.tokenCount()
 	oauthNow = func() time.Time { return time.Now().Add(2 * time.Hour) }
 	if _, err := AccessToken(context.Background(), "t-b"); err == nil {
@@ -1360,5 +1373,28 @@ func TestRefusedSetRenewalStopsRenewalsWhenItsWriteFails(t *testing.T) {
 	data, _ := secrets.Load()
 	if len(data.MCPOAuth) != 1 || !data.MCPOAuth[0].SetRefused {
 		t.Fatalf("the refusal was not written on the next use: %+v", data.MCPOAuth)
+	}
+}
+
+// A shared sign-in replacing the own grant before disconnect locks must be reported.
+func TestDisconnectOwnGrantChangedBeforeLocks(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a")
+	_, _, d, err := grantLoad("t-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := disconnectWhere(context.Background(), "t-a", "", func(g *secrets.MCPOAuthGrant) bool {
+		_, member := grantMember(g, "t-a")
+		return member && g.Group == ""
+	}, disconnectOpt{holdGroup: grantGroup(d), requireMatch: true})
+	if err == nil || res.HadGrant {
+		t.Fatalf("changed grant reported success: %+v, %v", res, err)
+	}
+	if tok, err := AccessToken(context.Background(), "t-a"); err != nil || tok != "at-0" {
+		t.Fatalf("shared grant changed: %q, %v", tok, err)
 	}
 }
