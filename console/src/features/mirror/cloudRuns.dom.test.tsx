@@ -190,4 +190,37 @@ describe("af-aws-exec runs in the mirror", () => {
     expect(text.indexOf("aws ssm start-session")).toBeGreaterThan(text.indexOf("Listing them now."));
     expect(text.indexOf("aws ssm start-session")).toBeLessThan(text.indexOf("thanks"));
   });
+
+  it.each([
+    { refused: undefined, outcome: "started" },
+    { refused: "confirm_required", outcome: "not run: confirmation not given" },
+  ])("shows a single unmatched run in a tool-only Codex turn ($outcome)", async ({ refused, outcome }) => {
+    turns = [
+      TURNS[0],
+      { role: "assistant", idx: 1, ts: "2026-10-30T12:04:00Z", parts: [{ kind: "tool", tool: "exec", info: "tools.exec_command({cmd})" }] },
+      TURNS[2],
+    ];
+    const [run] = runs as Array<Record<string, unknown>>;
+    runs = [{ ...run, refused }];
+    await mount("codex");
+    await until(() => document.body.textContent!.includes("thanks"), "the transcript");
+
+    const heads = [...document.querySelectorAll<HTMLButtonElement>(".cloud-run-head")];
+    expect(heads).toHaveLength(1);
+    const [head] = heads;
+    expect(head.closest("[data-turn-idx]")?.querySelector(".mt-tool")).toBeTruthy();
+    expect(head.closest(".mt-work, .mt-tool-noted")).toBeNull();
+    expect(head.textContent).toContain("Tool unknown");
+    expect(head.textContent).toContain("1 run");
+    expect(head.textContent?.includes("1 failed")).toBe(!!refused);
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => head.click());
+    const rows = [...document.querySelectorAll(".cloud-run-list .cloud-run")];
+    expect(rows).toHaveLength(1);
+    const [row] = rows;
+    expect(row.querySelector("time")?.dateTime).toBe(run.startedAt);
+    expect(row.textContent).toContain("prod-admin");
+    expect(row.textContent).toContain("aws s3 ls · " + outcome);
+  });
 });
