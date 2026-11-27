@@ -23,6 +23,36 @@ export function useMenuRoving(menuRef: RefObject<HTMLElement | null>, open: bool
     const initial = items();
     // An item that declares its own role (a checkable one is a menuitemcheckbox) keeps it.
     for (const el of initial) if (!el.hasAttribute("role")) el.setAttribute("role", "menuitem");
+    let focused: { item: HTMLElement; index: number } | undefined;
+    const onFocusIn = (e: FocusEvent) => {
+      const item = e.target as HTMLElement;
+      const index = items().indexOf(item);
+      focused = index < 0 ? undefined : { item, index };
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      const leaving = focused;
+      if (!leaving || e.target !== leaving.item) return;
+      if (e.relatedTarget) {
+        focused = undefined;
+      } else {
+        // Removing a focused node can fire focusout before it leaves the menu.
+        queueMicrotask(() => {
+          if (focused === leaving && menu.contains(leaving.item)) focused = undefined;
+        });
+      }
+    };
+    // Polling can remove a focused item without delivering a focus event to the menu.
+    const observer = new MutationObserver(() => {
+      if (!focused || menu.contains(focused.item)) return;
+      const { index } = focused;
+      focused = undefined;
+      if (!menu.isConnected || menu.ownerDocument.activeElement !== menu.ownerDocument.body) return;
+      const list = items();
+      list[Math.min(index, list.length - 1)]?.focus({ preventScroll: true });
+    });
+    observer.observe(menu, { childList: true, subtree: true });
+    menu.addEventListener("focusin", onFocusIn);
+    menu.addEventListener("focusout", onFocusOut);
     initial[0]?.focus();
 
     const onKey = (e: KeyboardEvent) => {
@@ -44,6 +74,11 @@ export function useMenuRoving(menuRef: RefObject<HTMLElement | null>, open: bool
       }
     };
     menu.addEventListener("keydown", onKey);
-    return () => menu.removeEventListener("keydown", onKey);
+    return () => {
+      observer.disconnect();
+      menu.removeEventListener("focusin", onFocusIn);
+      menu.removeEventListener("focusout", onFocusOut);
+      menu.removeEventListener("keydown", onKey);
+    };
   }, [open, menuRef]);
 }
