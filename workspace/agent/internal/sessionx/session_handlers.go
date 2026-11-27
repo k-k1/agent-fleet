@@ -1801,49 +1801,36 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// The new slot takes the studio over before it launches, for the same reason as a create;
 	// a launch that fails hands it back to the old slot.
 	rebindStudioOnRecreate(&newMeta, m.Name)
-	undoStudio := func() {
+	writeFailure := func(ref SpawnRefusal) {
 		if newMeta.Studio != "" && imagegen.BindStudioSession != nil {
 			_, _ = imagegen.BindStudioSession(newMeta.Studio, m.Name, newMeta.Name)
 		}
+		if err := unarchiveAfterFailedRecreate(m.Name); err != nil {
+			ref.Message += fmt.Sprintf("\nCould not automatically restore the old session %s: %v. Open Archived sessions (the shelf) and choose Restore for the old session.", m.Name, err)
+		}
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 	}
 	// At the handoff, the credential must still be the one the policy judged before the archive.
 	if ref := handoffRefusal(newMeta); ref != nil {
-		undoStudio()
-		unarchiveAfterFailedRecreate(m.Name)
-		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		writeFailure(SpawnRefusal{ref.Status, ref.Code, ref.Message})
 		return
 	}
 	if newMeta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(newMeta)
 		if !ok {
-			undoStudio()
-			// Same as fork: silently skipping the launch when the driver is missing would
-			// fake alive=true.
-			unarchiveAfterFailedRecreate(m.Name)
-			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-				msgDriverUnavailable)
+			writeFailure(SpawnRefusal{http.StatusNotImplemented, "driver_unavailable", msgDriverUnavailable})
 			return
 		}
 		if _, err := mcpx.StartManagedSession(d, newMeta); err != nil {
-			undoStudio()
-			unarchiveAfterFailedRecreate(m.Name)
-			writeRuntimeErr(w, err)
+			writeFailure(runtimeFailure(err))
 			return
 		}
 	} else if err := launchTmuxFn(newMeta, false); err != nil {
-		undoStudio()
-		// Un-archive the old session so a launch failure doesn't silently drop it from
-		// the active list.
-		unarchiveAfterFailedRecreate(m.Name)
-		writeTmuxLaunchErr(w, err)
+		writeFailure(tmuxLaunchFailure(err))
 		return
 	}
 	if err := persistLaunchedMeta(newMeta, session.WriteMetaChecked); err != nil {
-		undoStudio()
-		if restoreErr := unarchiveAfterFailedRecreate(m.Name); restoreErr != nil {
-			err = errors.Join(err, fmt.Errorf("could not return old session %s to the active list; retry from the shelf: %w", m.Name, restoreErr))
-		}
-		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMetaWriteFailed, err.Error())
+		writeFailure(SpawnRefusal{http.StatusInternalServerError, errCodeMetaWriteFailed, err.Error()})
 		return
 	}
 	recordFleetGraphBirth(newMeta)
