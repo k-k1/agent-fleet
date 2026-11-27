@@ -39,7 +39,9 @@ Archiving and deleting are covered in [Clear away finished sessions](cleanup.md)
 1. Choose **"Stop (resumable later)"** in the session row's ⋯ menu
 2. Press **"Stop"** in the **"Stop session"** confirmation
 
-Stopping also ends the turn that is running. To stop once the turn has ended, use
+Stopping the session also interrupts its running turn. To interrupt the turn and keep the session open,
+use **Stop** in the chat input area ([Hold what you send, stop a turn](queue.md)).
+To stop the session once the turn has ended, use
 [Stop when it is done](auto-stop.md#stop-when-it-is-done).
 
 > [!NOTE]

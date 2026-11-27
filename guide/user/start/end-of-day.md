@@ -7,21 +7,21 @@ source_of_truth: "the Console's workspace action bar (the power button and the R
 
 English | [日本語](end-of-day.ja.md)
 
-When you are done, you can stop your workspace. Repositories, uncommitted work and sessions stay, and the next start picks up where you left off.
+When you are done, you can stop your workspace. Stopping interrupts any running turns. Repositories and changes in your home directory and your session histories are kept.
 
 ## How it works
 
 | What you do | What happens |
 |---|---|
 | Commit and push the changes that matter | The changes also exist outside the workspace |
-| Stop it with the power button on the workspace action bar | Running sessions become "stopped"; files and logins stay |
-| Start it with the power button the next day | A click resumes each stopped session |
+| Stop it with the power button on the workspace action bar | Running sessions stop. On deployments with a working disk, the contents of `/scratch` are deleted |
+| Start it with the power button the next day | You can open and resume stopped sessions |
 
 ## Before you stop
 
 - Commit and push the changes that matter. Uncommitted changes exist only inside the workspace ([Connect a Git service](../code/connect-git.md#push))
-- Stop a session at a good break with **Stop (resumable later)** in its ⋯ menu, and it resumes straight away next time ([Stop and resume a session](../sessions/stop-resume.md))
-- A session you want to keep running does not need to be stopped
+- To let a running turn finish, wait for it to end before stopping the workspace
+- On deployments with a working disk, copy any files you need from `/scratch` to your home directory before stopping. If `target` or `build` points into `/scratch`, run the build again after starting ([af-scratch](../../ref/cli/af-scratch.md))
 
 ## Stop the workspace
 
@@ -33,7 +33,7 @@ When it is stopped, these stay.
 | What stays | At the next start |
 |---|---|
 | Cloned repositories and uncommitted changes | Ready to use |
-| The list of sessions | Kept as stopped; click one to resume it |
+| The session list and history | Open a stopped row and press **Resume and continue** ([Stop and resume a session](../sessions/stop-resume.md)) |
 | Logins to agents and Git services | Ready to use |
 
 - While the workspace is stopped, **Session history** in the left pane still lists the sessions. Acting on them waits until it is started
@@ -54,7 +54,7 @@ When the Console is updated, an **A new version is available** notification appe
 
 Press **Restart needed** and choose **Restart now** to stop the workspace and start it again.
 
-- Running sessions become stopped and can be resumed later. Repositories and files stay as they are
+- As with stopping and starting, running sessions stop and can be resumed after startup. The contents of your home directory are kept. On deployments with a working disk, the contents of `/scratch` are deleted
 - There is no hurry. Stopping at the end of the day and starting the next day applies it too. The badge goes away once the workspace starts on the new version
 
 What changed is in the [release history](../../../deploy/release/notes/SUMMARY.md).

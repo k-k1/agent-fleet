@@ -162,7 +162,7 @@ Each page covers one thing you want to do.
 | Page | What you can do |
 |---|---|
 | [Ask an assistant](chat/assistant.md) | Ask questions without a repository; compact a long conversation and keep a work plan |
-| [Use translation and purpose-built assistants](chat/purpose-assistants.md) | Translate or summarize a file; make your own assistant and set up AI assistance |
+| [Use translation and purpose-built assistants](chat/purpose-assistants.md) | Translate or summarize a file, make your own assistant, and choose features in [Settings › AI assistance](chat/purpose-assistants.md#set-up-ai-assistance) |
 | [Collect memos and hand them over](chat/memos.md) | Collect instructions as they come, tidy them, and send them to a session together |
 | [Run memos automatically](chat/memo-auto-run.md) | Have a category's memos run as sessions with your instruction, by "Run now" or by themselves |
 | [Keep auto-run settings in the repository](chat/memo-auto-run-repo-file.md) | Keep a category's auto-run settings in `.agent-fleet/autorun.yaml`, and approve the difference in the Console |

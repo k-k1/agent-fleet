@@ -8,8 +8,8 @@ source_of_truth: "The Console's file context menu, the Create assistant screen a
 English | [日本語](purpose-assistants.ja.md)
 
 A right-click on a file is enough to have an assistant translate or summarize it. For a recurring purpose, make an
-assistant of your own with its role and tone written down. This page also covers the short AI generations that run
-around the screen (title suggestions, reply suggestions and the like).
+assistant of your own with its role and tone written down. Use [Settings › AI assistance](#set-up-ai-assistance)
+to configure workspace-wide features such as title and reply suggestions.
 
 ## How it works
 
@@ -17,7 +17,7 @@ around the screen (title suggestions, reply suggestions and the like).
 |---|---|
 | Right-click a file and pick "Translate with assistant" or "Summarize with assistant" | Reads the file and returns only the translation or the key points |
 | Make an assistant of your own | Answers in the role and tone its persona describes, using only the tools you allowed |
-| Choose the AI assistance features | Writes a title, a branch name, reply suggestions and so on, once, when you press the button |
+| Choose features in the AI assistance settings | Suggests titles and replies or translates answers, depending on which features you enable |
 
 ## Translate or summarize a file
 
@@ -69,7 +69,8 @@ The built-in Fleet Operator is an example of "AF write" ([the Fleet Operator](..
 
 ## Set up AI assistance
 
-⚙ Settings → "**AI assistance**" holds the settings for the **one-shot AI generation** that runs in sessions, the mirror and the File pane. It is decided separately from the assistant conversations.
+Use ⚙ Settings → "**AI assistance**" to configure assistance across session chats, the assistant, the File pane and other parts of the workspace.
+The agents and models you choose here handle tasks like suggesting titles and translating answers. Choose the agent and model for assistant conversations under "**Assistant**" in Settings.
 
 | Setting | What it decides |
 |---|---|
