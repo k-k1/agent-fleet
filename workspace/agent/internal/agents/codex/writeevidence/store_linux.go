@@ -21,11 +21,14 @@ import (
 
 const maxTurnBytes = 2 << 20
 
+var errScope = errors.New("shell write evidence needs a valid session, thread, and turn")
+
 // The Agent is the store's only writer. A turn can launch several commands in parallel.
 var saveMu sync.Mutex
 
 // Save unions a completed observation into the turn's durable set. The launcher calls it
-// inside the Agent with the scope it captured at launch. Replaying a result adds no hits.
+// inside the Agent with the scope it captured at launch and the same workspace root for
+// the entire turn. Replaying a result adds no hits.
 func Save(evidence Evidence) error {
 	if !validEvidence(evidence) {
 		return errors.New("invalid shell write evidence")
@@ -46,7 +49,13 @@ func Save(evidence Evidence) error {
 	}
 	before := len(current.Paths)
 	current.Root = evidence.Root
-	current.Paths = append(current.Paths, evidence.Paths...)
+	// Keep raw filename bytes in the observer. JSON would replace invalid UTF-8,
+	// so omit those names when storing evidence to avoid recording a different file.
+	for _, path := range evidence.Paths {
+		if utf8.ValidString(path) {
+			current.Paths = append(current.Paths, path)
+		}
+	}
 	slices.Sort(current.Paths)
 	current.Paths = slices.Compact(current.Paths)
 	if len(current.Paths) == before {
@@ -64,7 +73,7 @@ func Save(evidence Evidence) error {
 
 func load(scope Scope) (Evidence, error) {
 	if !validScope(scope) {
-		return Evidence{}, errors.New("invalid shell write evidence scope")
+		return Evidence{}, errScope
 	}
 	file, err := os.Open(turnPath(scope))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -80,6 +89,9 @@ func load(scope Scope) (Evidence, error) {
 	}
 	if len(data) > maxTurnBytes {
 		return Evidence{}, ErrLimit
+	}
+	if !utf8.Valid(data) {
+		return Evidence{}, errors.New("stored shell write evidence is not valid UTF-8")
 	}
 	var evidence Evidence
 	if err := json.Unmarshal(data, &evidence); err != nil {
@@ -106,16 +118,19 @@ func validNativeID(id string) bool {
 	return len(id) > 0 && len(id) <= 128 && utf8.ValidString(id) && !strings.ContainsRune(id, 0)
 }
 
+func validRoot(root string) bool {
+	return filepath.IsAbs(root) && filepath.Clean(root) == root &&
+		root != string(filepath.Separator) && utf8.ValidString(root) && !strings.ContainsRune(root, 0)
+}
+
 func validEvidence(evidence Evidence) bool {
 	root := evidence.Root
-	if !validScope(evidence.Scope) || !filepath.IsAbs(root) || filepath.Clean(root) != root ||
-		root == string(filepath.Separator) || !utf8.ValidString(root) || strings.ContainsRune(root, 0) {
+	if !validScope(evidence.Scope) || !validRoot(root) {
 		return false
 	}
 	prefix := root + string(filepath.Separator)
 	for _, path := range evidence.Paths {
-		if path == "" || path == "." || !utf8.ValidString(path) || strings.ContainsRune(path, 0) ||
-			workspacePath(root, prefix+path) != path {
+		if path == "" || workspacePath(root, prefix+path) != path {
 			return false
 		}
 	}

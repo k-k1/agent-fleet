@@ -9,9 +9,12 @@ import (
 
 // FileEdits reconciles a native turn's shell evidence with all its rollout rows.
 // Explicit edits keep their per-call counts and stats. Shell evidence adds one edit per
-// otherwise unrepresented path. A store failure still returns the explicit edits.
-// Pass the complete rollout of scope.ThreadID, since a patch can be in a later row.
+// otherwise unrepresented path with unknown diff stats. A store failure still returns
+// the explicit edits. Supply all rows for scope.TurnID from scope.ThreadID in rollout order.
 func FileEdits(scope Scope, rows []transcript.Turn) ([]transcript.FileEdit, error) {
+	if !validScope(scope) {
+		return nil, errScope
+	}
 	var edits []transcript.FileEdit
 	var anchor *transcript.Turn
 	for i := range rows {
@@ -24,7 +27,7 @@ func FileEdits(scope Scope, rows []transcript.Turn) ([]transcript.FileEdit, erro
 			anchor = row
 		}
 	}
-	if anchor == nil || scope.TurnID == "" {
+	if anchor == nil {
 		return edits, nil
 	}
 	evidence, err := load(scope)
@@ -37,6 +40,7 @@ func FileEdits(scope Scope, rows []transcript.Turn) ([]transcript.FileEdit, erro
 		path := edit.Path
 		if !filepath.IsAbs(path) {
 			if !filepath.IsAbs(edit.Cwd) {
+				// Guessing a cwd could suppress an observed edit to a different file.
 				continue
 			}
 			path = filepath.Join(edit.Cwd, path)

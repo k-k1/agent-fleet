@@ -187,6 +187,24 @@ func TestRunDiscardEvidenceOnCommandFailure(t *testing.T) {
 	assertContents(t, filepath.Join(root, "written"), "x")
 }
 
+func TestSaveKeepsRepresentableObservedPaths(t *testing.T) {
+	requireTracer(t)
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	scope := Scope{SessionID: "s", ThreadID: "native", TurnID: "t"}
+	name := string([]byte{0xff})
+	got, err := Run(t.Context(), scope, root, shell(root, "printf x > written; printf y > \"$1\"", name))
+	if err != nil || !slices.Equal(got.Paths, []string{"written", name}) {
+		t.Fatalf("Run = %+v, %v; want both paths", got, err)
+	}
+	if err := Save(got); err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := load(scope); err != nil || !slices.Equal(stored.Paths, []string{"written"}) {
+		t.Fatalf("stored = %+v, %v; want only the representable path", stored, err)
+	}
+}
+
 func TestRunnerCrashStopsTracees(t *testing.T) {
 	const childRoot = "AF_TEST_WRITE_EVIDENCE_OWNER_ROOT"
 	if root := os.Getenv(childRoot); root != "" {

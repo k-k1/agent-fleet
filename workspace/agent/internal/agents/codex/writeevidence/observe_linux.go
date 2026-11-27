@@ -56,7 +56,7 @@ type Command struct {
 // overflow, the tracer and its tracees are stopped and the invocation yields no evidence.
 func Run(ctx context.Context, scope Scope, root string, command Command) (Evidence, error) {
 	if !validScope(scope) {
-		return Evidence{}, errors.New("shell write observation needs a session, thread, and turn")
+		return Evidence{}, errScope
 	}
 	root, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -70,14 +70,14 @@ func Run(ctx context.Context, scope Scope, root string, command Command) (Eviden
 }
 
 func observe(ctx context.Context, root string, command Command, duration time.Duration, traceLimit int64) ([]string, error) {
-	if !filepath.IsAbs(root) || !filepath.IsAbs(command.Path) || !filepath.IsAbs(command.Dir) {
-		return nil, errors.New("shell write observation needs absolute workspace, executable, and working directory paths")
+	if !validRoot(root) || !filepath.IsAbs(command.Path) || !filepath.IsAbs(command.Dir) {
+		return nil, errors.New("shell write observation needs a valid workspace and absolute executable and working directory paths")
 	}
 	workspace, err := os.Stat(root)
 	if err != nil {
 		return nil, fmt.Errorf("stat observation workspace: %w", err)
 	}
-	if !workspace.IsDir() || root == string(filepath.Separator) {
+	if !workspace.IsDir() {
 		return nil, errors.New("shell write observation needs a workspace directory below filesystem root")
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, duration, ErrLimit)

@@ -214,7 +214,7 @@ func workspacePath(root, path string) string {
 		return ""
 	}
 	path, ok := strings.CutPrefix(path, root+string(filepath.Separator))
-	if !ok || !filepath.IsLocal(path) || filepath.Clean(path) != path {
+	if !ok || path == "." || strings.ContainsRune(path, 0) || !filepath.IsLocal(path) || filepath.Clean(path) != path {
 		return ""
 	}
 	for part := range strings.SplitSeq(path, string(filepath.Separator)) {
