@@ -146,25 +146,48 @@ describe("af-aws-exec runs in the mirror", () => {
       { role: "assistant", idx: 1, ts: "2026-10-30T12:01:00Z", parts: [{ kind: "tool", tool: "exec_command", info: "af-aws-exec --list" }] },
       { role: "assistant", idx: 2, ts: "2026-10-30T12:04:00Z", parts: [{ kind: "tool", ...launch, output: "Script running with cell ID 1" }] },
       { role: "assistant", idx: 3, ts: "2026-10-30T12:04:30Z", parts: [{ kind: "tool", tool: "wait", info: '{"cell_id":"1"}', output: "Script completed" }] },
-      { ...TURNS[2], idx: 4 },
+      { ...TURNS[1], idx: 4, ts: "2026-10-30T12:06:00Z" },
+      { ...TURNS[2], idx: 5 },
     ];
     const [run] = runs as Array<Record<string, unknown>>;
-    runs = [run, { ...run, id: "second-run", startedAt: "2026-10-30T12:05:30Z" }];
+    runs = [
+      run,
+      { ...run, id: "second-run", startedAt: "2026-10-30T12:05:30Z", operation: "cp", refused: "confirm_required" },
+      { ...run, id: "ssm-pane", startedAt: "2026-10-30T12:05:45Z", service: "ssm", operation: "start-session", identityFromSettings: true },
+    ];
     await mount("codex");
     await until(() => document.body.textContent!.includes("thanks"), "the transcript");
     await act(async () => document.querySelector<HTMLButtonElement>('.mt-work-head[aria-expanded="false"]')?.click());
-    const tools = document.querySelector<HTMLButtonElement>(".mt-toolrun-head");
+    const tools = document.querySelector<HTMLButtonElement>(".mt-work .mt-toolrun-head");
     expect(tools).toBeTruthy();
-    await act(async () => tools!.click());
-    await until(() => !!document.querySelector(".cloud-run-head"), "the AWS run summary");
-    const heads = [...document.querySelectorAll(".cloud-run-head")];
+    if (attached) await act(async () => tools!.click());
+
+    const heads = [...document.querySelectorAll<HTMLButtonElement>(".cloud-run-head")];
     expect(heads).toHaveLength(1);
-    expect(heads[0].textContent).toContain("2 runs");
-    const noted = heads[0].closest(".mt-tool-noted");
+    const [head] = heads;
+    expect(head.closest(".mt-work")).toBeTruthy();
+    expect(head.textContent).toContain("2 runs");
+    expect(head.textContent).toContain("1 failed");
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    const noted = head.closest(".mt-tool-noted");
     if (attached) {
       expect(noted?.querySelector(".mt-tool")?.textContent).toContain(launch.info);
     } else {
       expect(noted).toBeNull();
+      expect(head.textContent).toContain("Tool unknown");
+      expect(tools!.getAttribute("aria-expanded")).toBe("false");
+      await act(async () => head.click());
+      const details = [...document.querySelectorAll(".mt-work .cloud-run-list .cloud-run")];
+      expect(details.map((row) => row.querySelector("time")?.dateTime)).toEqual([run.startedAt, "2026-10-30T12:05:30Z"]);
+      expect(details[0].textContent).toContain("prod-admin");
+      expect(details[0].textContent).toContain("aws s3 ls · started");
+      expect(details[1].textContent).toContain("aws s3 cp · not run: confirmation not given");
     }
+    const loose = [...document.querySelectorAll(".cloud-run")].filter((row) => !row.closest(".mt-work"));
+    expect(loose).toHaveLength(1);
+    expect(loose[0].textContent).toContain("aws ssm start-session");
+    const text = document.body.textContent!;
+    expect(text.indexOf("aws ssm start-session")).toBeGreaterThan(text.indexOf("Listing them now."));
+    expect(text.indexOf("aws ssm start-session")).toBeLessThan(text.indexOf("thanks"));
   });
 });

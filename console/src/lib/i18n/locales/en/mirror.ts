@@ -563,6 +563,8 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "cloudruns.failed_count_other": "{count} failed",
   "cloudruns.expand": "Show each run",
   "cloudruns.collapse": "Hide the runs",
+  "cloudruns.unassigned_tool": "Tool unknown",
+  "cloudruns.started": "started",
   "cloudruns.on_tool": "Cloud commands this call ran through af-aws-exec / af-gcloud-exec",
   "cloudruns.from_settings": "identity from Settings, not confirmed",
   // --- switching to the API route at a usage limit (ADR 0128 decision 10) ---

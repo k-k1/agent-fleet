@@ -591,6 +591,8 @@ export const mirror = {
   "cloudruns.failed_count_other": "{count} 件失敗",
   "cloudruns.expand": "実行を 1 件ずつ表示",
   "cloudruns.collapse": "実行をたたむ",
+  "cloudruns.unassigned_tool": "起動元のツール不明",
+  "cloudruns.started": "開始済み",
   "cloudruns.on_tool": "この呼び出しが af-aws-exec / af-gcloud-exec で実行したクラウドのコマンド",
   "cloudruns.from_settings": "身元は設定どおり・未確認",
   // --- 利用上限での API ルートへの切り替え（ADR 0128 決定 10）---

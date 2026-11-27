@@ -31,7 +31,7 @@ function ProviderIcon({ provider }: { provider: string }) {
 /** CloudRunLine is one run as a single line: Settings lists it with its session, and an expanded
  *  group lists it with its time. */
 /** `brief` leaves the identity to the group's head; the full line stays in the tooltip. */
-export function CloudRunLine({ run, session, time, brief }: { run: CloudRun; session?: boolean; time?: boolean; brief?: boolean }) {
+export function CloudRunLine({ run, session, time, brief, showStarted }: { run: CloudRun; session?: boolean; time?: boolean; brief?: boolean; showStarted?: boolean }) {
   const title = brief ? cloudRunParts(run).join(" · ") + "\n" + tr("cloudruns.title") : tr("cloudruns.title");
   return (
     <div className={"cloud-run" + (failedRun(run) ? " cloud-run--failed" : "")} role="note" title={title}>
@@ -42,7 +42,7 @@ export function CloudRunLine({ run, session, time, brief }: { run: CloudRun; ses
         </time>
       )}
       {session && <span className="cloud-run-session">{run.session || tr("cloudruns.no_session")}</span>}
-      <span className="cloud-run-text">{cloudRunParts(run, brief).join(" · ")}</span>
+      <span className="cloud-run-text">{cloudRunParts(run, brief, showStarted).join(" · ")}</span>
     </div>
   );
 }
@@ -51,17 +51,17 @@ export function CloudRunLine({ run, session, time, brief }: { run: CloudRun; ses
  * CloudRunGroup draws several runs as one line that opens to the runs one by one. The line names
  * the identity once and counts the runs; failures are counted apart in the error colour, so a
  * refused run shows without opening the group. One run is its own line: there is nothing to fold.
- * `attached` is the smaller form drawn under the tool call that started the runs.
+ * A work-trace summary opens even for one run so it can show the attribution status up front.
  */
-export function CloudRunGroup({ runs, attached = false }: { runs: CloudRun[]; attached?: boolean }) {
+export function CloudRunGroup({ runs, placement }: { runs: CloudRun[]; placement?: "tool" | "work" }) {
   const [open, setOpen] = useState(false);
-  const cls = "cloud-run-group" + (attached ? " attached" : "");
+  const cls = "cloud-run-group" + (placement ? " attached" : "");
   // Under a tool call the group says what it is, for a reader who reaches it by keyboard or voice.
-  const label = attached ? { role: "group", "aria-label": tr("cloudruns.on_tool") } : {};
-  if (runs.length === 1) {
+  const label = placement === "tool" ? { role: "group", "aria-label": tr("cloudruns.on_tool") } : {};
+  if (runs.length === 1 && placement !== "work") {
     return (
       <div className={cls} {...label}>
-        <CloudRunLine run={runs[0]} time={attached} />
+        <CloudRunLine run={runs[0]} time={placement === "tool"} />
       </div>
     );
   }
@@ -79,14 +79,14 @@ export function CloudRunGroup({ runs, attached = false }: { runs: CloudRun[]; at
         {providers.map((p) => (
           <ProviderIcon key={p} provider={p} />
         ))}
-        <span className="cloud-run-text">{text}</span>
+        <span className="cloud-run-text">{placement === "work" ? tr("cloudruns.unassigned_tool") : text}</span>
         <span className="cloud-run-count">{tCount("cloudruns.runs_count", runs.length)}</span>
         {failed > 0 && <span className="cloud-run-failed">{tCount("cloudruns.failed_count", failed)}</span>}
       </button>
       {open && (
         <div className="cloud-run-list">
           {runs.map((r) => (
-            <CloudRunLine key={r.id} run={r} time brief={oneIdentity} />
+            <CloudRunLine key={r.id} run={r} time brief={oneIdentity && placement !== "work"} showStarted={placement === "work"} />
           ))}
         </div>
       )}
@@ -94,9 +94,8 @@ export function CloudRunGroup({ runs, attached = false }: { runs: CloudRun[]; at
   );
 }
 
-/** cloudRunCards places the runs no tool call took at their start time among the mirror's turns,
- *  one collapsed group per place: the runs of one turn that nothing attributed land together after
- *  its reply, and one line for them is enough. A conversation whose turns carry no timestamp at all
+/** cloudRunCards places runs outside the work trace by start time among the mirror's turns,
+ *  with one collapsed group per slot. A conversation whose turns carry no timestamp at all
  *  (some kinds record none) cannot place a run in time; its runs go after the last turn. A finite
  *  time would land them at the top instead, because the placement reads a turn without a time as a
  *  just-sent echo. */

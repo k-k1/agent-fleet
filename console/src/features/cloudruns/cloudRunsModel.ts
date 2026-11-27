@@ -66,14 +66,14 @@ const REFUSED: Record<string, MsgKey> = {
 /** The parts of a run's line, in order; empty parts are left out. `brief` leaves out the identity
  *  (profile, account and role or project and account, region): a group whose runs all share one
  *  names it once on its head, and repeating it on every line is the noise the group removes. */
-export function cloudRunParts(r: CloudRun, brief = false): string[] {
+export function cloudRunParts(r: CloudRun, brief = false, showStarted = false): string[] {
   const who = r.provider === "gcp" ? gcpWho(r) : [r.account, r.role].filter(Boolean).join(" / ");
   const cmd = [r.program, r.service, r.operation].filter(Boolean).join(" ");
   const end = r.refused
     ? tr(REFUSED[r.refused] ?? "cloudruns.refused_refused")
     : typeof r.exit === "number"
       ? tr("cloudruns.exit", { code: r.exit })
-      : "";
+      : showStarted ? tr("cloudruns.started") : "";
   return [
     brief ? "" : r.profile ?? "",
     brief ? "" : who,
@@ -173,7 +173,9 @@ export const toolKey = (groupIdx: number, partIdx: number) => groupIdx + ":" + p
 export interface RunPlacement {
   /** Runs drawn on a tool call, keyed by toolKey. */
   onTool: Map<string, CloudRun[]>;
-  /** Runs no call could take: drawn between the turns, collapsed. */
+  /** AWS runs in a turn with an opaque launch, keyed by the block's stable idx. */
+  inWork: Map<number, CloudRun[]>;
+  /** Runs without a tool or work trace: drawn between the turns. */
   loose: CloudRun[];
 }
 
@@ -183,13 +185,14 @@ export interface RunPlacement {
  * at or before the run's start. Among them, the latest call whose command names the wrapper and
  * the run's profile wins: a loop or a long command can start several runs after later calls.
  * Without one, the latest shell call takes it (a script that runs the wrapper itself). A run that
- * no call can take, or a block with no per-row times, stays loose.
+ * starts after an opaque launch can still appear in that block's work trace.
  * An unresolved Codex exec may have launched the AWS run. Require a later explicit match
  * in that case, since timing alone cannot establish which call ran the wrapper.
  * The change is scoped to AWS to preserve the existing Google Cloud placement.
  */
 export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
   const onTool = new Map<string, CloudRun[]>();
+  const inWork = new Map<number, CloudRun[]>();
   const loose: CloudRun[] = [];
   const blocks = groups.map((g) => ({ g, start: g.ts ? Date.parse(g.ts) : NaN }));
   for (const r of runs) {
@@ -232,7 +235,13 @@ export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
       if (isShell) shell = i;
     });
     const i = named >= 0 ? named : shell;
-    if (i < 0 || (opaque >= 0 && named <= opaque)) {
+    if (opaque >= 0 && named <= opaque) {
+      const list = inWork.get(g.idx);
+      if (list) list.push(r);
+      else inWork.set(g.idx, [r]);
+      continue;
+    }
+    if (i < 0) {
       loose.push(r);
       continue;
     }
@@ -241,5 +250,5 @@ export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
     if (list) list.push(r);
     else onTool.set(k, [r]);
   }
-  return { onTool, loose };
+  return { onTool, inWork, loose };
 }
