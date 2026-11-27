@@ -266,7 +266,11 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 // walkSize sums the regular files under dir, spending one unit of budget per entry and
 // stopping when it runs out.
 func walkSize(dir string, budget *int) (bytes int64, files int) {
-	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+	return measureWalk(func(visit fs.WalkDirFunc) error { return filepath.WalkDir(dir, visit) }, budget)
+}
+
+func measureWalk(walk func(fs.WalkDirFunc) error, budget *int) (bytes int64, files int) {
+	_ = walk(func(_ string, d fs.DirEntry, err error) error {
 		if *budget <= 0 {
 			return filepath.SkipAll
 		}

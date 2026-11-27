@@ -91,9 +91,19 @@ func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
 // The tombstone remains available after an incomplete restore. On retry, sessions already
 // back or now in another folder are left alone.
 func restoreShelvedSessions(dir string, names []string) error {
+	return restoreShelvedRevisions(dir, names, nil)
+}
+
+func restoreShelvedRevisions(dir string, names []string, revisions map[string]string) error {
 	var restoreErr error
 	for _, name := range names {
-		if err := sessionx.RestoreShelvedSession(name, func(m session.Meta) bool { return gitx.SessionLivesIn(m, dir) }); err != nil {
+		revision, tracked := revisions[name]
+		if revisions != nil && !tracked {
+			continue
+		}
+		if err := sessionx.RestoreShelvedSession(name, func(m session.Meta) bool {
+			return (revisions == nil || m.ShelfRevision == revision) && gitx.SessionLivesIn(m, dir)
+		}); err != nil {
 			restoreErr = errors.Join(restoreErr, fmt.Errorf("could not restore session %s: %w", name, err))
 		}
 	}

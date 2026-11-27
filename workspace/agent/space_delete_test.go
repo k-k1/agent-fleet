@@ -30,11 +30,14 @@ func spaceDeleteSetup(t *testing.T) spaceEnv {
 	mux.HandleFunc("DELETE /spaces/{folder}", handleDeleteSpace)
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	mux.HandleFunc("DELETE /cleanup/archives", handlePurgeOldCleanupArchives)
 	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return spaceEnv{srv: srv, home: home}
 }
+
+func spaceTrashDir(id string) string { return filepath.Join(cleanupStoreDir(), spaceTrashName(id)) }
 
 func writeAt(t *testing.T, path, body string) {
 	t.Helper()
@@ -153,12 +156,16 @@ func TestDeletedSpaceRoundTripsThroughTheTrash(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < 2; i++ { // twice: a second press only finds everything back
-		var res struct{ Restored struct{ Space string } }
-		do(t, e.srv, "POST", "/cleanup/archives/"+out.Archive+"/restore", nil, http.StatusOK, &res)
-		if res.Restored.Space != sp.Folder {
-			t.Fatalf("restored = %+v", res)
-		}
+	legacy, _ := session.ReadMeta("aispc02")
+	legacy.ShelfRevision = ""
+	if err := session.WriteMetaChecked(legacy); err != nil {
+		t.Fatal(err)
+	}
+	restorePath := "/cleanup/archives/" + out.Archive + "/restore"
+	var res struct{ Restored struct{ Space string } }
+	do(t, e.srv, "POST", restorePath, nil, http.StatusOK, &res)
+	if res.Restored.Space != sp.Folder {
+		t.Fatalf("restored = %+v", res)
 	}
 	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "draft.md")); string(b) != "my draft" {
 		t.Fatalf("draft after restore = %q", b)
@@ -172,8 +179,19 @@ func TestDeletedSpaceRoundTripsThroughTheTrash(t *testing.T) {
 		}
 	}
 
-	// Deleting again and purging removes the files for good.
+	// A later manual shelf stays in effect both with the folder present and after a new delete.
+	do(t, e.srv, "POST", "/sessions/aispc01/archive", nil, http.StatusOK, nil)
+	do(t, e.srv, "POST", restorePath, nil, http.StatusOK, &res)
+	if m, _ := session.ReadMeta("aispc01"); !m.Archived {
+		t.Fatal("a completed restore took a later shelf action off the shelf")
+	}
 	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	do(t, e.srv, "POST", restorePath, nil, http.StatusOK, &res)
+	if _, err := os.Lstat(sp.Dir); !os.IsNotExist(err) {
+		t.Fatalf("the old restore moved a newly deleted space back: %v", err)
+	}
+
+	// Purging the second archive removes its files for good.
 	do(t, e.srv, "DELETE", "/cleanup/archives/"+out.Archive, nil, http.StatusOK, nil)
 	if _, err := os.Lstat(spaceTrashDir(out.Archive)); !os.IsNotExist(err) {
 		t.Fatalf("the purged entry's folder is still in the trash: %v", err)
@@ -260,11 +278,12 @@ func TestRestoreSpaceRefusesAnOccupiedFolder(t *testing.T) {
 		t.Fatalf("f.md after the retry = %q", b)
 	}
 
-	// Entry whose folder was removed from the trash by hand, and no space is back.
+	// The archive's folder is gone. Even a marked space occupying its name is unrelated.
 	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
 	if err := os.RemoveAll(spaceTrashDir(out.Archive)); err != nil {
 		t.Fatal(err)
 	}
+	writeAt(t, filepath.Join(sp.Dir, spacex.MarkerFile), `{"name":"Replacement"}`)
 	if got := errCodeOf(t, e.srv, "POST", "/cleanup/archives/"+out.Archive+"/restore", http.StatusConflict); got != errCodeSpaceRestoreMissing {
 		t.Errorf("missing = %q, want %q", got, errCodeSpaceRestoreMissing)
 	}
@@ -616,6 +635,11 @@ func TestListIgnoresASidecarThatNamesAnotherEntry(t *testing.T) {
 	if len(list.Archives) != 1 || list.Archives[0].ID != out.Archive {
 		t.Fatalf("list = %+v, want the one real entry", list.Archives)
 	}
+	do(t, e.srv, "DELETE", "/cleanup/archives?older_than_days=1", nil, http.StatusOK, nil)
+	do(t, e.srv, "DELETE", "/cleanup/archives/"+old, nil, http.StatusNotFound, nil)
+	if got, err := os.ReadFile(filepath.Join(spaceTrashDir(out.Archive), "f.md")); err != nil || string(got) != "x" {
+		t.Fatalf("a rejected archive touched the real one: %q, %v", got, err)
+	}
 }
 
 // A restore and a purge of the same entry never overlap: with the restore inside its lock, the
@@ -762,5 +786,183 @@ func TestPurgeRemovesATrashedSpaceHoldingAReadOnlyDirectory(t *testing.T) {
 	}
 	if n := len(spaceArchives(t, e.srv)); n != 0 {
 		t.Fatalf("%d entries left in the trash", n)
+	}
+}
+
+func TestRestoreSpaceRetriesAfterCompletionWriteFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	e := spaceDeleteSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	sp := newSpace(t, "Retry completion")
+	session.WriteMeta(session.Meta{Name: "aicompl", Kind: session.KindClaude, Dir: sp.Dir})
+	var out struct{ Archive string }
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	// Older Agents wrote no shelf revision. The initial restore must accept that empty
+	// revision, and the retry must still distinguish it from a new shelf action.
+	legacy, _ := session.ReadMeta("aicompl")
+	legacy.ShelfRevision = ""
+	if err := session.WriteMetaChecked(legacy); err != nil {
+		t.Fatal(err)
+	}
+	store := cleanupStoreDir()
+	spaceBeforeRestoreComplete = func() {
+		if err := os.Chmod(store, 0o500); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { spaceBeforeRestoreComplete = nil; _ = os.Chmod(store, 0o700) })
+	path := "/cleanup/archives/" + out.Archive + "/restore"
+	if code := errCodeOf(t, e.srv, "POST", path, http.StatusConflict); code != "restore_incomplete" {
+		t.Fatalf("restore code = %q, want restore_incomplete", code)
+	}
+	spaceBeforeRestoreComplete = nil
+	if err := os.Chmod(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := session.ReadMeta("aicompl"); !ok || m.Archived {
+		t.Fatalf("the session was not back before the failed completion: %+v", m)
+	}
+	do(t, e.srv, "POST", "/sessions/aicompl/archive", nil, http.StatusOK, nil)
+	original := sp.Dir + ".original"
+	if err := os.Rename(sp.Dir, original); err != nil {
+		t.Fatal(err)
+	}
+	writeAt(t, filepath.Join(sp.Dir, spacex.MarkerFile), `{"name":"Replacement"}`)
+	if code := errCodeOf(t, e.srv, "POST", path, http.StatusConflict); code != errCodeSpaceRestoreExists {
+		t.Fatalf("restore onto replacement = %q, want %q", code, errCodeSpaceRestoreExists)
+	}
+	if err := os.Rename(sp.Dir, sp.Dir+".replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(original, sp.Dir); err != nil {
+		t.Fatal(err)
+	}
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	if m, ok := session.ReadMeta("aicompl"); !ok || !m.Archived {
+		t.Fatalf("retry undid the newer shelf action: %+v", m)
+	}
+	do(t, e.srv, "DELETE", "/cleanup/archives/"+out.Archive, nil, http.StatusOK, nil)
+	record := filepath.Join(store, spaceRestoreRecordName(out.Archive))
+	if _, err := os.Lstat(record); !os.IsNotExist(err) {
+		t.Fatalf("purge left the restore record behind: %v", err)
+	}
+}
+
+func TestSpaceRestoreKeepsDeleteAndPurgeOutUntilCompletion(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	sp := newSpace(t, "Finishing")
+	session.WriteMeta(session.Meta{Name: "aifinish", Kind: session.KindClaude, Dir: sp.Dir})
+	deletePath := "/spaces/" + sp.Folder
+	var out deleteSpaceResponse
+	do(t, e.srv, "DELETE", deletePath, nil, http.StatusOK, &out)
+	archivePath := "/cleanup/archives/" + out.Archive
+
+	deleted, purged := make(chan int, 1), make(chan int, 1)
+	spaceBeforeRestoreComplete = func() {
+		go func() { deleted <- httpStatus(t, e.srv, "DELETE", deletePath, nil) }()
+		go func() { purged <- httpStatus(t, e.srv, "DELETE", archivePath, nil) }()
+		select {
+		case status := <-deleted:
+			t.Errorf("delete ran before restore completed (status %d)", status)
+			deleted <- status
+		case status := <-purged:
+			t.Errorf("purge ran before restore completed (status %d)", status)
+			purged <- status
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { spaceBeforeRestoreComplete = nil })
+	do(t, e.srv, "POST", archivePath+"/restore", nil, http.StatusOK, nil)
+	if got := <-deleted; got != http.StatusOK {
+		t.Errorf("delete after restore = %d, want 200", got)
+	}
+	if got := <-purged; got != http.StatusOK {
+		t.Errorf("purge after restore = %d, want 200", got)
+	}
+	if m, ok := session.ReadMeta("aifinish"); !ok || !m.Archived {
+		t.Fatalf("the subsequent delete did not reshelve the restored session: %+v", m)
+	}
+}
+
+func TestSpaceRestoreUsesTheTrashItOpened(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	sp := newSpace(t, "Opened trash")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "original")
+	var out struct{ Archive string }
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	store := cleanupStoreDir()
+	firstStore := store + ".first"
+	spaceBeforeMoveIn = func() {
+		if err := os.Rename(store, firstStore); err != nil {
+			t.Error(err)
+			return
+		}
+		writeAt(t, filepath.Join(spaceTrashDir(out.Archive), spacex.MarkerFile), `{"name":"Other"}`)
+		writeAt(t, filepath.Join(spaceTrashDir(out.Archive), "f.md"), "other")
+	}
+	t.Cleanup(func() { spaceBeforeMoveIn = nil })
+	do(t, e.srv, "POST", "/cleanup/archives/"+out.Archive+"/restore", nil, http.StatusOK, nil)
+	for path, want := range map[string]string{
+		filepath.Join(sp.Dir, "f.md"):                     "original",
+		filepath.Join(spaceTrashDir(out.Archive), "f.md"): "other",
+	} {
+		if b, err := os.ReadFile(path); err != nil || string(b) != want {
+			t.Errorf("%s = %q, %v; want %q", path, b, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(firstStore, spaceRestoreRecordName(out.Archive))); err != nil {
+		t.Fatalf("the opened store did not get the completion record: %v", err)
+	}
+}
+
+func TestRestoreAndPurgeRejectMismatchedManifestIDs(t *testing.T) {
+	for kind, suffix := range map[string]string{"embedded": ".tar.gz", "sidecar": ".json"} {
+		t.Run(kind, func(t *testing.T) {
+			e := spaceDeleteSetup(t)
+			tmuxSays(t, tmuxNoServer)
+			first, second := newSpace(t, "First"), newSpace(t, "Second")
+			writeAt(t, filepath.Join(first.Dir, "f.md"), "first")
+			writeAt(t, filepath.Join(second.Dir, "f.md"), "second")
+			var a, b deleteSpaceResponse
+			do(t, e.srv, "DELETE", "/spaces/"+first.Folder, nil, http.StatusOK, &a)
+			do(t, e.srv, "DELETE", "/spaces/"+second.Folder, nil, http.StatusOK, &b)
+			otherManifest, err := os.ReadFile(filepath.Join(cleanupStoreDir(), b.Archive+suffix))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mismatched := filepath.Join(cleanupStoreDir(), a.Archive+suffix)
+			if err := os.WriteFile(mismatched, otherManifest, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path := "/cleanup/archives/" + a.Archive
+			if got := httpStatus(t, e.srv, "POST", path+"/restore", nil); got != http.StatusNotFound {
+				t.Errorf("restore with mismatched %s = %d, want 404", kind, got)
+			}
+			if got := httpStatus(t, e.srv, "DELETE", path, nil); got != http.StatusNotFound {
+				t.Errorf("purge with mismatched %s = %d, want 404", kind, got)
+			}
+			for id, want := range map[string]string{a.Archive: "first", b.Archive: "second"} {
+				if got, err := os.ReadFile(filepath.Join(spaceTrashDir(id), "f.md")); err != nil || string(got) != want {
+					t.Errorf("%s: trashed file = %q, %v; want %q", id, got, err, want)
+				}
+			}
+			for _, sp := range []spacex.Space{first, second} {
+				if _, err := os.Lstat(sp.Dir); !os.IsNotExist(err) {
+					t.Errorf("%s was recreated during a refusal: %v", sp.Folder, err)
+				}
+			}
+			if kind == "sidecar" && !t.Failed() {
+				if err := os.Remove(mismatched); err != nil {
+					t.Fatal(err)
+				}
+				// An absent sidecar is different from a readable sidecar for the wrong ID.
+				do(t, e.srv, "POST", path+"/restore", nil, http.StatusOK, nil)
+				do(t, e.srv, "DELETE", path, nil, http.StatusOK, nil)
+			}
+		})
 	}
 }
