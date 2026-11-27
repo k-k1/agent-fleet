@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,10 +232,20 @@ func TestRestoreDoesNotReplaceAHistoryThatAppearsBeforePlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoreAfterStage = func() { writeHistory(t, m.Name, "appeared", time.Now()) }
-	defer func() { restoreAfterStage = nil }()
+	// Inside the chtimes hook the history's own existence check has passed and the file is
+	// not yet placed: the window the hard link has to survive.
+	reached := false
+	chtimes = func(name string, at, mod time.Time) error {
+		reached = true
+		writeHistory(t, m.Name, "appeared", time.Now())
+		return os.Chtimes(name, at, mod)
+	}
+	defer func() { chtimes = os.Chtimes }()
 	if _, err := restoreCleanupArchive(arch); err != nil {
 		t.Fatal(err)
+	}
+	if !reached {
+		t.Fatal("the restore never reached the placement")
 	}
 	if got := mustRead(t, terminalHistoryPath(m.Name)); got != "appeared" {
 		t.Fatalf("history = %q, want the one that appeared first", got)
@@ -279,19 +290,48 @@ func TestTrashFallsBackToAnArchiveWithoutHistoryWhenTheFirstWriteFails(t *testin
 	if err != nil || calls != 2 {
 		t.Fatalf("trash = %v after %d writes, want success on the second", err, calls)
 	}
-	for _, a := range listCleanupArchives() {
-		if a.ID == arch && a.Sessions[0].History != "" {
-			t.Fatal("the fallback archive still names a history")
+	// The tarball itself, not only its sidecar, must have lost the history.
+	root, err := os.OpenRoot(cleanupStoreDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	f, _, err := openArchiveFile(root, arch+".tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	man, payloads, err := readCleanupTar(f, arch)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if man.Sessions[0].History != "" || man.Sessions[0].HistoryMod != "" {
+		t.Fatal("the fallback manifest still names a history")
+	}
+	for name := range payloads {
+		if strings.HasSuffix(name, "terminal-history.ansi") {
+			t.Fatalf("the fallback tarball still holds %s", name)
 		}
 	}
-	// And when the second write fails too, the delete is refused and the shell is still there.
+	// A second failure refuses the delete: the first try carried the history, the retry did not.
 	m2 := shellSession(t, home, "hist012")
-	cleanupBundleWriter = func(*cleanupManifest, map[string][]byte, bool) error { return os.ErrInvalid }
+	writeHistory(t, m2.Name, "keep me", time.Now())
+	var withHistory []bool
+	cleanupBundleWriter = func(man *cleanupManifest, _ map[string][]byte, _ bool) error {
+		withHistory = append(withHistory, man.Sessions[0].History != "")
+		return os.ErrInvalid
+	}
 	if _, _, err := trashSession(m2, false); err == nil {
 		t.Fatal("the delete succeeded with nothing archived")
 	}
+	if len(withHistory) != 2 || !withHistory[0] || withHistory[1] {
+		t.Fatalf("writes (history carried?) = %v, want [true false]", withHistory)
+	}
 	if _, ok := session.ReadMeta(m2.Name); !ok {
 		t.Fatal("the meta was removed although no archive was written")
+	}
+	if got := mustRead(t, terminalHistoryPath(m2.Name)); got != "keep me" {
+		t.Fatalf("the live history was disturbed: %q", got)
 	}
 }
 
