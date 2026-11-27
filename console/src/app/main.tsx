@@ -3,6 +3,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import { ToastProvider } from "../ui/ToastProvider.tsx";
+import { LaunchDeliveryRecovery } from "../features/repos/LaunchDeliveryRetry.tsx";
 import { ConfirmProvider } from "../ui/ConfirmProvider.tsx";
 import { PaneHoverProvider } from "../lib/panehover.tsx";
 import { wireViewport } from "./viewport.ts";
@@ -52,6 +53,7 @@ listenPushOpen();
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ToastProvider>
+      <LaunchDeliveryRecovery />
       <ConfirmProvider>
         <PaneHoverProvider>
           <App />

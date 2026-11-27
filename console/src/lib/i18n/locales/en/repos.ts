@@ -288,6 +288,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.delivery_add_files": "Add files",
   "rp.delivery_send": "Send to session",
   "rp.delivery_text_backup": "A copy of the original message was saved as a text memo.",
+  "rp.delivery_storage_failed": "The latest draft could not be saved for reload. It is still available in this tab.",
   "rp.delivery_remove_file": "Remove {name}",
   "rp.delivery_discard": "Discard unsent draft",
   "rp.draft_saved": "Part of the draft did not reach the session, so the whole draft was saved as a memo. Resend it from there; the original memo, if any, was kept.",

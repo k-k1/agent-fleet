@@ -61,6 +61,7 @@ interface StoredDraft {
   key: string;
   at: number;
   items: AttachDraftRec[];
+  data?: unknown;
 }
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -131,7 +132,7 @@ function run<T>(
         try {
           const tx = db.transaction(STORE, mode);
           const req = fn(tx.objectStore(STORE));
-          req.onsuccess = () => resolve(req.result as T);
+          tx.oncomplete = () => resolve(req.result as T);
           req.onerror = () => resolve(null);
           tx.onabort = () => resolve(null);
         } catch {
@@ -188,6 +189,64 @@ function fileBytes(file: File): Promise<ArrayBuffer | null> {
     bytesOf.set(file, p);
   }
   return p;
+}
+
+/** Read compound drafts for a resolved owner. The prefix ends at the owner boundary. */
+export async function readAttachDraftSnapshots(prefix: string): Promise<StoredDraft[]> {
+  const records = await run<StoredDraft[]>("readonly", (store) =>
+    store.getAll(IDBKeyRange.bound(prefix, prefix + "\uffff", false, true)),
+  );
+  const cutoff = Date.now() - MAX_AGE_MS;
+  return (records ?? []).filter((rec) => rec.at >= cutoff);
+}
+
+/** A snapshot commits its metadata and file bytes together, even when the file list is empty. */
+export function writeAttachDraftSnapshot(
+  key: string,
+  data: unknown,
+  files: { file: File; path: string }[],
+  existingOnly: boolean,
+): Promise<boolean> {
+  const ticket = takeTicket(key);
+  const current = () => writeSeq.get(key) === ticket;
+  const write = async (): Promise<boolean> => {
+    const items = await Promise.all(files.map(async ({ file, path }): Promise<AttachDraftRec> => ({
+      name: file.name,
+      type: file.type,
+      image: file.type.startsWith("image/"),
+      path,
+      // After upload the same session already has the bytes. Keep its path and file label.
+      bytes: path ? undefined : (await fileBytes(file)) ?? undefined,
+    })));
+    if (!current()) return true;
+    if (items.some((it) => !it.path && !it.bytes)) return false;
+    const record = { key, at: Date.now(), items, data } satisfies StoredDraft;
+    const result = await run<IDBValidKey | undefined>("readwrite", (store) => {
+      if (!existingOnly) return store.put(record);
+      // A tab that was still editing when another cleared the draft must not bring it back.
+      const previous = store.getKey(key);
+      previous.addEventListener("success", () => {
+        if (previous.result !== undefined) store.put(record);
+      });
+      return previous;
+    }, current);
+    return !current() || result != null;
+  };
+  const writing = write();
+  void track(key, writing.then(() => {}));
+  return writing;
+}
+
+export async function hasAttachDraftSnapshot(key: string): Promise<boolean | null> {
+  const result = await run<IDBValidKey | undefined>("readonly", (store) => store.getKey(key));
+  return result === null ? null : result !== undefined;
+}
+
+/** Restore a file for a retry. A path-only upload needs a label but never uploads again. */
+export function restoreAttachDraftFile(rec: AttachDraftRec): File | null {
+  if (typeof rec?.name !== "string" || typeof rec.type !== "string" || typeof rec.path !== "string") return null;
+  if (!rec.path && !isBytes(rec.bytes)) return null;
+  return new File(isBytes(rec.bytes) ? [rec.bytes] : [], rec.name, { type: rec.type });
 }
 
 // writeAttachDraft replaces a key's staged attachments. Bytes are kept only where they

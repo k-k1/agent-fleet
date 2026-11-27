@@ -11,10 +11,10 @@ export interface LaunchFile {
 
 type Toast = ReturnType<typeof useToast>;
 
-export async function uploadLaunchFiles(session: string, files: LaunchFile[], toast: Toast): Promise<LaunchFile[]> {
+export async function uploadLaunchFiles(session: string, files: LaunchFile[], toast: Toast, current: () => boolean): Promise<LaunchFile[]> {
   const uploaded: LaunchFile[] = [];
   for (const entry of files) {
-    if (!entry.path) {
+    if (!entry.path && current()) {
       const { file } = entry;
       try {
         const up = await pasteImage(session, file);

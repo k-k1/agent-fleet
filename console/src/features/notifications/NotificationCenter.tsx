@@ -93,7 +93,7 @@ export function NotificationCenter() {
     ...logItems.map((l) => ({ src: "log" as const, at: new Date(l.createdAt).getTime(), l })),
   ].sort((a, b) => b.at - a.at);
   return <div className="notification-wrap" ref={ref}>
-    <Button className="gear notification-btn" title={tr("noti.notifications")} aria-label={tr("noti.notifications")} aria-expanded={open} onClick={show}>
+    <Button data-launch-delivery-focus className="gear notification-btn" title={tr("noti.notifications")} aria-label={tr("noti.notifications")} aria-expanded={open} onClick={show}>
       <Icon name="bell" />{unseen > 0 && <span className="notification-badge">{unseen > 9 ? "9+" : unseen}</span>}
     </Button>
     {open && <section className="notification-panel" role="dialog" aria-label={tr("noti.center")}>
