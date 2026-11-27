@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { useTenantStore } from "../../core/store/tenant.ts";
 
 const apiJSON = vi.fn();
 const pasteImage = vi.fn();
@@ -37,6 +38,7 @@ function Probe() {
 const toasts = () => [...document.querySelectorAll(".ui-toast-msg")].map((n) => n.textContent || "");
 
 beforeEach(async () => {
+  useTenantStore.setState({ resolved: true, whoami: { email: "member@example.com" } });
   apiJSON.mockReset();
   pasteImage.mockReset();
   host = document.createElement("div");

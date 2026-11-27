@@ -26,7 +26,7 @@ const DB_VERSION = 1;
 const STORE = "attachments";
 // Abandoned drafts are pruned on the first open of the page session: an attachment nobody
 // came back for in two weeks is not a draft anymore, and its bytes are not free.
-const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+export const ATTACH_DRAFT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 /** One stored attachment. `bytes` is absent for a file that is already uploaded and needs
  *  no thumbnail — its bytes live in the session's pasted dir and the chip is icon + name. */
@@ -63,6 +63,9 @@ interface StoredDraft {
   items: AttachDraftRec[];
   data?: unknown;
 }
+
+const snapshotFilesKey = (key: string) => key + "\u0000files";
+const isSnapshotFiles = (key: unknown) => typeof key === "string" && key.endsWith("\u0000files");
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -101,14 +104,17 @@ function openDB(): Promise<IDBDatabase | null> {
 // the caller from reading the draft it actually asked for.
 function prune(db: IDBDatabase): void {
   try {
-    const cutoff = Date.now() - MAX_AGE_MS;
+    const cutoff = Date.now() - ATTACH_DRAFT_MAX_AGE_MS;
     const store = db.transaction(STORE, "readwrite").objectStore(STORE);
     const req = store.openCursor();
     req.onsuccess = () => {
       const cur = req.result;
       if (!cur) return;
       const rec = cur.value as StoredDraft;
-      if (!rec || typeof rec.at !== "number" || rec.at < cutoff) cur.delete();
+      if (!rec || typeof rec.at !== "number" || (rec.at < cutoff && !isSnapshotFiles(rec.key))) {
+        cur.delete();
+        if (rec?.data !== undefined) store.delete(snapshotFilesKey(rec.key));
+      }
       cur.continue();
     };
   } catch {
@@ -129,13 +135,16 @@ function run<T>(
     (db) =>
       new Promise<T | null>((resolve) => {
         if (!db || (guard && !guard())) return resolve(null);
+        let tx: IDBTransaction | undefined;
         try {
-          const tx = db.transaction(STORE, mode);
+          tx = db.transaction(STORE, mode);
           const req = fn(tx.objectStore(STORE));
           tx.oncomplete = () => resolve(req.result as T);
           req.onerror = () => resolve(null);
           tx.onabort = () => resolve(null);
         } catch {
+          // Some writers queue several requests. Abort if a later request could not be queued.
+          try { tx?.abort(); } catch { /* The transaction already ended. */ }
           resolve(null);
         }
       }),
@@ -196,21 +205,26 @@ export async function readAttachDraftSnapshots(prefix: string): Promise<StoredDr
   const records = await run<StoredDraft[]>("readonly", (store) =>
     store.getAll(IDBKeyRange.bound(prefix, prefix + "\uffff", false, true)),
   );
-  const cutoff = Date.now() - MAX_AGE_MS;
-  return (records ?? []).filter((rec) => rec.at >= cutoff);
+  const cutoff = Date.now() - ATTACH_DRAFT_MAX_AGE_MS;
+  const byKey = new Map(records?.map((rec) => [rec.key, rec]));
+  return (records ?? [])
+    .filter((rec) => rec.data !== undefined && rec.at >= cutoff)
+    .map((rec) => ({ ...rec, items: byKey.get(snapshotFilesKey(rec.key))?.items ?? rec.items }));
 }
 
-/** A snapshot commits its metadata and file bytes together, even when the file list is empty. */
+/** Commit the initial snapshot atomically. Later edits touch only the part they changed. */
 export function writeAttachDraftSnapshot(
   key: string,
   data: unknown,
-  files: { file: File; path: string }[],
+  files: { file: File; path: string }[] | undefined,
   existingOnly: boolean,
 ): Promise<boolean> {
-  const ticket = takeTicket(key);
-  const current = () => writeSeq.get(key) === ticket;
+  // A prompt edit must not cancel a pending read of a newly attached file.
+  const writeKey = existingOnly && files ? snapshotFilesKey(key) : key;
+  const ticket = takeTicket(writeKey);
+  const current = () => writeSeq.get(writeKey) === ticket;
   const write = async (): Promise<boolean> => {
-    const items = await Promise.all(files.map(async ({ file, path }): Promise<AttachDraftRec> => ({
+    const items = await Promise.all((files ?? []).map(async ({ file, path }): Promise<AttachDraftRec> => ({
       name: file.name,
       type: file.type,
       image: file.type.startsWith("image/"),
@@ -220,26 +234,48 @@ export function writeAttachDraftSnapshot(
     })));
     if (!current()) return true;
     if (items.some((it) => !it.path && !it.bytes)) return false;
-    const record = { key, at: Date.now(), items, data } satisfies StoredDraft;
-    const result = await run<IDBValidKey | undefined>("readwrite", (store) => {
-      if (!existingOnly) return store.put(record);
+    const at = Date.now();
+    const record = { key, at, items: [], data } satisfies StoredDraft;
+    const fileRecord = { key: snapshotFilesKey(key), at, items } satisfies StoredDraft;
+    const result = await run<IDBValidKey | StoredDraft | undefined>("readwrite", (store) => {
+      if (!existingOnly) {
+        store.put(fileRecord);
+        return store.put(record);
+      }
       // A tab that was still editing when another cleared the draft must not bring it back.
-      const previous = store.getKey(key);
+      const previous = store.get(key) as IDBRequest<StoredDraft | undefined>;
       previous.addEventListener("success", () => {
-        if (previous.result !== undefined) store.put(record);
+        if (!previous.result) return;
+        if (files) {
+          store.put(fileRecord);
+          store.put({ ...previous.result, at });
+        } else {
+          store.put({ ...previous.result, at, data });
+        }
       });
       return previous;
     }, current);
     return !current() || result != null;
   };
   const writing = write();
-  void track(key, writing.then(() => {}));
+  void track(key, Promise.all([pendingWrite.get(key), writing]).then(() => {}));
   return writing;
 }
 
 export async function hasAttachDraftSnapshot(key: string): Promise<boolean | null> {
   const result = await run<IDBValidKey | undefined>("readonly", (store) => store.getKey(key));
   return result === null ? null : result !== undefined;
+}
+
+export function clearAttachDraftSnapshot(key: string): Promise<boolean> {
+  takeTicket(key);
+  takeTicket(snapshotFilesKey(key));
+  const clearing = run("readwrite", (store) => {
+    store.delete(snapshotFilesKey(key));
+    return store.delete(key);
+  }).then((result) => result !== null);
+  void track(key, clearing.then(() => {}));
+  return clearing;
 }
 
 /** Restore a file for a retry. A path-only upload needs a label but never uploads again. */

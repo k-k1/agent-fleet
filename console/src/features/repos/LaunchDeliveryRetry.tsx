@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { agentOf } from "../../agents/registry.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.ts";
@@ -18,7 +18,7 @@ function focusAfterDelivery() {
   document.querySelector<HTMLElement>("[data-launch-delivery-focus]")?.focus();
 }
 
-type DialogState = { open: boolean; discarding: boolean };
+type DialogState = { open: boolean };
 
 export function LaunchDeliveryRecovery() {
   const owner = useTenantStore((s) => launchDraftOwner(s).prefix);
@@ -39,28 +39,30 @@ export function LaunchDeliveryRecovery() {
 function LaunchDeliveryNotice({ draftKey }: { draftKey: string }) {
   const toast = useToast();
   useEffect(() => {
-    const dialog: DialogState = { open: false, discarding: false };
+    const dialog: DialogState = { open: false };
     toast(<LaunchDeliveryRetry draftKey={draftKey} dialog={dialog} />, {
       kind: "warn",
       key: draftKey,
       duration: 0,
       closeLabel: t("rp.delivery_discard"),
       canClose: () => {
-        if (dialog.open || dialog.discarding) return false;
+        if (dialog.open || useHeldLaunchDrafts.getState().busy.has(draftKey)) return false;
         const draft = useHeldLaunchDrafts.getState().drafts[draftKey];
         if (!draft) return true;
         if (launchDraftOwner(useTenantStore.getState()).prefix !== draft.owner) return false;
-        dialog.discarding = true;
-        // Keep the notice until IndexedDB commits the discard. Its withdrawal is the
-        // signal that reloading can no longer bring the draft back.
+        const opener = document.activeElement;
         void withLaunchDraft(draft, () => clearLaunchDraft(draftKey)).finally(() => {
-          dialog.discarding = false;
-          if (launchDraftOwner(useTenantStore.getState()).prefix === draft.owner) focusAfterDelivery();
+          const focused = document.activeElement;
+          if ((focused === opener || focused === document.body) &&
+              launchDraftOwner(useTenantStore.getState()).prefix === draft.owner) focusAfterDelivery();
         });
         return false;
       },
     });
-    return () => dismissToast(draftKey);
+    return () => {
+      dismissToast(draftKey);
+      dismissToast(draftKey + ":storage");
+    };
   }, [draftKey, toast]);
   return null;
 }
@@ -78,32 +80,30 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
   const { key, session, kind, repo, prompt, files } = draft;
   const [open, setOpen] = useState(false);
   const toggleDialog = (value: boolean) => {
-    if (dialog.discarding) return;
+    if (useHeldLaunchDrafts.getState().busy.has(key)) return;
     dialog.open = value;
     setOpen(value);
   };
-  const [busy, setBusy] = useState(false);
-  const sending = useRef(false);
-  const current = () => {
+  const busy = useHeldLaunchDrafts((s) => s.busy.has(key));
+  const inScope = () => {
     const tenant = useTenantStore.getState();
     return !tenant.notProvisioned && launchDraftOwner(tenant).prefix === draft.owner;
   };
-  const deliveryToast: typeof toast = (...args) => {
-    if (current()) toast(...args);
-  };
   const save = async (changes: Parameters<typeof editLaunchDraft>[1]) => {
     const saved = await editLaunchDraft(key, changes);
-    if (draft.identified && !saved && current()) {
+    if (!saved && inScope()) {
       toast(tr("rp.delivery_storage_failed"), { kind: "warn", key: key + ":storage" });
     }
   };
   const edit = (changes: Parameters<typeof editLaunchDraft>[1]) => {
-    if (!sending.current && current()) void save(changes);
+    if (!useHeldLaunchDrafts.getState().busy.has(key) && inScope()) void save(changes);
   };
   const send = async () => {
-    if (sending.current || (!prompt.trim() && !files.length)) return;
-    sending.current = true;
-    setBusy(true);
+    if (!inScope() || (!prompt.trim() && !files.length)) return;
+    let switched = false;
+    const unsubscribe = useTenantStore.subscribe(() => { if (!inScope()) switched = true; });
+    const current = () => !switched && inScope();
+    const deliveryToast: typeof toast = (...args) => { if (current()) toast(...args); };
     try {
       await withLaunchDraft(draft, async () => {
         if (!current()) return;
@@ -119,15 +119,14 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
         focusAfterDelivery();
       });
     } finally {
-      sending.current = false;
-      setBusy(false);
+      unsubscribe();
     }
   };
 
   return (
     <>
       {tr("rp.delivery_held", { session })}{" "}
-      <button type="button" className="ghost" onClick={() => toggleDialog(true)}>{tr("rp.delivery_review")}</button>
+      <button type="button" className="ghost" disabled={busy} onClick={() => toggleDialog(true)}>{tr("rp.delivery_review")}</button>
       {open && (
         <Modal
           title={tr("rp.delivery_title", { session })}
@@ -140,7 +139,7 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
           <div className="ui-modal-body">
             <label className="ui-field">
               {tr("rp.delivery_prompt")}
-              <textarea {...NO_AUTOFILL} rows={5} value={prompt} onChange={(e) => edit({ prompt: e.target.value })} />
+              <textarea {...NO_AUTOFILL} rows={5} value={prompt} disabled={busy} onChange={(e) => edit({ prompt: e.target.value })} />
             </label>
             {files.length > 0 && <ul>
               {files.map(({ file, path }, i) => (

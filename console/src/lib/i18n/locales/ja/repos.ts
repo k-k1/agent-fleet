@@ -287,6 +287,7 @@ export const repos = {
   "rp.delivery_send": "セッションに送信",
   "rp.delivery_text_backup": "元のメッセージの本文をメモにも保存しました。",
   "rp.delivery_storage_failed": "下書きの最新版を再読み込み用に保存できませんでした。このタブでは引き続き使えます。",
+  "rp.delivery_identity_pending": "アカウント情報の読み込みが終わってから、添付付きのセッションを開始してください。",
   "rp.delivery_remove_file": "{name} を削除",
   "rp.delivery_discard": "未送信の下書きを破棄",
   "rp.draft_saved": "下書きの一部がセッションに届かなかったため、下書き全体をメモに保存しました。そこから送り直してください（元のメモがあれば残してあります）。",

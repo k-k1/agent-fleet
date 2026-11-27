@@ -68,13 +68,23 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
   return async ({ dir, repo, seedless = false, inboxItem = "" }, { kind, driver, model, effort, effortChoice, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd, space }, take) => {
-    const owner = launchDraftOwner(useTenantStore.getState());
     const hasModel = agentOf(kind).caps.model;
     // With attachments the first prompt's text cannot be fixed until the session exists,
     // because the saved paths have to be woven into it and the upload target IS that
     // session. Otherwise it rides on the create request and the Agent delivers it.
     const withImages = !!(images?.length && agentOf(kind).caps.imagePaste);
-    const current = () => !withImages || launchDraftOwner(useTenantStore.getState()).prefix === owner.prefix;
+    const tenant = useTenantStore.getState();
+    const owner = launchDraftOwner(tenant);
+    // A refused upload must have a known owner before the launch form can hand it off.
+    if (withImages && (!tenant.resolved || !owner.identified || tenant.notProvisioned)) {
+      toast(t("rp.delivery_identity_pending"), { kind: "warn" });
+      return { ok: false };
+    }
+    const current = () => {
+      if (!withImages) return true;
+      const active = useTenantStore.getState();
+      return !active.notProvisioned && launchDraftOwner(active).prefix === owner.prefix;
+    };
     const deliveryToast: typeof toast = (...args) => {
       if (current()) toast(...args);
     };
@@ -262,7 +272,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // Keep the launch seed memo on incomplete delivery. The launch form uses the result
     // to know when responsibility for the draft has passed to the recovery UI.
     if (retryFiles.length) {
-      const saved = await holdLaunchDraft(owner, { session: res.name, kind, repo, prompt, files: retryFiles });
+      const saved = await holdLaunchDraft(owner.prefix, { session: res.name, kind, repo, prompt, files: retryFiles });
       if (!saved && current()) {
         toast(t("rp.delivery_storage_failed"), { kind: "warn" });
         // The text memo still gives the member a way back if the browser refused the files.

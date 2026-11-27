@@ -6,7 +6,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { readAttachDraftSnapshots, resetAttachDraftDB, settleAttachDraft } from "../../lib/attachDraft.ts";
+import { clearAttachDraftSnapshot, readAttachDraftSnapshots, resetAttachDraftDB, settleAttachDraft } from "../../lib/attachDraft.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { launchDraftOwner, useHeldLaunchDrafts } from "./launchDeliveryDraft.ts";
 
@@ -41,6 +41,15 @@ const draftKey = () => launchDraftOwner(useTenantStore.getState()).prefix + "s1"
 const reviewButton = () => document.querySelector<HTMLButtonElement>(".ui-toast-msg button");
 const recoveryDialog = () => document.querySelector<HTMLFormElement>("form[role=dialog]");
 const focusTarget = () => document.querySelector<HTMLButtonElement>("[data-launch-delivery-focus]");
+
+async function editPrompt(text: string) {
+  const prompt = recoveryDialog()!.querySelector("textarea")!;
+  const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(prompt, text);
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
 
 async function submitRetry(dialog: HTMLFormElement) {
   await act(async () => dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
@@ -166,13 +175,8 @@ describe("partial draft delivery", () => {
     await launch([file("a.png"), file("b.png")]);
     await act(async () => reviewButton()!.click());
     const dialog = recoveryDialog()!;
-    const prompt = dialog.querySelector("textarea")!;
     const picker = dialog.querySelector<HTMLInputElement>('input[type="file"]')!;
-    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-    await act(async () => {
-      setValue.call(prompt, "edited after refusal");
-      prompt.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await editPrompt("edited after refusal");
     await act(async () => dialog.querySelectorAll<HTMLButtonElement>("li button")[1].click());
     Object.defineProperty(picker, "files", { value: [file("new.png", "new file bytes")] });
     await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
@@ -241,6 +245,12 @@ describe("partial draft delivery", () => {
     await act(async () => recoveryDialog()!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     await vi.waitFor(() => expect(finishUpload).toBeTypeOf("function"));
     await act(async () => useTenantStore.setState({ tenant: "other" }));
+    expect(recoveryDialog()).toBeNull();
+    expect(reviewButton()).toBeNull();
+    await act(async () => useTenantStore.setState(owner));
+    expect(reviewButton()?.disabled).toBe(true);
+    await act(async () => reviewButton()!.click());
+    expect(recoveryDialog()).toBeNull();
     await act(async () => finishUpload({ status: 200, path: "/p/b.png" }));
     await settleAttachDraft(prefix + "s1");
     const [stored] = await readAttachDraftSnapshots(prefix);
@@ -250,7 +260,53 @@ describe("partial draft delivery", () => {
     expect(pasteImage).toHaveBeenCalledTimes(3);
     expect(apiJSON).toHaveBeenCalledTimes(1);
     expect(recoveryDialog()).toBeNull();
+    await vi.waitFor(() => expect(reviewButton()?.disabled).toBe(false));
+  });
+
+  it("keeps the original form draft until the launch has a resolved owner", async () => {
+    await act(async () => useTenantStore.setState({ resolved: false, whoami: null }));
+    expect(await launch([file("b.png")])).toEqual({ ok: false });
+    expect(toasts()).toContain(t("rp.delivery_identity_pending"));
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(stash).not.toHaveBeenCalled();
+  });
+
+  it("cannot revive or send a draft another tab already cleared", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("b.png")]);
+    await act(async () => reviewButton()!.click());
+    expect(await clearAttachDraftSnapshot(draftKey())).toBe(true);
+    await editPrompt("stale edit from another tab");
+    await act(async () => settleAttachDraft(draftKey()));
+    const prefix = launchDraftOwner(useTenantStore.getState()).prefix;
+    expect(await readAttachDraftSnapshots(prefix)).toEqual([]);
+    await submitRetry(recoveryDialog()!);
     expect(reviewButton()).toBeNull();
+    expect(pasteImage).toHaveBeenCalledTimes(1);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses a delivered draft after a failed IndexedDB delete and a reload", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/b.png" });
+    await launch([file("b.png")]);
+    await act(async () => reviewButton()!.click());
+    const deletion = vi.spyOn(IDBObjectStore.prototype, "delete").mockImplementationOnce(() => {
+      throw new DOMException("Delete interrupted", "AbortError");
+    });
+    try {
+      await submitRetry(recoveryDialog()!);
+    } finally {
+      deletion.mockRestore();
+    }
+    const prefix = launchDraftOwner(useTenantStore.getState()).prefix;
+    expect(await readAttachDraftSnapshots(prefix)).toHaveLength(1);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    await reload();
+    await vi.waitFor(async () => expect(await readAttachDraftSnapshots(prefix)).toEqual([]));
+    expect(reviewButton()).toBeNull();
+    expect(apiJSON).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the text memo fallback if the browser refuses to persist the draft", async () => {
