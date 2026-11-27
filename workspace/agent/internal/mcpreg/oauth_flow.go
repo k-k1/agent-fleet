@@ -479,7 +479,7 @@ func registerDCR(ctx context.Context, srv OAuthServer, req StartRequest) (client
 		ClientID: out.ClientID, ClientSecret: out.ClientSecret,
 		SecretExpiresAt: int64(out.SecretExpiresAt), CreatedAt: now,
 	}
-	if err := updateSecrets(func(s *secrets.Data) error {
+	if err := updateGrantSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuthClients[:0]
 		for _, c := range s.MCPOAuthClients {
 			if !(c.Kind == OAuthRegDCR && c.Issuer == cl.Issuer && c.RedirectURI == cl.RedirectURI) {
@@ -813,7 +813,7 @@ func CompleteOAuth(ctx context.Context, serverID string, req CompleteRequest) (C
 		// was out: that one is spent, the newest successor is the live one.
 		g.RefreshToken = next
 	}
-	err := updateSecrets(func(s *secrets.Data) error {
+	err := updateGrantSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuth[:0]
 		for _, o := range s.MCPOAuth {
 			if !replacedBy(&o, g, ids) {

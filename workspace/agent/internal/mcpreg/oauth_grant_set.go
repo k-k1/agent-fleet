@@ -130,6 +130,12 @@ func grantMember(g *secrets.MCPOAuthGrant, serverID string) (secrets.MCPOAuthGra
 // grant made before groups existed still needs d to carry that client, as it did then.
 func grantApplies(g *secrets.MCPOAuthGrant, d ServerDef) bool {
 	if g.Group != "" {
+		refusedMu.Lock()
+		left := refused[grantKey(g)][d.ID]
+		refusedMu.Unlock()
+		if left {
+			return false
+		}
 		for _, id := range g.Left {
 			if id == d.ID {
 				return false
