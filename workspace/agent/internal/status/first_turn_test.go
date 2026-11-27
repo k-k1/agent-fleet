@@ -1,6 +1,7 @@
 package status
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -230,5 +231,50 @@ func TestSweepOrphanFirstTurnsKeepsALedgerItCannotLock(t *testing.T) {
 	}
 	if n := SweepOrphanFirstTurns(map[string]bool{}, time.Minute, time.Now().Add(time.Hour)); n != 1 {
 		t.Errorf("unlocked sweep removed %d, want 1", n)
+	}
+}
+
+func TestFirstTurnLateObservedFailureAndLaterTurn(t *testing.T) {
+	const sid = "ft-late-failure"
+	armed(t, sid, true)
+	rev := PersistRev(sid, "working")
+	RecordTurnEnd(sid)
+	before, ok := ReadFirstTurn(sid)
+	if !ok || before.Outcome != "" {
+		t.Fatalf("initial ledger: %+v, %v", before, ok)
+	}
+	RecordTurnEndFailure(sid, rev, "executor failure")
+	after, ok := ReadFirstTurn(sid)
+	if !ok || after.Outcome != TurnEndReasonFailed || after.EndedAt != before.EndedAt || after.Ms != before.Ms {
+		t.Fatalf("upgraded ledger: %+v, %v", after, ok)
+	}
+	PersistTurnEnd(sid, "idle")
+	rev = PersistRev(sid, "working")
+	RecordTurnEndFailure(sid, rev, "later failure")
+	if got, _ := ReadFirstTurn(sid); got != after {
+		t.Fatalf("later turn changed ledger: %+v", got)
+	}
+}
+
+func TestLaterObservedFailureDoesNotChangeFirstTurn(t *testing.T) {
+	for _, observed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("observed=%v", observed), func(t *testing.T) {
+			const sid = "ft-later-failure"
+			armed(t, sid, true)
+			Persist(sid, "working")
+			if observed {
+				RecordTurnEnd(sid)
+			}
+			PersistTurnEnd(sid, "idle")
+			before, ok := ReadFirstTurn(sid)
+			if !ok || before.Outcome != "" || !before.NoReason {
+				t.Fatalf("first turn = %+v, ok=%v", before, ok)
+			}
+			rev := PersistRev(sid, "working")
+			RecordTurnEndFailure(sid, rev, "later failure")
+			if got, ok := ReadFirstTurn(sid); !ok || got != before {
+				t.Fatalf("later failure changed first turn: %+v -> %+v, ok=%v", before, got, ok)
+			}
+		})
 	}
 }

@@ -57,7 +57,9 @@ type FirstTurn struct {
 	// Void: the end the Agent saw cannot be shown to be the first turn's; the ledger stays
 	// empty for good.
 	Void bool `json:"void,omitempty"`
-	// Done: the first turn ended. Outcome, EndedAt and Ms are final.
+	// ObservedRev ties a polled end to the working record that produced it.
+	ObservedRev string `json:"observedRev,omitempty"`
+	// Done: the first turn ended. Its outcome can be refined by the same observation.
 	Done    bool   `json:"done,omitempty"`
 	Outcome string `json:"outcome,omitempty"`
 	EndedAt string `json:"endedAt,omitempty"`
@@ -293,11 +295,20 @@ func settleFirstTurn(t *FirstTurn, endedAt, reason string) {
 // noteObservedFirstTurnEnd is RecordTurnEnd's half: a poll saw the running turn end, for a kind
 // that has no hook to say so. The status record is untouched there, so there is no write to hang
 // the settle on. The caller holds the sid lock.
-func noteObservedFirstTurnEnd(sid, at, reason string) {
+func noteObservedFirstTurnEnd(sid, rev, at, reason string) {
 	t, ok := firstTurns.Read(sid)
-	if !ok || t.Done || t.Void {
+	if !ok || t.Void {
 		return
 	}
+	if t.Done {
+		if t.ObservedRev != "" && t.ObservedRev == rev && reason == TurnEndReasonFailed {
+			t.NoReason = false
+			t.Outcome = reason
+			_ = firstTurns.Write(sid, t)
+		}
+		return
+	}
+	t.ObservedRev = rev
 	if reason != "" {
 		t.NoReason = false
 	}

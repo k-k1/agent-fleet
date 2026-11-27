@@ -965,3 +965,41 @@ func TestNotificationDrainerFailedSubscriptionReadSkipsOneSweep(t *testing.T) {
 		t.Fatalf("%d workspaces drained by the next sweep, want 2", asked.Load())
 	}
 }
+
+func TestNotificationDrainerKeepsContinuationFailuresDistinct(t *testing.T) {
+	ctx := context.Background()
+	st := newDrainStore(t)
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	id, _ := st.UpsertIdentity(ctx, "continuation@example.com", "continuation", "")
+	mem, err := st.EnsureMembership(ctx, id.ID, tenant.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{"turn-failed:s:2026-11-27T11:00:00.1Z", "turn-failed:s:2026-11-27T11:00:00.2Z"}
+	var current atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/notifications" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"notifications": []agentNotification{{ID: ids[current.Load()], Kind: "turn-failed", SessionName: "s", CreatedAt: "2026-11-27T11:00:00Z"}}})
+		}
+	}))
+	defer srv.Close()
+	d := &notificationDrainer{store: st, interval: time.Hour}
+	rt := drainFakeRT{state: "running", endpoint: srv.URL}
+	d.drainWorkspace(ctx, rt, mem.ID)
+	current.Store(1)
+	d.drainWorkspace(ctx, rt, mem.ID)
+	d.drainWorkspace(ctx, rt, mem.ID)
+	rows, err := st.ListNotifications(ctx, mem.ID, "2000-01-01T00:00:00Z", 10)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.EventID] = true
+	}
+	for _, id := range ids {
+		if !seen["agent:"+id] {
+			t.Errorf("missing %s: %+v", id, rows)
+		}
+	}
+}

@@ -592,3 +592,15 @@ func TestFullTextBodyOnly(t *testing.T) {
 		t.Fatalf("full-text content should be body-only + divider, got %q", got)
 	}
 }
+
+func TestTurnFailedHeadlines(t *testing.T) {
+	m := Message{Kind: "turn-failed"}
+	for _, c := range []struct{ lang, want string }{{"en", "A session turn failed"}, {"ja", "セッションのターンが失敗しました"}} {
+		if got := m.Text(c.lang); got != c.want {
+			t.Errorf("%s: %q", c.lang, got)
+		}
+		if got := m.textSlack(c.lang); got != c.want {
+			t.Errorf("slack %s: %q", c.lang, got)
+		}
+	}
+}

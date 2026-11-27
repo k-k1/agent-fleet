@@ -335,3 +335,29 @@ func TestWireSessionAgyQuotaErrorStepWithBannerReadsLimited(t *testing.T) {
 		t.Fatalf("state %q, want %q", got, agents.StateLimited)
 	}
 }
+
+func TestQueueFailureReasonRequiresTerminalCapability(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, c := range []struct {
+		name     string
+		kind     string
+		driver   string
+		delivery string
+		want     bool
+	}{
+		{"terminal", session.KindAgy, "", "d", true},
+		{"managed", session.KindAgy, session.DriverManaged, "d", false},
+		{"no delivery", session.KindAgy, "", "", false},
+		{"unsupported", session.KindClaude, "", "d", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := session.Meta{Name: "gate-" + strings.ReplaceAll(c.name, " ", "-"), Dir: t.TempDir(), Kind: c.kind, Driver: c.driver, QueueDelivery: c.delivery}
+			sid := session.UUID(m.Dir, m.Name)
+			status.PersistTurnEndReason(sid, "idle", status.TurnEndReasonFailed)
+			got := wireSession(m, false)
+			if (got.LastTurnEndReason == status.TurnEndReasonFailed) != c.want {
+				t.Fatalf("reason = %q, want exposed=%v", got.LastTurnEndReason, c.want)
+			}
+		})
+	}
+}
