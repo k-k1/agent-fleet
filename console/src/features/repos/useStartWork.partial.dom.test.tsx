@@ -6,7 +6,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { clearAttachDraftSnapshot, readAttachDraftSnapshots, resetAttachDraftDB, settleAttachDraft } from "../../lib/attachDraft.ts";
+import { clearAttachDraftSnapshot, readAttachDraftSnapshots, resetAttachDraftDB, settleAttachDraft, writeAttachDraftSnapshot } from "../../lib/attachDraft.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { launchDraftOwner, useHeldLaunchDrafts } from "./launchDeliveryDraft.ts";
 
@@ -18,7 +18,8 @@ vi.mock("../../core/api/client.ts", async (orig) => {
 });
 const stash = vi.fn();
 vi.mock("../memo/launchStash.ts", () => ({ stashLaunchDraft: (...a: unknown[]) => stash(...a) }));
-vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
+const openSessionChat = vi.fn();
+vi.mock("../sessions/open.ts", () => ({ openSessionChat: (...args: unknown[]) => openSessionChat(...args), openSessionTerminal: vi.fn() }));
 
 const { useStartWork } = await import("./useStartWork.ts");
 const { LaunchDeliveryRecovery } = await import("./LaunchDeliveryRetry.tsx");
@@ -41,6 +42,13 @@ const draftKey = () => launchDraftOwner(useTenantStore.getState()).prefix + "s1"
 const reviewButton = () => document.querySelector<HTMLButtonElement>(".ui-toast-msg button");
 const recoveryDialog = () => document.querySelector<HTMLFormElement>("form[role=dialog]");
 const focusTarget = () => document.querySelector<HTMLButtonElement>("[data-launch-delivery-focus]");
+const submit = (dialog: HTMLFormElement) => dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+const dialogButton = (label: string) => [...recoveryDialog()!.querySelectorAll("button")].find((button) => button.textContent === label);
+const waitForRetry = () => act(async () => vi.waitFor(() => expect(useHeldLaunchDrafts.getState().operations[draftKey()]).toBeUndefined()));
+
+function waitForAbort(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+}
 
 async function editPrompt(text: string) {
   const prompt = recoveryDialog()!.querySelector("textarea")!;
@@ -52,8 +60,8 @@ async function editPrompt(text: string) {
 }
 
 async function submitRetry(dialog: HTMLFormElement) {
-  await act(async () => dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-  await vi.waitFor(() => expect(dialog.isConnected && dialog.hasAttribute("inert")).toBe(false));
+  await act(async () => submit(dialog));
+  await waitForRetry();
 }
 
 async function mount() {
@@ -71,7 +79,7 @@ async function mount() {
 
 async function reload(scope: Partial<ReturnType<typeof useTenantStore.getState>> = owner) {
   await act(async () => root?.unmount());
-  useHeldLaunchDrafts.setState({ drafts: {} });
+  useHeldLaunchDrafts.setState({ drafts: {}, operations: {} });
   resetAttachDraftDB();
   useTenantStore.setState(scope);
   await mount();
@@ -83,10 +91,11 @@ beforeEach(async () => {
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
   useTenantStore.setState(owner);
-  useHeldLaunchDrafts.setState({ drafts: {} });
+  useHeldLaunchDrafts.setState({ drafts: {}, operations: {} });
   takeLaunchSeed("s1");
   apiJSON.mockReset();
   pasteImage.mockReset();
+  openSessionChat.mockClear();
   stash.mockReset();
   stash.mockResolvedValue({ ok: true });
   host = document.createElement("div");
@@ -116,7 +125,7 @@ const launch = async (images: File[]) => {
 };
 
 const created = (path: string, body?: unknown) =>
-  path === "api/sessions" ? Promise.resolve({ name: "s1" }) : Promise.resolve(body ?? {});
+  path === "api/sessions" ? Promise.resolve({ name: "s1" }) : Promise.resolve(body ?? { queued: "s1" });
 
 describe("partial draft delivery", () => {
   it("is complete when every file and the prompt arrive", async () => {
@@ -164,7 +173,7 @@ describe("partial draft delivery", () => {
     expect(apiJSON).toHaveBeenLastCalledWith("api/sessions/s1/input", "POST", {
       prompt: expect.stringMatching(/look at these[\s\S]*\/p\/a\.png[\s\S]*\/p\/smaller\.png/),
       when_ready: true,
-    });
+    }, undefined, { signal: expect.any(AbortSignal) });
     expect(document.querySelector("form[role=dialog]")).toBeNull();
     expect(review.isConnected).toBe(false);
   });
@@ -208,7 +217,7 @@ describe("partial draft delivery", () => {
     expect(apiJSON).toHaveBeenLastCalledWith("api/sessions/s1/input", "POST", {
       prompt: expect.stringMatching(/edited after refusal[\s\S]*\/p\/a\.png[\s\S]*\/p\/new\.png/),
       when_ready: true,
-    });
+    }, undefined, { signal: expect.any(AbortSignal) });
     await reload();
     expect(await readAttachDraftSnapshots(launchDraftOwner(useTenantStore.getState()).prefix)).toEqual([]);
     expect(reviewButton()).toBeNull();
@@ -260,7 +269,161 @@ describe("partial draft delivery", () => {
     expect(pasteImage).toHaveBeenCalledTimes(3);
     expect(apiJSON).toHaveBeenCalledTimes(1);
     expect(recoveryDialog()).toBeNull();
-    await vi.waitFor(() => expect(reviewButton()?.disabled).toBe(false));
+    await waitForRetry();
+    expect(reviewButton()?.disabled).toBe(false);
+  });
+
+  it("cancels a stalled upload and retries only the pending files for the original session", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("a.png"), file("b.png", "pending bytes"), file("c.png")]);
+    const key = draftKey();
+    await act(async () => reviewButton()!.click());
+    pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" })
+      .mockImplementationOnce((_session, _file, signal: AbortSignal) => waitForAbort(signal));
+    await act(async () => submit(recoveryDialog()!));
+    await act(async () => vi.waitFor(() => expect(pasteImage).toHaveBeenCalledTimes(5)));
+    await act(async () => recoveryDialog()!.querySelector<HTMLButtonElement>("header button")!.click());
+    expect(recoveryDialog()).toBeNull();
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>(".ui-toast-msg button")]
+      .find((button) => button.textContent === t("rp.delivery_cancel_upload"));
+    await act(async () => cancel!.click());
+    await waitForRetry();
+    expect(pasteImage.mock.lastCall?.[2].aborted).toBe(true);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(useHeldLaunchDrafts.getState().drafts[key].files.map(({ path }) => path)).toEqual(["/p/a.png", "", ""]);
+
+    await reload();
+    await act(async () => vi.waitFor(() => expect(useHeldLaunchDrafts.getState().drafts[key]).toBeDefined()));
+    await act(async () => reviewButton()!.click());
+    pasteImage.mockImplementation(async (_session, uploaded: File) => ({ status: 200, path: "/p/" + uploaded.name }));
+    await submitRetry(recoveryDialog()!);
+    expect(pasteImage.mock.calls.slice(5).map(([session, uploaded]) => [session, uploaded.name])).toEqual([
+      ["s1", "b.png"], ["s1", "c.png"],
+    ]);
+    expect(apiJSON).toHaveBeenLastCalledWith("api/sessions/s1/input", "POST", {
+      prompt: expect.stringMatching(/look at these[\s\S]*\/p\/a\.png[\s\S]*\/p\/b\.png[\s\S]*\/p\/c\.png/),
+      when_ready: true,
+    }, undefined, { signal: expect.any(AbortSignal) });
+  });
+
+  it("stops waiting for stalled input and blocks a stale tab or reload from sending it again", async () => {
+    apiJSON.mockImplementation((path: string, _method, _body, _headers, init) =>
+      path === "api/sessions" ? created(path) : waitForAbort(init.signal));
+    pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/a.png" });
+    await launch([file("a.png")]);
+    const key = draftKey();
+    const stale = useHeldLaunchDrafts.getState().drafts[key];
+    await act(async () => reviewButton()!.click());
+    await act(async () => submit(recoveryDialog()!));
+    await act(async () => vi.waitFor(() => expect(apiJSON).toHaveBeenCalledTimes(2)));
+    const prefix = launchDraftOwner(useTenantStore.getState()).prefix;
+    expect(await readAttachDraftSnapshots(prefix)).toMatchObject([{ deliveryPending: true, data: { session: "s1", prompt: "look at these" } }]);
+    await act(async () => dialogButton(t("rp.delivery_stop_waiting"))!.click());
+    await waitForRetry();
+    expect(apiJSON.mock.lastCall?.[4].signal.aborted).toBe(true);
+    expect(recoveryDialog()!.textContent).toContain(t("rp.delivery_unknown", { session: "s1" }));
+
+    expect(await writeAttachDraftSnapshot(key, { session: "s1", kind: "claude", repo: "x", prompt: "stale edit" }, undefined, true)).toBe(false);
+    await act(async () => useHeldLaunchDrafts.setState({ drafts: { [key]: stale } }));
+    await submitRetry(recoveryDialog()!);
+    expect(recoveryDialog()!.textContent).toContain(t("rp.delivery_unknown", { session: "s1" }));
+    expect(pasteImage).toHaveBeenCalledTimes(2);
+
+    await reload();
+    await act(async () => vi.waitFor(() => expect(useHeldLaunchDrafts.getState().drafts[key]).toBeDefined()));
+    await act(async () => reviewButton()!.click());
+    await waitForRetry();
+    const restored = recoveryDialog()!;
+    expect(restored.querySelector("textarea")?.value).toBe("look at these");
+    expect(restored.querySelector("textarea")?.readOnly).toBe(true);
+    expect(restored.textContent).toContain("a.png");
+    expect(restored.querySelector("li button, input[type=file]")).toBeNull();
+    expect(dialogButton(t("rp.delivery_send"))).toBeUndefined();
+    await submitRetry(restored);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    expect(readPromptHistory("x")).toEqual([]);
+    openSessionChat.mockClear();
+    await act(async () => dialogButton(t("rp.delivery_open_session"))!.click());
+    expect(recoveryDialog()).toBeNull();
+    expect(openSessionChat).toHaveBeenCalledExactlyOnceWith("s1");
+  });
+
+  it.each([
+    ["network loss", undefined],
+    ["gateway timeout", { error: { code: "http_504" } }],
+    ["request timeout", { error: { status: 408 } }],
+    ["proxy reporting a closed request", { error: { status: 499 } }],
+    ["malformed gateway error", { error: "connection lost" }],
+    ["missing acknowledgement", {}],
+  ])("keeps input with %s in the unknown state", async (_failure, response) => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/a.png" });
+    await launch([file("a.png")]);
+    if (response === undefined) apiJSON.mockRejectedValueOnce(new Error("connection lost"));
+    else apiJSON.mockResolvedValueOnce(response);
+    await act(async () => reviewButton()!.click());
+    await submitRetry(recoveryDialog()!);
+    expect(recoveryDialog()!.textContent).toContain(t("rp.delivery_unknown", { session: "s1" }));
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports storage loss after the retry dialog closes and keeps the prompt unsent", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValueOnce({ status: 413 });
+    await launch([file("a.png")]);
+    await act(async () => reviewButton()!.click());
+    let finishUpload!: (result: { status: number; path: string }) => void;
+    pasteImage.mockImplementationOnce(() => new Promise((resolve) => { finishUpload = resolve; }));
+    await act(async () => submit(recoveryDialog()!));
+    await act(async () => vi.waitFor(() => expect(finishUpload).toBeTypeOf("function")));
+    await act(async () => recoveryDialog()!.querySelector<HTMLButtonElement>("header button")!.click());
+    expect(recoveryDialog()).toBeNull();
+
+    vi.stubGlobal("indexedDB", undefined);
+    resetAttachDraftDB();
+    await act(async () => finishUpload({ status: 200, path: "/p/a.png" }));
+    await waitForRetry();
+    expect(toasts()).toContain(t("rp.delivery_storage_unavailable"));
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(useHeldLaunchDrafts.getState().drafts[draftKey()]).toMatchObject({
+      session: "s1", prompt: "look at these", files: [{ path: "/p/a.png" }],
+    });
+  });
+
+  it("shows another tab's lock for send and discard without queuing either action", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("a.png")]);
+    const key = draftKey();
+    let held = true;
+    const request = vi.fn(async (_name: string, _options: LockOptions, run: LockGrantedCallback<unknown>) =>
+      run(held ? null : { name: key, mode: "exclusive" }));
+    const original = Object.getOwnPropertyDescriptor(navigator, "locks");
+    Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+    try {
+      const discard = document.querySelector<HTMLButtonElement>(`[aria-label="${t("rp.delivery_discard")}"]`)!;
+      await act(async () => discard.click());
+      expect(toasts()).toContain(t("rp.delivery_other_tab"));
+      expect(reviewButton()).not.toBeNull();
+      await act(async () => reviewButton()!.click());
+      await submitRetry(recoveryDialog()!);
+      expect(recoveryDialog()!.textContent).toContain(t("rp.delivery_other_tab"));
+      expect(request.mock.calls.map(([name, options]) => [name, options])).toEqual([
+        [key, { ifAvailable: true }], [key, { ifAvailable: true }],
+      ]);
+      expect(pasteImage).toHaveBeenCalledTimes(1);
+      expect(apiJSON).toHaveBeenCalledTimes(1);
+
+      held = false;
+      pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" });
+      await submitRetry(recoveryDialog()!);
+      expect(recoveryDialog()).toBeNull();
+      expect(apiJSON).toHaveBeenCalledTimes(2);
+    } finally {
+      if (original) Object.defineProperty(navigator, "locks", original);
+      else Reflect.deleteProperty(navigator, "locks");
+    }
   });
 
   it("keeps the original form draft until the launch has a resolved owner", async () => {
@@ -321,14 +484,14 @@ describe("partial draft delivery", () => {
   });
 
   it("keeps the retry draft if the session refuses the input", async () => {
-    apiJSON.mockImplementation((p: string) => created(p, { error: { code: "busy" } }));
+    apiJSON.mockImplementation((p: string) => created(p, { error: { code: "busy", status: 409 } }));
     pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/b.png" });
     await launch([file("b.png")]);
     const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
     await act(async () => review.click());
     const dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
     await submitRetry(dialog);
-    const refusedCall = apiJSON.mock.lastCall;
+    const refusedCall = apiJSON.mock.lastCall?.slice(0, 3);
     expect(dialog.isConnected).toBe(true);
     expect(dialog.querySelector("textarea")?.value).toBe("look at these");
     expect(dialog.textContent).toContain("b.png");
@@ -337,10 +500,10 @@ describe("partial draft delivery", () => {
     const onSeed = vi.fn(() => takeLaunchSeed("s1"));
     const unsubscribe = subscribeLaunchSeed("s1", onSeed);
     try {
-      apiJSON.mockImplementation((p: string) => created(p));
+      apiJSON.mockImplementation((p: string) => created(p, { sent: "s1" }));
       await submitRetry(dialog);
       expect(apiJSON).toHaveBeenCalledTimes(3);
-      expect(apiJSON.mock.lastCall).toEqual(refusedCall);
+      expect(apiJSON.mock.lastCall?.slice(0, 3)).toEqual(refusedCall);
       expect(pasteImage).toHaveBeenCalledTimes(2);
       expect(onSeed).toHaveBeenCalledTimes(1);
       expect(onSeed.mock.results[0]?.value).toContain("/p/b.png");

@@ -62,6 +62,7 @@ interface StoredDraft {
   at: number;
   items: AttachDraftRec[];
   data?: unknown;
+  deliveryPending?: boolean;
 }
 
 const snapshotFilesKey = (key: string) => key + "\u0000files";
@@ -212,6 +213,22 @@ export async function readAttachDraftSnapshots(prefix: string): Promise<StoredDr
     .map((rec) => ({ ...rec, items: byKey.get(snapshotFilesKey(rec.key))?.items ?? rec.items }));
 }
 
+export async function readAttachDraftDelivery(key: string): Promise<StoredDraft | undefined | null> {
+  let items: AttachDraftRec[] | undefined;
+  const record = await run<StoredDraft | undefined>("readonly", (store) => {
+    const req = store.get(key) as IDBRequest<StoredDraft | undefined>;
+    req.addEventListener("success", () => {
+      // A ready draft already has its files in memory. Only an attempt made in
+      // another tab needs its uploaded paths read back here.
+      if (!req.result?.deliveryPending) return;
+      const files = store.get(snapshotFilesKey(key)) as IDBRequest<StoredDraft | undefined>;
+      files.addEventListener("success", () => { items = files.result?.items; });
+    });
+    return req;
+  });
+  return record && items ? { ...record, items } : record;
+}
+
 /** Commit the initial snapshot atomically. Later edits touch only the part they changed. */
 export function writeAttachDraftSnapshot(
   key: string,
@@ -245,7 +262,7 @@ export function writeAttachDraftSnapshot(
       // A tab that was still editing when another cleared the draft must not bring it back.
       const previous = store.get(key) as IDBRequest<StoredDraft | undefined>;
       previous.addEventListener("success", () => {
-        if (!previous.result) return;
+        if (!previous.result || previous.result.deliveryPending) return;
         if (files) {
           store.put(fileRecord);
           store.put({ ...previous.result, at });
@@ -255,16 +272,38 @@ export function writeAttachDraftSnapshot(
       });
       return previous;
     }, current);
-    return !current() || result != null;
+    return !current() || (result != null && (result as StoredDraft).deliveryPending !== true);
   };
   const writing = write();
   void track(key, Promise.all([pendingWrite.get(key), writing]).then(() => {}));
   return writing;
 }
 
-export async function hasAttachDraftSnapshot(key: string): Promise<boolean | null> {
-  const result = await run<IDBValidKey | undefined>("readonly", (store) => store.getKey(key));
-  return result === null ? null : result !== undefined;
+// Claim the input once across tabs and keep the exact draft that may reach the session.
+// All attachments have already been uploaded, so the saved paths suffice here.
+export async function setAttachDraftDelivery(
+  key: string,
+  attempt?: { data: unknown; files: { file: File; path: string }[] },
+): Promise<boolean> {
+  let updated = false;
+  const result = await run<StoredDraft | undefined>("readwrite", (store) => {
+    const req = store.get(key) as IDBRequest<StoredDraft | undefined>;
+    req.addEventListener("success", () => {
+      const previous = req.result;
+      if (!previous || !!previous.deliveryPending === !!attempt) return;
+      const at = Date.now();
+      if (attempt) {
+        const items = attempt.files.map(({ file, path }) => ({
+          name: file.name, type: file.type, image: file.type.startsWith("image/"), path,
+        }));
+        store.put({ key: snapshotFilesKey(key), at, items } satisfies StoredDraft);
+      }
+      store.put({ ...previous, data: attempt ? attempt.data : previous.data, at, deliveryPending: !!attempt });
+      updated = true;
+    });
+    return req;
+  });
+  return result != null && updated;
 }
 
 export function clearAttachDraftSnapshot(key: string): Promise<boolean> {
