@@ -308,3 +308,30 @@ func TestWireSessionAgyQueueRunQuotaRefusalReadsLimitedBeforeTheSweep(t *testing
 		})
 	}
 }
+
+// A quota refusal the conversation records as an error step main does not call a failure is not a
+// finished run: with the banner on screen the queue run reads limited, not idle.
+func TestWireSessionAgyQuotaErrorStepWithBannerReadsLimited(t *testing.T) {
+	m, _, add := agyIdentityFixture(t, "agy_quota_errstep")
+	m.QueueDelivery = "d1"
+	session.WriteMeta(m)
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	markSessionWorkingFrom(m.Name, captureTurnMark(m.Name))
+	add([][2]int{{2, 14}, {3, 17}}, 3)
+	dbPath := filepath.Join(paths.GeminiHome(), "antigravity-cli", "conversations", "conv-"+m.Name+".db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	message := "RESOURCE_EXHAUSTED: Individual quota reached. Resets in 1h39m46s."
+	details := append(binary.AppendUvarint([]byte{0x12}, uint64(len(message))), message...)
+	payload := append(binary.AppendUvarint([]byte{0x1a}, uint64(len(details))), details...)
+	if _, err := db.Exec(`UPDATE steps SET step_payload=? WHERE idx=3`, payload); err != nil {
+		t.Fatal(err)
+	}
+	agyFakePane(t, agyQuotaFrame)
+	if got := wireSession(m, true).State; got != agents.StateLimited {
+		t.Fatalf("state %q, want %q", got, agents.StateLimited)
+	}
+}

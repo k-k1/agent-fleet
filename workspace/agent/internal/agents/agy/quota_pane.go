@@ -161,26 +161,27 @@ func forgetQuota(name string) {
 }
 
 // atQuotaLimit is agents.UsageLimitTraits.AtLimit: the quota is a window that waiting clears.
-// newestTurnEnded says the screen may be read as the newest turn's outcome: the state source
-// agrees that turn has ended, and the conversation does not already name that turn's own failure
-// (an executor error step, or the Stop hook's error). A turn that ended in an error is a failed
-// turn whatever a lagging pane still shows from the turn before, and main's queue closes it as
-// such; a quota refusal that is itself recorded that way is reported by that path too.
-func newestTurnEnded(m session.Meta) bool {
-	if LiveState(m) != "idle" {
-		return false
-	}
+// newestTurnFailed is main's own verdict that the newest turn ended in a failure the conversation
+// names: an executor error step main recognises (turnFailure), or the Stop hook's error for the
+// newest step. Anything main does not recognise (a quota refusal recorded as some other error
+// step, an ordinary tool error) is not a failure here, so the banner still decides.
+func newestTurnFailed(m session.Meta) bool {
 	r, ok := lastStep(m)
 	if !ok {
+		return false
+	}
+	if r.stepType == stepTypeError && r.status == stepStatusDone && executorErrorPayload(r.payload) != "" {
 		return true
 	}
-	if r.stepType == stepTypeError {
-		return false
-	}
-	if f, ok := hookExecutorFailure(m, r.conv); ok && f.index == r.idx {
-		return false
-	}
-	return true
+	f, ok := hookExecutorFailure(m, r.conv)
+	return ok && f.index == r.idx
+}
+
+// newestTurnEnded says the screen may be read as the newest turn's outcome: the state source
+// agrees that turn has ended, and the conversation does not already name that turn's own failure,
+// which wins over a banner a lagging pane still shows from the turn before.
+func newestTurnEnded(m session.Meta) bool {
+	return LiveState(m) == "idle" && !newestTurnFailed(m)
 }
 
 func atQuotaLimit(m session.Meta) (agents.LimitKind, bool) {
@@ -228,7 +229,7 @@ func quotaResetAt(m session.Meta, _ bool, _ time.Time) (time.Time, string, bool)
 // neither is a run that was interrupted.
 func ranTurnSince(m session.Meta, at time.Time) bool {
 	conv := sids.Read(session.UUID(m.Dir, m.Name))
-	if conv == "" || !hasIdleFooter(capturePaneFrame(session.TmuxName(m.Name))) {
+	if conv == "" || !hasIdleFooter(capturePaneFrame(session.TmuxName(m.Name))) || newestTurnFailed(m) {
 		return false
 	}
 	if mt, ok := dbModTime(conv); !ok || !mt.After(at) {

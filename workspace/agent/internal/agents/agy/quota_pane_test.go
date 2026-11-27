@@ -301,7 +301,7 @@ func TestAtQuotaLimitDefersToANewerExecutorError(t *testing.T) {
 	old := capturePaneFrame
 	defer func() { capturePaneFrame = old }()
 	capturePaneFrame = func(string) string { return quotaLine + idleChrome }
-	failed := [][3]any{{14, stepStatusDone, []byte("x")}, {stepTypeError, stepStatusDone, []byte("x")}}
+	failed := [][3]any{{14, stepStatusDone, []byte("x")}, {stepTypeError, stepStatusDone, failurePayload(canceledStepFailure)}}
 	m, _ := staleFixture(t, "slot-err-wins", failed, [][]byte{executorRow(4, 1)}, time.Minute)
 	defer forgetQuota(m.Name)
 	if _, at := atQuotaLimit(m); at {
@@ -343,5 +343,26 @@ func TestAtQuotaLimitDefersToAStopHookFailure(t *testing.T) {
 	}
 	if _, _, ok := quotaResetAt(m, false, time.Time{}); ok {
 		t.Fatal("a reset was booked from it")
+	}
+	// ...and the same failure must not count as a successful later turn that cancels a booking.
+	if ranTurnSince(m, time.Now().Add(-time.Hour)) {
+		t.Fatal("a Stop-hook failure cancelled the existing booking")
+	}
+}
+
+// An error step main does not recognise as a failure (a quota refusal recorded as an error step)
+// leaves the banner in charge: the limit is read and a reset booked.
+func TestAtQuotaLimitKeepsTheBannerForAQuotaErrorStep(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	capturePaneFrame = func(string) string { return quotaLine + idleChrome }
+	rows := [][3]any{{14, stepStatusDone, []byte("x")}, {stepTypeError, stepStatusDone, failurePayload("RESOURCE_EXHAUSTED: Individual quota reached. Resets in 1h39m46s.")}}
+	m, _ := staleFixture(t, "slot-quota-errstep", rows, [][]byte{executorRow(4, 1)}, time.Minute)
+	defer forgetQuota(m.Name)
+	if _, at := atQuotaLimit(m); !at {
+		t.Fatal("a quota error step hid the banner")
+	}
+	if _, _, ok := quotaResetAt(m, false, time.Time{}); !ok {
+		t.Fatal("no reset booked for it")
 	}
 }
