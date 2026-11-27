@@ -27,7 +27,7 @@
 - **[ウォッチ]** GitHub と Atlassian のクラウドサービスの復旧をウォッチ ([#5204](https://github.com/k-k1/agent-fleet/issues/5204))
 - **[ミラー]** セッションのウォッチに表示名とブランチ、タイマーの予定時刻をブラウザのタイムゾーンで表示 ([#5305](https://github.com/k-k1/agent-fleet/issues/5305), [#5324](https://github.com/k-k1/agent-fleet/issues/5324))
 - **[ガイド]** 日英ガイドの検索キーワードと Console の説明を更新 ([#5064](https://github.com/k-k1/agent-fleet/issues/5064), [#5321](https://github.com/k-k1/agent-fleet/issues/5321))
-- **[ワークスペース]** 同梱ツールを更新。上記のエージェント CLI に加え AWS CLI 2.42.4、GitHub CLI 2.106.0、bkt 0.41.1 ([#5211](https://github.com/k-k1/agent-fleet/issues/5211))
+- **[ワークスペース]** 同梱ツールを更新。AWS CLI 2.42.4、GitHub CLI 2.106.0、bkt 0.41.1 ([#5211](https://github.com/k-k1/agent-fleet/issues/5211))
 
 **Fixed**
 
