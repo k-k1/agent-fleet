@@ -81,6 +81,7 @@ const { useUIStateStore: uiStore } = await import("../../core/store/uiState.ts")
 const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 const { t } = await import("../../lib/i18n/index.ts");
+const device = await import("../../lib/device.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import { openAccess } from "../../test/launchAccess.ts";
 
@@ -236,6 +237,24 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   host.remove();
+});
+
+it("focuses the prompt on open and restores the opener when the dialog closes", async () => {
+  const pointer = vi.spyOn(device, "coarsePointer").mockReturnValue(false);
+  const opener = document.createElement("button");
+  host.before(opener);
+  try {
+    opener.focus();
+    onClose.mockImplementation(() => root?.render(null));
+    await render();
+    expect(document.activeElement).toBe(promptBox());
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  } finally {
+    opener.remove();
+    pointer.mockRestore();
+  }
 });
 
 // ADR 0142 decision 7: what -> where -> details. The prompt comes first with the run-with strip
