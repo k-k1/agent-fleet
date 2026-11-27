@@ -74,11 +74,11 @@ shell and SSM sessions to the trash.
 - **Your files are not deleted for good.** The space is a folder moved into the trash, so every file keeps its content and
   its modification time. **Clean up → "Trash (restore)" → "Restore"** moves the folder back to `~/spaces` under the same name and takes the archived
   sessions off the archive, so they resume where they left off. Shell and SSM sessions are separate rows in the trash,
-  restored one by one. A shell's scrollback (its recorded terminal output) is not kept, as when you delete a shell
+  restored one by one. A shell's scrollback (its recorded terminal output) goes to the trash with it and comes back on restore only where the workspace keeps terminal history, and only while it is within that retention period; otherwise it is not kept, as when you delete a shell
 - A restore is refused when something already sits at the space's folder name under `~/spaces`: move or delete that,
   then restore again
 - **"Delete permanently"** on the trash row removes the folder and its files for good. The row's size is the
-  folder's. The trash never empties on its own, and it takes the room until then
+  folder's; "or more" after it means the measuring limit was reached, so the size shown is a lower bound. A shell's scrollback in the trash stays in its archive until you delete the row. The trash never empties on its own, and it takes the room until then
 - The space needs the trash and `~/spaces` to be on one file system, which they are in a workspace. If they are not, nothing is deleted and
   the dialog says so
 

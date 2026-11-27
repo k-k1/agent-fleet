@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -97,9 +98,9 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 //
 // It never touches the working copy (ADR 0101 decision 3). The managed kinds' ClientMessageID
 // ledger stays: a session in the trash can be restored and resumed, so purging the archive is
-// what drops it (purgeCleanupArchive). The terminal history does not go into the archive: it
-// is short-lived on purpose and its retention is the tenant's setting, which a trash with no
-// expiry would override.
+// what drops it (purgeCleanupArchive). A shell's terminal history goes into the archive only
+// while the tenant's history retention is on, and a restore drops it once it is older than that
+// retention (restoreTerminalHistory), so the trash does not outlive the tenant's setting.
 func trashSession(m session.Meta, stop bool) (string, string, error) {
 	return trashSessionIn(m, stop, nil)
 }
@@ -554,14 +555,72 @@ func archiveSessionForDelete(m session.Meta) (string, error) {
 	if err := addHandoverPayloads(m.Name, &as, payloads); err != nil {
 		return "", err
 	}
+	addTerminalHistoryPayload(m, &as, payloads)
 	man := cleanupManifest{
 		ID: newCleanupID(nowUTC(), idSlug(m.Name)), At: nowUTC().Format(time.RFC3339),
 		Reason: "delete_session", Sessions: []cleanupArchivedSession{as},
 	}
-	if err := writeCleanupBundle(&man, payloads, true); err != nil {
+	err := cleanupBundleWriter(&man, payloads, true)
+	if err != nil && as.History != "" {
+		// The history is a convenience: a trash that cannot hold it (a full disk) must still take
+		// the session, as it did before histories were carried.
+		log.Printf("trash %s: archive with terminal history failed (%v); retrying without it", m.Name, err)
+		delete(payloads, as.History)
+		as.History, as.HistoryMod = "", ""
+		man = cleanupManifest{
+			ID: newCleanupID(nowUTC(), idSlug(m.Name)), At: nowUTC().Format(time.RFC3339),
+			Reason: "delete_session", Sessions: []cleanupArchivedSession{as},
+		}
+		err = cleanupBundleWriter(&man, payloads, true)
+	}
+	if err != nil {
 		return "", err
 	}
 	return man.ID, nil
+}
+
+// cleanupBundleWriter is writeCleanupBundle; a var only so a test can fail the first write.
+var cleanupBundleWriter = writeCleanupBundle
+
+// addTerminalHistoryPayload carries a trashed shell's terminal history in its archive while the
+// tenant keeps history at all (AF_TERMINAL_HISTORY_RETENTION_DAYS > 0). With retention off the
+// history stays short-lived and goes with the shell, as before. The history is a convenience, not
+// the session's only copy of anything, so a file that cannot be read is logged and left out
+// rather than refusing the delete.
+func addTerminalHistoryPayload(m session.Meta, as *cleanupArchivedSession, payloads map[string][]byte) {
+	if m.Kind != session.KindShell && m.Kind != session.KindSSM {
+		return
+	}
+	retention := terminalHistoryRetention()
+	if retention <= 0 {
+		return
+	}
+	// One descriptor decides everything: no symlink is followed (a link would archive some other
+	// file for good) and a raced-in FIFO cannot block the delete while the name lock is held.
+	f, err := os.OpenFile(terminalHistoryPath(m.Name), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("trash %s: terminal history not archived: %v", m.Name, err)
+		}
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() || time.Since(fi.ModTime()) >= retention {
+		return
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxCleanupEntryBytes+1))
+	if err != nil || len(b) > maxCleanupEntryBytes {
+		log.Printf("trash %s: terminal history not archived (read error or too large): %v", m.Name, err)
+		return
+	}
+	if len(b) == 0 {
+		return
+	}
+	entry := "sessions/" + idSlug(m.Name) + "/terminal-history.ansi"
+	payloads[entry] = b
+	as.History = entry
+	as.HistoryMod = fi.ModTime().UTC().Format(time.RFC3339Nano)
 }
 
 // readHandoverBounded reads p, refusing a file a restore could not read back

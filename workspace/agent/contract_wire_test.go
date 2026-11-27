@@ -100,7 +100,7 @@ func agentContractFamilies() []contractFamily {
 			binding: cleanupManifestBinding,
 			tsPath:  "../../console/src/features/sessions/CleanupModal.tsx",
 			tsName:  "CleanupArchive",
-			tsKeys:  keySet("id", "at", "reason", "sessions", "branches", "worktree", "space", "bytes"),
+			tsKeys:  keySet("id", "at", "reason", "sessions", "branches", "worktree", "space", "bytes", "bytesPartial"),
 			tsOnly:  map[string]string{},
 			goOnly:  map[string]string{},
 		},
@@ -515,7 +515,7 @@ var branchInfoBinding = map[string]string{
 
 var cleanupManifestBinding = map[string]string{
 	"ID": "id", "At": "at", "Reason": "reason", "Sessions": "sessions",
-	"Branches": "branches", "Worktree": "worktree", "Space": "space", "Bytes": "bytes",
+	"Branches": "branches", "Worktree": "worktree", "Space": "space", "Bytes": "bytes", "BytesPartial": "bytesPartial",
 }
 
 var sessionSearchHitBinding = map[string]string{

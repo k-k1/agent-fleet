@@ -950,6 +950,7 @@ export const admin = {
   "clean.cache_feature_codex_view_image": "codex が読んだ画像",
   "clean.cache_size": "{dirs} 件・{size}",
   "clean.cache_partial": "（一部）",
+  "clean.archive_size_partial": " 以上",
   "clean.safety_regenerable": "再生成可",
   "clean.wto_title": "動いていない作業コピーのビルド成果物",
   "clean.wto_intro": "しばらく誰も触っていない作業コピーの node_modules・.next・target・.gradle です。次のビルドで作り直せますが、この削除はごみ箱を通りません。",

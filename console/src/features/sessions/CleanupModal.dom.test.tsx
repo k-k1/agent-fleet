@@ -294,4 +294,21 @@ describe("CleanupModal cache section", () => {
       "スペースのフォルダとその中のファイルがすべて完全に削除され",
     );
   });
+
+  it("marks a deleted space's size as a lower bound when the Agent could not measure the whole folder", async () => {
+    candidates = [];
+    archives = [
+      {
+        id: "20260901-000000-space-big",
+        at: "2026-09-01T00:00:00Z",
+        reason: "delete_space",
+        space: { folder: "big-abcdef", name: "Big", path: "/home/dev/spaces/big-abcdef" },
+        bytes: 3 * 2 ** 20,
+        bytesPartial: true,
+      },
+    ];
+    await render();
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
+    expect(document.querySelector(".clean-arch-what")?.textContent).toContain("3.0 MB 以上");
+  });
 });
