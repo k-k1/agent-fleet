@@ -141,9 +141,10 @@ var (
 // observedEnd is an end of turn a poll saw, tagged with the SessionStatus.Rev of the record
 // that was in force when it saw it. The tag is what makes it expire (ObservedTurnEnd).
 type observedEnd struct {
-	Rev    string `json:"rev"`
-	At     string `json:"at"` // RFC3339
-	Reason string `json:"reason,omitempty"`
+	Rev     string `json:"rev"`
+	At      string `json:"at"` // RFC3339
+	Reason  string `json:"reason,omitempty"`
+	Failure string `json:"failure,omitempty"`
 }
 
 // turnMark is a source position tagged with the SessionStatus.Rev of the working write it was
@@ -321,12 +322,12 @@ func TurnEndUnrecorded(sid string) bool {
 // write per turn.
 func RecordTurnEnd(sid string) {
 	st, _ := Read(sid)
-	RecordTurnEndReason(sid, st.Rev, "")
+	RecordTurnEndFailure(sid, st.Rev, "")
 }
 
-// RecordTurnEndReason pins the end and its outcome to the revision the caller
+// RecordTurnEndFailure pins the end and its outcome to the revision the caller
 // examined before reading the CLI. A newer input must not inherit the outcome.
-func RecordTurnEndReason(sid, rev, reason string) {
+func RecordTurnEndFailure(sid, rev, failure string) {
 	unlock, locked := lockSid(sid)
 	defer unlock()
 	if !locked {
@@ -336,14 +337,24 @@ func RecordTurnEndReason(sid, rev, reason string) {
 	if !ok || st.State != "working" || rev == "" || st.Rev != rev {
 		return
 	}
-	if at, _ := observedTurnEnd(sid, rev); at != "" {
+	rec := observedTurnEnd(sid, rev)
+	if rec.At != "" && (failure == "" || rec.Reason != "") {
 		return
 	}
-	at := time.Now()
-	if err := observedEnds.Write(sid, observedEnd{Rev: rev, At: at.Format(time.RFC3339), Reason: reason}); err != nil {
+	now := time.Now()
+	if rec.At == "" {
+		rec.Rev, rec.At = rev, now.Format(time.RFC3339)
+		if failure != "" {
+			rec.At = now.Format(time.RFC3339Nano)
+		}
+	}
+	if failure != "" {
+		rec.Reason, rec.Failure = TurnEndReasonFailed, failure
+	}
+	if err := observedEnds.Write(sid, rec); err != nil {
 		return
 	}
-	noteObservedFirstTurnEnd(sid, at.Format(time.RFC3339Nano), reason)
+	noteObservedFirstTurnEnd(sid, now.Format(time.RFC3339Nano), rec.Reason)
 }
 
 // ObservedTurnEnd returns the end a poll observed for the turn the status record is CURRENTLY
@@ -370,16 +381,36 @@ func RecordTurnEndReason(sid, rev, reason string) {
 // second.
 func ObservedTurnEnd(sid string) string {
 	st, _ := Read(sid)
-	at, _ := observedTurnEnd(sid, st.Rev)
-	return at
+	return observedTurnEnd(sid, st.Rev).At
 }
 
-func observedTurnEnd(sid, rev string) (at, reason string) {
+func observedTurnEnd(sid, rev string) observedEnd {
 	rec, ok := observedEnds.Read(sid)
 	if !ok || rev == "" || rev != rec.Rev {
+		return observedEnd{}
+	}
+	return rec
+}
+
+// SettleObservedFailure lets only one notifier consume a failed working
+// revision. It also keeps the evidence if rereading the CLI is unavailable.
+func SettleObservedFailure(sid, rev string) (at, failure string) {
+	unlock, locked := lockSid(sid)
+	defer unlock()
+	if !locked {
 		return "", ""
 	}
-	return rec.At, rec.Reason
+	st, ok := Read(sid)
+	if !ok || st.State != "working" || st.Rev != rev {
+		return "", ""
+	}
+	rec := observedTurnEnd(sid, rev)
+	if rec.Reason != TurnEndReasonFailed || rec.At == "" {
+		return "", ""
+	}
+	WriteCompletionKey(sid, rec.At)
+	persistLocked(sid, SessionStatus{State: "idle", TurnEnd: true, TurnEndAt: rec.At, TurnEndReason: rec.Reason})
+	return rec.At, rec.Failure
 }
 
 // LatestTurnEnd reads the timestamp and outcome of the same turn revision.
@@ -394,7 +425,8 @@ func LatestTurnEnd(sid string) (at, reason string) {
 	if st.State != "working" {
 		return "", ""
 	}
-	return observedTurnEnd(sid, st.Rev)
+	rec := observedTurnEnd(sid, st.Rev)
+	return rec.At, rec.Reason
 }
 
 // RecordTurnMark stores the source position mark for the turn that the working write rev opened.

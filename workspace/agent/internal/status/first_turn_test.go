@@ -112,6 +112,17 @@ func TestFirstTurnOfAKindWithoutReasonsKeepsTheOutcomeEmpty(t *testing.T) {
 	}
 }
 
+func TestFirstTurnKeepsAFailureProvedByThePoll(t *testing.T) {
+	const sid = "ft-observed-failure"
+	armed(t, sid, true)
+	rev := PersistRev(sid, "working")
+	RecordTurnEndFailure(sid, rev, "executor failure")
+	got, ok := ReadFirstTurn(sid)
+	if !ok || got.Outcome != TurnEndReasonFailed || got.EndedAt == "" {
+		t.Fatalf("first turn = %+v ok=%v", got, ok)
+	}
+}
+
 func TestFirstTurnReopenedInputIsTheSameTurn(t *testing.T) {
 	const sid = "ft-reopen"
 	armed(t, sid, true)

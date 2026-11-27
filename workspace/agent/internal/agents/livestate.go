@@ -71,6 +71,9 @@ type LiveStateTraits struct {
 	// from a finished one in the report and the turn-failed status reason. Called only after
 	// idleEndsThisTurn agreed the turn ended.
 	TurnFailure func(m session.Meta, mark string) string
+	// QueueTurnFailure opts Terminal sessions into closing an auto-run on the
+	// failure evidence. The delivery and the notifier share the turn identity.
+	QueueTurnFailure bool
 }
 
 // FileMarkOffset is the byte offset of a FileSizeMark taken on path, ok=false when the mark is

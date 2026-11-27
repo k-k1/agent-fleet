@@ -155,13 +155,20 @@ func TestMemoOccupancyFailedWatchTurnKeepsDeliveredWorkAndSession(t *testing.T) 
 		}
 		agent.setRow(d.Session, map[string]any{"state": "working", "lastTurnEndAt": "", "wakers": nil})
 		e.settleNow(now)
+		failedAt := now.Format(time.RFC3339Nano)
 		agent.setRow(d.Session, map[string]any{
-			"state": "idle", "lastTurnEndAt": now.Format(time.RFC3339Nano), "lastTurnEndReason": "turn-failed",
+			"state": "idle", "lastTurnEndAt": failedAt, "lastTurnEndReason": "turn-failed",
 		})
 		e.settleTwice()
 		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryFailed ||
 			got.CurrentSession() != d.Session || got.TurnOutcome != "clean" || retireRequested(got) {
 			t.Fatalf("failed turn: %+v", got)
+		}
+
+		// Once opened, the mirror can also report this turn through the Agent's outbox.
+		outbox := agentNotification{ID: "turn-failed:" + d.Session + ":" + failedAt, Kind: "turn-failed", SessionName: d.Session, SessionKind: "agy"}
+		if err := e.st.InsertNotification(context.Background(), agentNotificationRow(outbox, d.MembershipID)); err != nil {
+			t.Fatal(err)
 		}
 
 		// A successful manual continuation does not overwrite the failed run.
@@ -175,15 +182,37 @@ func TestMemoOccupancyFailedWatchTurnKeepsDeliveredWorkAndSession(t *testing.T) 
 		}
 		count := 0
 		for _, n := range e.notifications() {
-			if n.Kind == "memo-delivery-failed" {
+			if n.Kind == "turn-failed" {
 				count++
-				if n.TargetID != d.QueueID {
-					t.Fatalf("notification target = %q, want %q", n.TargetID, d.QueueID)
+				if n.TargetType != "session" || n.TargetID != d.Session {
+					t.Fatalf("notification target = %q/%q, want session/%s", n.TargetType, n.TargetID, d.Session)
 				}
 			}
 		}
 		if count != 1 {
 			t.Fatalf("failure notifications = %d", count)
+		}
+	})
+}
+
+func TestMemoOccupancyFailedWatchTurnClosesAfterOutboxAlreadyNotified(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		now := time.Now()
+		at := now.Format(time.RFC3339Nano)
+		outbox := agentNotification{ID: "turn-failed:" + d.Session + ":" + at, Kind: "turn-failed", SessionName: d.Session, SessionKind: "agy"}
+		if err := e.st.InsertNotification(context.Background(), agentNotificationRow(outbox, d.MembershipID)); err != nil {
+			t.Fatal(err)
+		}
+		agent.setRow(d.Session, map[string]any{
+			"kind": "agy", "lastTurnEndAt": at, "lastTurnEndReason": "turn-failed",
+		})
+		e.settleNow(now)
+		if got := e.delivery(d.ID); got.Outcome != store.DeliveryFailed || retireRequested(got) {
+			t.Fatalf("earlier notification changed the failed close: %+v", got)
+		}
+		if ns := e.notifications(); len(ns) != 1 || ns[0].EventID != agentEventIDPrefix+outbox.ID {
+			t.Fatalf("outbox and queue did not agree on the notification: %+v", ns)
 		}
 	})
 }

@@ -319,9 +319,9 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 	return drainAgentOutbox(ctx, a.store, res.rt, res.mv.MembershipID)
 }
 
-// agentEventIDPrefix namespaces the event ids a workspace's Agent sends. Every id the Control
-// Plane generates itself (schedules, usage, deadlines, hand-offs) is built from other prefixes,
-// so an id chosen inside a workspace can never equal one of them.
+// agentEventIDPrefix namespaces the event ids a workspace's Agent sends. A
+// failed turn the queue observed uses the same Agent id as the outbox event.
+// Control Plane events about other subjects use separate prefixes.
 const agentEventIDPrefix = "agent:"
 
 // agentNotificationRow turns one outbox entry into the row stored for membershipID. The stored

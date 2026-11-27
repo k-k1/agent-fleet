@@ -51,7 +51,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "pr-feedback": "noti.kind_pr_feedback",
   "pr-conflict": "noti.kind_pr_conflict",
   "memo-delivery-overdue": "noti.kind_memo_delivery_overdue",
-  "memo-delivery-failed": "noti.kind_memo_delivery_failed",
+  "turn-failed": "noti.kind_turn_failed",
   "memo-queue-paused": "noti.kind_memo_queue_paused",
   "memo-queue-waiting": "noti.kind_memo_queue_waiting",
   "memo-queue-blocked": "noti.kind_memo_queue_blocked",
@@ -95,7 +95,6 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
 // repository and category as "repo/category" ("/category" for the common bucket).
 export const isMemoQueueKind = (kind: string) =>
   kind === "memo-delivery-overdue" ||
-  kind === "memo-delivery-failed" ||
   kind === "memo-queue-paused" ||
   kind === "memo-queue-waiting" ||
   kind === "memo-queue-blocked" ||
@@ -191,25 +190,24 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // Words for a category, not a session: the name is the category, and the click opens it.
     const label = memoQueueLabel(n.displayName) || t("memo.uncategorized");
     const which =
-      n.kind === "memo-delivery-failed"
-        ? "failed"
-        : n.kind === "memo-delivery-overdue"
-          ? "overdue"
-          : n.kind === "memo-queue-paused"
-            ? "paused"
-            : n.kind === "memo-queue-waiting"
-              ? "waiting"
-              : n.kind === "memo-queue-blocked"
-                ? "blocked"
-                : n.kind === "memo-queue-pr-stale"
-                  ? "pr_stale"
-                  : "unconfirmed";
+      n.kind === "memo-delivery-overdue"
+        ? "overdue"
+        : n.kind === "memo-queue-paused"
+          ? "paused"
+          : n.kind === "memo-queue-waiting"
+            ? "waiting"
+            : n.kind === "memo-queue-blocked"
+              ? "blocked"
+              : n.kind === "memo-queue-pr-stale"
+                ? "pr_stale"
+                : "unconfirmed";
     return {
       title: t(`notif.memo_${which}.title`),
       body: t(`notif.memo_${which}.body`, { name: label }),
       speech: t(`notif.memo_${which}.speech`, { name: label }),
     };
   }
+  if (n.kind === "turn-failed") return { title: t("notif.turn_failed.title"), body: name, speech: t("notif.turn_failed.speech", { name }) };
   if (n.kind === "answer-ready") return { title: t("notif.answer_ready.title"), body: name, speech: t("notif.answer_ready.speech", { name }) };
   if (n.kind === "question") return { title: t("notif.question.title"), body: name, speech: t("notif.question.speech", { name }) };
   if (n.kind === "plan-approval") return { title: t("notif.plan_approval.title"), body: name, speech: t("notif.plan_approval.speech", { name }) };

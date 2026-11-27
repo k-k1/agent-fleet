@@ -29,13 +29,25 @@ import (
 // recordSessionNotification — the same function the hook route calls.
 type StateNotifier func(sid, previous, state, excerpt string)
 
+// StateNotifierWithTurnEnd carries the immutable observation time of a polled
+// failure. The session can start another turn before the notifier runs.
+type StateNotifierWithTurnEnd func(sid, previous, state, excerpt, endedAt string)
+
 // stateNotifier is registered once at startup (main) but read from driver goroutines
 // (codex readLoop / opencode pump), so it goes through atomic.
-var stateNotifier atomic.Pointer[StateNotifier]
+var stateNotifier atomic.Pointer[StateNotifierWithTurnEnd]
 
 // SetStateNotifier wires the notifier. main calls it before any driver can run
 // (reconcile / app-server start); tests use it to observe transitions.
 func SetStateNotifier(fn StateNotifier) {
+	if fn == nil {
+		SetStateNotifierWithTurnEnd(nil)
+		return
+	}
+	SetStateNotifierWithTurnEnd(func(sid, previous, state, excerpt, _ string) { fn(sid, previous, state, excerpt) })
+}
+
+func SetStateNotifierWithTurnEnd(fn StateNotifierWithTurnEnd) {
 	if fn == nil {
 		stateNotifier.Store(nil)
 		return
@@ -50,11 +62,26 @@ func SetStateNotifier(fn StateNotifier) {
 // delivery for every managed codex session. previous/state are already settled synchronously
 // by the caller, so the (previous, state) pair survives whatever order the goroutines run in.
 func notify(sid, previous, state, excerpt string) {
+	notifyWithTurnEnd(sid, previous, state, excerpt, "")
+}
+
+func notifyWithTurnEnd(sid, previous, state, excerpt, endedAt string) {
 	fn := stateNotifier.Load()
 	if fn == nil {
 		return
 	}
-	go (*fn)(sid, previous, state, excerpt)
+	go (*fn)(sid, previous, state, excerpt, endedAt)
+}
+
+// MarkObservedTurnFailed settles a failure already attributed to a polled
+// turn, using the same evidence and identity as the session list.
+func MarkObservedTurnFailed(sid, rev string) {
+	at, failure := status.SettleObservedFailure(sid, rev)
+	if at == "" {
+		return
+	}
+	recordTurnEnd(sid, time.Now(), status.TurnEndReasonFailed, runOf(sid))
+	notifyWithTurnEnd(sid, "working", StateFailed, failure, at)
 }
 
 // TurnRun names the input a turn is running, for attributing how the turn ended (#1560). Known

@@ -300,6 +300,10 @@ func RecordTurnOutcome(sid string, endedAt time.Time, reason string, run agents.
 }
 
 func RecordSessionNotification(sid, previous, state, turnText string) {
+	RecordSessionNotificationWithTurnEnd(sid, previous, state, turnText, "")
+}
+
+func RecordSessionNotificationWithTurnEnd(sid, previous, state, turnText, endedAt string) {
 	kind := ""
 	reason := ""
 	permTok := ""
@@ -390,10 +394,19 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 			if m.DriverKind() != session.DriverManaged {
 				chatx.NoteRunOutcome(m.Name, reason, time.Now())
 			}
-			key, _ := status.ReadCompletionKey(sid)
+			key := endedAt
+			if key == "" {
+				key, _ = status.ReadCompletionKey(sid)
+			}
 			verdict = chatx.TurnVerdictFor(m.Name, reason != "", key)
 		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
+		if reason == chatx.ReportReasonTurnFailed && endedAt != "" && m.QueueDelivery != "" && liveStateTraits(m.Kind).QueueTurnFailure {
+			// The same turn can reach the Control Plane through the queue close
+			// and the outbox. The id agrees with memoCloseFailed in both orders.
+			ev.Kind = "turn-failed"
+			ev.ID = "turn-failed:" + m.Name + ":" + endedAt
+		}
 		// Full-text bridge (docs/log/37, the future direction): carry the turn's final
 		// prose on the answer-ready event so a full-text-mode provider can post it. Only
 		// answer-ready — interim attention events (question/plan/permission) have
@@ -432,12 +445,13 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		// and do not carry turn bodies.
 		switch {
 		case verdict.Silent, verdict.Routed:
-		case reason == chatx.ReportReasonTurnFailed && m.QueueDelivery != "" && m.Kind == session.KindAgy && m.DriverKind() != session.DriverManaged:
-			// The auto-run close writes the failure notification with its history row.
 		case kind == chatx.ReportKindAnswerReady:
-			key := ev.CreatedAt
-			if k, ok := status.ReadCompletionKey(sid); ok && k != "" {
-				key = k
+			key := endedAt
+			if key == "" {
+				key, _ = status.ReadCompletionKey(sid)
+				if key == "" {
+					key = ev.CreatedAt
+				}
 			}
 			_ = notice.PutOnce("answer-ready:"+m.Name+":"+key, ev)
 		default:

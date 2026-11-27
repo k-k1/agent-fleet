@@ -87,7 +87,7 @@ const KIND_ROW: Record<string, NotifyRow> = {
   "terminal-notification": "terminal",
   "spend-budget": "spend-budget",
   "memo-delivery-overdue": "auto-run",
-  "memo-delivery-failed": "auto-run",
+  "turn-failed": "auto-run",
   "memo-queue-paused": "auto-run",
   "memo-queue-waiting": "auto-run",
   "memo-queue-blocked": "auto-run",

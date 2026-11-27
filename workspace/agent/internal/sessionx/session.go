@@ -142,6 +142,9 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		recordPolledTurnEnd(m, li.State)
 	}
 	turnEndAt, turnEndReason := status.LatestTurnEnd(session.UUID(m.Dir, m.Name))
+	if m.QueueDelivery == "" || m.DriverKind() == session.DriverManaged || !liveStateTraits(m.Kind).QueueTurnFailure {
+		turnEndReason = ""
+	}
 	s := session.Session{
 		Route: m.Route.Clone(), LaunchRoute: m.LaunchRoute.Clone(),
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,

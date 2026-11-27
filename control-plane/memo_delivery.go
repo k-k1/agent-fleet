@@ -1471,8 +1471,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	// message landed and the spool just after.
 	moving := treeMovePending(tree)
 	root := tree[0]
-	failed := !moving && root.Kind == "agy" && root.Driver != "managed" &&
-		root.LastTurnEndAt != "" && root.LastTurnEndReason == "turn-failed" &&
+	failed := !moving && root.LastTurnEndAt != "" && root.LastTurnEndReason == "turn-failed" &&
 		(!root.Alive || root.State == stateIdle)
 	inTransit := why == "" && treePeerInTransit(tree, now)
 	unread := why == "" && (childAnswerUnread(tree, now) || inTransit || moving)
@@ -1517,7 +1516,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 			return err // closed meanwhile, or a later read is kept: that one decides
 		}
 		if failed {
-			return memoCloseFailed(tx, d.ID)
+			return memoCloseFailed(tx, d.ID, root)
 		}
 		if why != "" {
 			// The row as it is now, behind the lock: what an overdue retire decides on, not the
@@ -1549,7 +1548,8 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 
 // memoCloseFailed frees the queue slot and keeps the session and delivered memos
 // with the run. Partial tool work makes an automatic hand-back unsafe.
-func memoCloseFailed(tx store.MemoTxOps, id string) error {
+// Any work or wait in the tree stays with the live session for the member to pick up.
+func memoCloseFailed(tx store.MemoTxOps, id string, root *sessionWire) error {
 	d, ok, err := tx.GetDelivery(id)
 	if err != nil || !ok || d.State != store.DeliveryOpen {
 		return err
@@ -1564,20 +1564,13 @@ func memoCloseFailed(tx store.MemoTxOps, id string) error {
 			return err
 		}
 	}
-	label := d.QueueID
-	cat, ok, err := tx.GetCategory(d.QueueID)
-	if err != nil {
-		return err
-	}
-	if ok {
-		label = cat.Repo + "/" + cat.Name
-	}
-	payload, _ := json.Marshal(map[string]string{"queue_id": d.QueueID, "label": label})
-	return tx.InsertNotification(store.Notification{
-		EventID: "memo-failed-" + id, Kind: "memo-delivery-failed",
-		TargetType: "memo-queue", TargetID: d.QueueID, DisplayName: label,
-		Payload: string(payload), CreatedAt: now.UTC().Format(time.RFC3339),
-	})
+	// Use the Agent's outbox identity so a later poll of the same failure can
+	// still report to a bridge without creating a second Console notification.
+	return tx.InsertNotification(agentNotificationRow(agentNotification{
+		ID: "turn-failed:" + root.Name + ":" + root.LastTurnEndAt, Kind: "turn-failed",
+		SessionName: root.Name, SessionKind: root.Kind, DisplayName: root.Display,
+		CreatedAt: now.UTC().Format(time.RFC3339), OriginRoot: json.RawMessage(`"autorun"`),
+	}, d.MembershipID))
 }
 
 // closeIfDoneKept decides while the workspace is stopped, from the report last kept. A delivery

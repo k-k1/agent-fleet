@@ -10,7 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
-// stepTypeError is CORTEX_STEP_TYPE_ERROR_MESSAGE in agy 1.5.18. The canceled
+// stepTypeError is CORTEX_STEP_TYPE_ERROR_MESSAGE in agy 1.5.16 and 1.5.18. The canceled
 // tool itself is not the failure evidence. The executor writes a separate
 // error step after it (google-antigravity/antigravity-cli#1814).
 const stepTypeError = 17
@@ -27,7 +27,7 @@ func executorErrorText(raw string) string {
 	return canceledPendingStep.FindString(line)
 }
 
-// The 1.5.18 descriptor puts CortexErrorDetails in CortexStepErrorMessage
+// Both CLI descriptors put CortexErrorDetails in CortexStepErrorMessage
 // field 3. Only its short, full and user error strings can identify a failure.
 func executorErrorPayload(payload []byte) string {
 	detail := protoBytesField(payload, 3)

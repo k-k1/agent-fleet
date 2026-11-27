@@ -298,6 +298,9 @@ func noteObservedFirstTurnEnd(sid, at, reason string) {
 	if !ok || t.Done || t.Void {
 		return
 	}
+	if reason != "" {
+		t.NoReason = false
+	}
 	settleFirstTurn(&t, at, reason)
 	_ = firstTurns.Write(sid, t)
 }

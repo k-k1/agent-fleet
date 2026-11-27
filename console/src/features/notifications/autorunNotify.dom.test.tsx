@@ -8,7 +8,7 @@ import { openNotificationTarget, type FleetNotification } from "./store.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { setLocale, t } from "../../lib/i18n/index.ts";
 
-const KINDS = ["memo-delivery-overdue", "memo-delivery-failed", "memo-queue-paused", "memo-queue-waiting", "memo-delivery-unconfirmed"] as const;
+const KINDS = ["memo-delivery-overdue", "memo-queue-paused", "memo-queue-waiting", "memo-delivery-unconfirmed"] as const;
 const note = (kind: string, over: Partial<FleetNotification> = {}): FleetNotification => ({
   seq: 1, id: "e1", kind, target: { type: "memo-queue", id: "c1" }, displayName: "/triage",
   payload: { queue_id: "c1", label: "/triage" }, createdAt: "2026-11-15T00:00:00Z", seen: false, ...over,
@@ -38,6 +38,18 @@ describe.each(["en", "ja"] as const)("the auto-run kinds in %s", (locale) => {
     setLocale(locale);
     const titles = KINDS.map((k) => notificationWording(note(k)).title);
     expect(new Set(titles).size).toBe(KINDS.length);
+  });
+
+  it("labels a failed turn and identifies its session", () => {
+    setLocale(locale);
+    const n = note("turn-failed", { target: { type: "session", id: "s1" }, displayName: "Triage" });
+    expect(notificationKindLabel(n.kind)).toBe(t("noti.kind_turn_failed"));
+    expect(notificationWording(n)).toEqual({
+      title: t("notif.turn_failed.title"),
+      body: "Triage",
+      speech: t("notif.turn_failed.speech", { name: "Triage" }),
+    });
+    expect(notifyRowOf(n.kind, false)).toBe("auto-run");
   });
 });
 
@@ -85,7 +97,6 @@ describe("clicking an auto-run notification opens the category", () => {
     ["memo-queue-paused", false],
     ["memo-queue-waiting", true],
     ["memo-delivery-overdue", true],
-    ["memo-delivery-failed", true],
     ["memo-delivery-unconfirmed", true],
   ] as const)("%s reveals the category (history: %s)", async (kind, history) => {
     const before = useMemoStore.getState().reveal.n;

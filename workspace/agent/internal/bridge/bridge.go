@@ -93,7 +93,7 @@ var EventKeys = []string{"answer-ready", "question", "permission-request", "exit
 // docs/log/37 P1 scopes the push to attention/terminal events).
 func eventKeyFor(kind string) string {
 	switch kind {
-	case "answer-ready":
+	case "answer-ready", "turn-failed":
 		return "answer-ready"
 	case "question", "plan-approval":
 		return "question"
