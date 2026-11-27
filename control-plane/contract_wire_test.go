@@ -154,7 +154,8 @@ func cpContractFamilies() []contractFamily {
 			tsPath:  "../console/src/features/settings/mcp/mcpWire.ts",
 			tsName:  "TenantServer",
 			tsKeys: keySet("id", "name", "label", "transport", "url", "headers", "targets",
-				"kinds", "timeoutMs", "enabled", "user_secret", "auth", "oauth_client", "scopes", "created_by", "updated_at"),
+				"kinds", "timeoutMs", "enabled", "user_secret", "auth", "oauth_client", "scopes", "elicitation",
+				"created_by", "updated_at"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
 				"tenant_slug": "Gap: it returns which tenant the setting belongs to, but the Console's TenantServer does not declare it.",
@@ -216,8 +217,8 @@ var mcpServerBinding = map[string]string{
 	"ID": "id", "TenantSlug": "tenant_slug", "Name": "name", "Label": "label",
 	"Transport": "transport", "URL": "url", "Headers": "headers", "Targets": "targets",
 	"Kinds": "kinds", "TimeoutMS": "timeoutMs", "Enabled": "enabled",
-	"UserSecret": "user_secret", "Auth": "auth", "OAuthClient": "oauth_client", "Scopes": "scopes", "CreatedBy": "created_by", "CreatedAt": "created_at",
-	"UpdatedAt": "updated_at",
+	"UserSecret": "user_secret", "Auth": "auth", "OAuthClient": "oauth_client", "Scopes": "scopes",
+	"Elicitation": "elicitation", "CreatedBy": "created_by", "CreatedAt": "created_at", "UpdatedAt": "updated_at",
 }
 
 var tenantIdPBinding = map[string]string{
