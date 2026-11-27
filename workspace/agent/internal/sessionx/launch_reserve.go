@@ -1,12 +1,16 @@
 package sessionx
 
 import (
+	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"path/filepath"
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Every path that starts a process for a session reserves the folder it runs in against a
@@ -78,4 +82,39 @@ func settledSince(snap session.Meta) bool {
 		return true
 	}
 	return cur.Archived && !snap.Archived
+}
+
+// persistLaunchedMeta rolls back a start when its meta could not be published. Its caller
+// still holds the folder reservation, so a delete cannot race the rollback.
+func persistLaunchedMeta(m session.Meta, write func(session.Meta) error) error {
+	if err := write(m); err != nil {
+		writeErr := fmt.Errorf("could not write the session meta: %w", err)
+		if stopErr := stopUnpublishedLaunch(m); stopErr != nil {
+			gitx.NoteUnpublishedLaunch(m)
+			writeErr = errors.Join(writeErr, fmt.Errorf("could not stop unpublished session %s: %w", m.Name, stopErr))
+		}
+		log.Printf("launch %s: %v", m.Name, writeErr)
+		return writeErr
+	}
+	return nil
+}
+
+var stopUnpublishedLaunch = func(m session.Meta) error {
+	endRouteTokens(m.Name)
+	if m.DriverKind() == session.DriverManaged {
+		dropManagedRuntime(m)
+		if ManagedAlive(m) {
+			return errors.New("the managed session is still running")
+		}
+	} else {
+		out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(m.Name))).CombinedOutput()
+		if err != nil {
+			live, probeErr := tmuxx.LiveSessionNamesChecked()
+			if probeErr != nil || live[m.Name] {
+				return fmt.Errorf("tmux could not stop the session: %w: %s", errors.Join(err, probeErr), out)
+			}
+		}
+	}
+	forgetSessionCaches(m.Name)
+	return nil
 }

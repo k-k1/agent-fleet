@@ -83,4 +83,39 @@ describe("SpaceDeleteModal", () => {
     await click(t("pj.space_delete_do"));
     expect(deleteSpace).toHaveBeenLastCalledWith("c", "o", expect.arrayContaining(["aishow1", "shhide1", "shnew01"]));
   });
+
+  it("reports a space that moved despite a session write failure", async () => {
+    const dir = "/home/dev/spaces/c";
+    const refreshSpaces = vi.fn(async () => {});
+    const refreshSessions = vi.fn(async () => {});
+    const savedSpacesRefresh = useSpacesStore.getState().refresh;
+    const savedSessionsRefresh = useSessionsStore.getState().refresh;
+    const close = vi.fn();
+    useSpacesStore.setState({ spaces: [{ folder: "c", name: "", dir }], refresh: refreshSpaces });
+    useSessionsStore.setState({ sessions: [], refresh: refreshSessions });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    try {
+      await act(async () => {
+        root!.render(
+          <ToastProvider>
+            <SpaceDeleteModal folder="c" label="c" owner="o" onClose={close} />
+          </ToastProvider>,
+        );
+      });
+      deleteSpace.mockResolvedValueOnce({
+        error: { code: "space_sessions_settle_failed", message: "could not shelve session aishelf" },
+      });
+      await click(t("pj.space_delete_do"));
+      expect(close).toHaveBeenCalledOnce();
+      expect(refreshSpaces).toHaveBeenCalledOnce();
+      expect(refreshSessions).toHaveBeenCalledOnce();
+      expect(document.body.textContent).toContain(t("pj.space_delete_sessions_settle_failed"));
+      expect(document.body.textContent).toContain("aishelf");
+    } finally {
+      useSpacesStore.setState({ refresh: savedSpacesRefresh });
+      useSessionsStore.setState({ refresh: savedSessionsRefresh });
+    }
+  });
 });

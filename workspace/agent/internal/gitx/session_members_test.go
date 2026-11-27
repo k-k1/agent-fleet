@@ -2,8 +2,6 @@ package gitx
 
 import (
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -160,50 +158,53 @@ func TestReadDirSessions(t *testing.T) {
 	}
 }
 
-// The shells a delete settles are read once, before its slower steps, and each is read again
-// before it goes to the trash: one deleted on its own in between is not a failure (nothing is left
-// listed), one whose link was re-pointed out of the folder is left alone, and one still listed in
-// the folder that could not be trashed stops the delete.
-func TestTrashShellsBeforeRemovalReadsEachAgain(t *testing.T) {
+func TestReadDirSessionsGuardsAnUnpublishedLiveLaunch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
 	dir := filepath.Join(home, "app")
-	elsewhere := filepath.Join(home, "elsewhere")
+	mkdirs(t, dir)
+	m := session.Meta{Name: "orphan1", Dir: home, Subdir: "app", Kind: session.KindShell}
+	fakeTmuxIn(t, "echo "+session.TmuxPrefix+m.Name+"\n")
+	NoteUnpublishedLaunch(m)
+	s, err := ReadDirSessions(dir)
+	if err != nil || len(s.Running()) != 1 || len(s.ToSettle()) != 0 {
+		t.Fatalf("unpublished pane should only block the delete: %+v, %v", s, err)
+	}
+	fakeTmuxIn(t, "exit 0\n")
+	s, err = ReadDirSessions(dir)
+	if err != nil || len(s.Running()) != 0 {
+		t.Fatalf("a pane that exited still blocks the delete: %+v, %v", s, err)
+	}
+	if _, ok := unpublishedLaunches.Load(session.MetaPath(m.Name)); ok {
+		t.Fatal("a checked read kept a record of a pane that exited")
+	}
+}
+
+func TestRemoveWithShellTrashPassesOnlyTerminalSessionsAndCurrentMembership(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "app")
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
 	mkdirs(t, dir, elsewhere)
-	var trashed []string
-	old := deps.TrashSession
-	t.Cleanup(func() { deps.TrashSession = old })
-	// Like main's trashSession: the meta is read again and asked whether it still belongs.
-	deps.TrashSession = func(m session.Meta, belongs func(session.Meta) bool) error {
-		cur, ok := session.ReadMeta(m.Name)
-		if !ok {
-			return errors.New("no such session: " + m.Name)
+	shell := session.Meta{Name: "shkeep1", Dir: dir, Kind: session.KindShell}
+	ssm := session.Meta{Name: "ssmkeep", Dir: dir, Kind: session.KindSSM}
+	ai := session.Meta{Name: "aikeep1", Dir: dir, Kind: session.KindClaude}
+	old := deps.RemoveWithShellTrash
+	t.Cleanup(func() { deps.RemoveWithShellTrash = old })
+	removeErr := errors.New("remove failed")
+	deps.RemoveWithShellTrash = func(shells []session.Meta, belongs func(session.Meta) bool, remove func() error) (string, error) {
+		if len(shells) != 2 || shells[0].Name != shell.Name || shells[1].Name != ssm.Name {
+			t.Fatalf("shell candidates = %v, want shell and SSM", shells)
 		}
-		if belongs != nil && !belongs(cur) {
-			return ErrSessionLeftFolder
+		if !belongs(shell) {
+			t.Fatal("shell in the folder no longer belongs")
 		}
-		trashed = append(trashed, m.Name)
-		return errors.New("disk full")
+		shell.Dir = elsewhere
+		if belongs(shell) {
+			t.Fatal("shell that left the folder still belongs")
+		}
+		return "", remove()
 	}
-
-	gone := session.Meta{Name: "shgone1", Dir: dir, Kind: session.KindShell}
-	moved := session.Meta{Name: "shmove1", Dir: dir, Kind: session.KindShell}
-	session.WriteMeta(session.Meta{Name: "shmove1", Dir: elsewhere, Kind: session.KindShell})
-	w := httptest.NewRecorder()
-	if !trashShellSessionsUnder(w, dir, []session.Meta{gone, moved}) {
-		t.Fatalf("a shell deleted or moved since stopped the delete: %d %s", w.Code, w.Body)
-	}
-	if len(trashed) != 0 {
-		t.Fatalf("trashed %v, want none", trashed)
-	}
-
-	kept := session.Meta{Name: "shkept1", Dir: dir, Kind: session.KindShell}
-	session.WriteMeta(kept)
-	w = httptest.NewRecorder()
-	if trashShellSessionsUnder(w, dir, []session.Meta{kept}) || w.Code != http.StatusInternalServerError {
-		t.Fatalf("a shell still in the folder that could not be trashed: ok, %d", w.Code)
-	}
-	if len(trashed) != 1 || trashed[0] != "shkept1" {
-		t.Fatalf("trashed %v, want shkept1", trashed)
+	failed, err := RemoveWithShellTrash(dir, []session.Meta{shell, ai, ssm}, func() error { return removeErr })
+	if failed != "" || !errors.Is(err, removeErr) {
+		t.Fatalf("remove returned (%q, %v), want the folder error", failed, err)
 	}
 }

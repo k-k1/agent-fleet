@@ -6,6 +6,7 @@ package main
 // the sessions the delete shelved, and purging it drops the pin so gc may collect the commits.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,9 +18,8 @@ import (
 )
 
 // recordDeletedWorktree pins t's commit and writes its trash entry. It is gitx's
-// RecordDeletedWorktree: the delete calls it before removing anything, and undo if the delete
-// then stops.
-func recordDeletedWorktree(t gitx.WorktreeTombstone) (func(), error) {
+// RecordDeletedWorktree: keep the entry protected until the delete has finished with it.
+func recordDeletedWorktree(t gitx.WorktreeTombstone) (func(keep bool), error) {
 	now := nowUTC()
 	// Named apart from the archive id, which a collision may still suffix while writing; the
 	// nanoseconds keep two deletes of the same folder in one second apart.
@@ -31,14 +31,16 @@ func recordDeletedWorktree(t gitx.WorktreeTombstone) (func(), error) {
 		ID: newCleanupID(now, idSlug(t.Name)), At: now.Format(time.RFC3339),
 		Reason: "delete_worktree", Worktree: &t,
 	}
-	if err := writeCleanupArchive(&man, nil); err != nil {
+	if err := writeCleanupBundle(&man, nil, true); err != nil {
 		gitx.UnpinDeletedWorktree(t)
 		return nil, err
 	}
-	invalidateCleanupUsage()
-	return func() {
-		sessionx.WithCleanupLock(func() { _, _ = purgeCleanupArchive(man.ID) })
-		gitx.UnpinDeletedWorktree(t)
+	return func(keep bool) {
+		if !keep {
+			discardPreparedTrash(man.ID)
+			gitx.UnpinDeletedWorktree(t)
+		}
+		releaseTrash(man.ID)
 		invalidateCleanupUsage()
 	}, nil
 }
@@ -46,7 +48,7 @@ func recordDeletedWorktree(t gitx.WorktreeTombstone) (func(), error) {
 // latestTombstone is the newest trash entry recording a delete of the worktree at dir, or nil.
 func latestTombstone(dir string) *gitx.WorktreeTombstone {
 	for _, m := range listCleanupArchives() { // newest first
-		if m.Worktree != nil && (filepath.Clean(m.Worktree.Path) == dir || gitx.IsReposEntryPath(m.Worktree.Path, filepath.Base(dir))) {
+		if m.Worktree != nil && !trashPending(m.ID) && (filepath.Clean(m.Worktree.Path) == dir || gitx.IsReposEntryPath(m.Worktree.Path, filepath.Base(dir))) {
 			t := *m.Worktree
 			return &t
 		}
@@ -83,12 +85,20 @@ func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range t.Shelved {
-		// Still living in the folder (gitx.SessionLivesIn, the rule the delete shelved it by): one
-		// moved elsewhere since stays on the shelf.
-		if m, ok := session.ReadMeta(name); ok && m.Archived && gitx.SessionLivesIn(m, dir) {
-			sessionx.RestoreSession(name)
+	return restoreShelvedSessions(dir, t.Shelved)
+}
+
+// The tombstone remains available after an incomplete restore. On retry, sessions already
+// back or now in another folder are left alone.
+func restoreShelvedSessions(dir string, names []string) error {
+	var restoreErr error
+	for _, name := range names {
+		if err := sessionx.RestoreShelvedSession(name, func(m session.Meta) bool { return gitx.SessionLivesIn(m, dir) }); err != nil {
+			restoreErr = errors.Join(restoreErr, fmt.Errorf("could not restore session %s: %w", name, err))
 		}
+	}
+	if restoreErr != nil {
+		return fmt.Errorf("%w: %w", errRestoreStopped, restoreErr)
 	}
 	return nil
 }

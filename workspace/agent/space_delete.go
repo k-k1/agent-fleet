@@ -45,11 +45,12 @@ const (
 	errCodeSpaceSessionsUnobservable = "space_sessions_unobservable"
 	// The space holds sessions the delete request's expect list did not name; the answer lists them
 	// under "sessions".
-	errCodeSpaceSessionsChanged = "space_sessions_changed"
-	errCodeSpaceTrashFailed     = "space_trash_failed"
-	errCodeSpaceTrashFS         = "space_trash_other_filesystem"
-	errCodeSpaceRestoreExists   = "space_restore_exists"
-	errCodeSpaceRestoreMissing  = "space_restore_missing"
+	errCodeSpaceSessionsChanged      = "space_sessions_changed"
+	errCodeSpaceSessionsSettleFailed = "space_sessions_settle_failed"
+	errCodeSpaceTrashFailed          = "space_trash_failed"
+	errCodeSpaceTrashFS              = "space_trash_other_filesystem"
+	errCodeSpaceRestoreExists        = "space_restore_exists"
+	errCodeSpaceRestoreMissing       = "space_restore_missing"
 )
 
 // spaceTombstone is what a deleted space's trash entry records. The folder itself sits in the
@@ -105,8 +106,7 @@ func sidecarReadable(id string) bool {
 	return json.Unmarshal(b, &m) == nil && m.ID == id
 }
 
-// removeOwnEntry removes the manifest files a delete that stopped wrote itself. Unlike a purge it
-// never touches a folder waiting in the trash.
+// removeOwnEntry discards a failed delete's own archive files. It leaves any folder in the trash.
 func removeOwnEntry(id string) {
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
@@ -189,13 +189,6 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Shell / ssm sessions first: the trash can fail (a full disk), and removing the folder first
-	// would leave them listed with no folder.
-	if name, err := gitx.TrashShellsBeforeRemoval(dir, settle); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceSessionsTrashFailed,
-			fmt.Sprintf("could not move session %s to the trash, so the space was left as it is: %v", name, err))
-		return
-	}
 	var shelved []string
 	for _, m := range settle {
 		if m.Kind != session.KindShell && m.Kind != session.KindSSM {
@@ -212,56 +205,67 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	// The entry is published and the folder moved under the cleanup lock a purge takes, so a purge
 	// pressed on the new row in another tab cannot remove the manifest before the folder is in the
 	// trash (which would leave the files with nothing to name them).
-	var moveErr error
-	sessionx.WithCleanupLock(func() {
-		// An id none of whose files exists yet, checked under the lock that space deletes and
-		// purges take (the other archive writers claim their id with O_EXCL on the tarball
-		// instead, and their ids have another shape, so they cannot draw this one): whatever is
-		// found under it afterwards is this attempt's own, and a clean-up of a failed attempt
-		// removes nothing that was there before.
-		for attempt := 0; man.ID == "" && attempt < 4; attempt++ {
-			if id := newSpaceArchiveID(now, folder); entryIDFree(id) {
-				man.ID = id
-			}
-		}
-		if man.ID == "" {
-			moveErr = errors.New("could not find a free trash id, so the space was left as it is")
-			return
-		}
-		if err := writeCleanupArchive(&man, nil); err != nil {
-			moveErr = fmt.Errorf("could not record the space in the trash, so it was left as it is: %w", err)
-			return
-		}
-		if spaceAfterManifest != nil {
-			spaceAfterManifest(man.ID)
-		}
-		// The list reads the sidecar alone; one that could not be written (missing, or cut short)
-		// would hide a row whose folder is in the trash. Refused here, with nothing moved, rather
-		// than found out later.
-		if !sidecarReadable(man.ID) {
-			removeOwnEntry(man.ID)
-			moveErr = errors.New("could not list the space in the trash, so it was left as it is")
-			return
-		}
-		if err := spacex.MoveOut(folder, spaceTrashDir(man.ID)); err != nil {
-			// Only the files this attempt wrote go, never a .space directory: none of ours exists.
-			removeOwnEntry(man.ID)
-			moveErr = err
-		}
+	failed, moveErr := gitx.RemoveWithShellTrash(dir, settle, func() error {
+		var err error
+		sessionx.WithCleanupLock(func() { err = moveSpaceToTrash(folder, now, &man) })
+		return err
 	})
 	if moveErr != nil {
 		invalidateCleanupUsage()
+		if failed != "" {
+			httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceSessionsTrashFailed,
+				fmt.Sprintf("could not move session %s to the trash, so the space was left as it is: %v", failed, moveErr))
+			return
+		}
 		if errors.Is(moveErr, spacex.ErrNotFound) {
-			httpx.WriteErr(w, http.StatusNotFound, errCodeSpaceNotFound, "no such space")
+			httpx.WriteErr(w, http.StatusNotFound, errCodeSpaceNotFound, moveErr.Error())
 			return
 		}
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFailed,
-			fmt.Sprintf("could not move the space to the trash, so it was left as it is: %v", moveErr))
+			fmt.Sprintf("could not move the space to the trash: %v", moveErr))
 		return
 	}
-	gitx.ShelveSessionsUnder(dir, settle, r.URL.Query().Has("expect"))
 	invalidateCleanupUsage()
+	if err := gitx.ShelveSessionsUnder(dir, settle, r.URL.Query().Has("expect")); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceSessionsSettleFailed, err.Error())
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, deleteSpaceResponse{Deleted: folder, Archive: man.ID})
+}
+
+func moveSpaceToTrash(folder string, now time.Time, man *cleanupManifest) error {
+	// An id none of whose files exists yet, checked under the lock that space deletes and
+	// purges take (the other archive writers claim their id with O_EXCL on the tarball
+	// instead, and their ids have another shape, so they cannot draw this one): whatever is
+	// found under it afterwards is this attempt's own, and a clean-up of a failed attempt
+	// removes nothing that was there before.
+	for attempt := 0; man.ID == "" && attempt < 4; attempt++ {
+		if id := newSpaceArchiveID(now, folder); entryIDFree(id) {
+			man.ID = id
+		}
+	}
+	if man.ID == "" {
+		return errors.New("could not find a free trash id")
+	}
+	if err := writeCleanupArchive(man, nil); err != nil {
+		return fmt.Errorf("could not record the space in the trash: %w", err)
+	}
+	if spaceAfterManifest != nil {
+		spaceAfterManifest(man.ID)
+	}
+	// The list reads the sidecar alone; one that could not be written (missing, or cut short)
+	// would hide a row whose folder is in the trash. Refused here, with nothing moved, rather
+	// than found out later.
+	if !sidecarReadable(man.ID) {
+		removeOwnEntry(man.ID)
+		return errors.New("could not list the space in the trash")
+	}
+	if err := spacex.MoveOut(folder, spaceTrashDir(man.ID)); err != nil {
+		// Only the files this attempt wrote go, never a .space directory: none of ours exists.
+		removeOwnEntry(man.ID)
+		return err
+	}
+	return nil
 }
 
 // spaceSessionsChanged is the 409 space_sessions_changed body: the usual error, and the names of
@@ -397,12 +401,5 @@ func restoreDeletedSpace(id string, t spaceTombstone) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range t.Shelved {
-		// Still living in the folder (gitx.SessionLivesIn, the rule the delete shelved it by): one
-		// moved elsewhere since stays on the shelf.
-		if m, ok := session.ReadMeta(name); ok && m.Archived && gitx.SessionLivesIn(m, filepath.Clean(t.Path)) {
-			sessionx.RestoreSession(name)
-		}
-	}
-	return nil
+	return restoreShelvedSessions(filepath.Clean(t.Path), t.Shelved)
 }

@@ -49,8 +49,9 @@ func TestGitWiringIsLive(t *testing.T) {
 		"LiveSessionsInDir": func(t *testing.T) { sameGitFunc(t, w.LiveSessionsInDir, sessionx.LiveSessionsInDir) },
 		"ManagedAlive":      func(t *testing.T) { sameGitFunc(t, w.ManagedAlive, sessionx.ManagedAlive) },
 
-		"ShelveSession": func(t *testing.T) { sameGitFunc(t, w.ShelveSession, sessionx.ArchiveSession) },
-		"TrashSession":  func(t *testing.T) { sameGitFunc(t, w.TrashSession, trashStoppedSession) },
+		"ShelveSession":        func(t *testing.T) { sameGitFunc(t, w.ShelveSession, sessionx.ArchiveSession) },
+		"TrashSession":         func(t *testing.T) { sameGitFunc(t, w.TrashSession, trashStoppedSession) },
+		"RemoveWithShellTrash": func(t *testing.T) { sameGitFunc(t, w.RemoveWithShellTrash, removeWithShellTrash) },
 
 		"WithDeletionGate":      func(t *testing.T) { sameGitFunc(t, w.WithDeletionGate, sessionx.WithDeletionGate) },
 		"RecordDeletedWorktree": func(t *testing.T) { sameGitFunc(t, w.RecordDeletedWorktree, recordDeletedWorktree) },

@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -91,6 +92,23 @@ func newCleanupID(now time.Time, slug string) string {
 // cleanup of the loser could then purge the winner's only copy). The tarball is created with
 // O_EXCL, and a taken id gets a -2, -3, … suffix — m.ID is updated to the id actually written.
 func writeCleanupArchive(m *cleanupManifest, payloads map[string][]byte) error {
+	return writeCleanupBundle(m, payloads, false)
+}
+
+// pendingTrash protects session bundles between preparation and the last mutation under
+// their name. Keep the sidecar on disk so an interrupted Agent still leaves a recoverable row.
+var pendingTrash sync.Map
+
+var errTrashPending = errors.New("this entry is still being moved to the trash; try again in a moment")
+
+func trashPending(id string) bool {
+	_, ok := pendingTrash.Load(filepath.Join(cleanupStoreDir(), id))
+	return ok
+}
+
+func releaseTrash(id string) { pendingTrash.Delete(filepath.Join(cleanupStoreDir(), id)) }
+
+func writeCleanupBundle(m *cleanupManifest, payloads map[string][]byte, pending bool) error {
 	dir := cleanupStoreDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -102,7 +120,17 @@ func writeCleanupArchive(m *cleanupManifest, payloads map[string][]byte) error {
 			m.ID = fmt.Sprintf("%s-%d", base, n)
 		}
 		var err error
-		f, err = os.OpenFile(filepath.Join(dir, m.ID+".tar.gz"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		open := func() {
+			f, err = os.OpenFile(filepath.Join(dir, m.ID+".tar.gz"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err == nil && pending {
+				pendingTrash.Store(filepath.Join(dir, m.ID), true)
+			}
+		}
+		if pending {
+			sessionx.WithCleanupLock(open)
+		} else {
+			open()
+		}
 		if err == nil {
 			break
 		}
@@ -115,6 +143,9 @@ func writeCleanupArchive(m *cleanupManifest, payloads map[string][]byte) error {
 		if !ok {
 			_ = f.Close()
 			_ = os.Remove(filepath.Join(dir, m.ID+".tar.gz"))
+			if pending {
+				releaseTrash(m.ID)
+			}
 		}
 	}()
 	var buf bytes.Buffer
@@ -144,8 +175,26 @@ func writeCleanupArchive(m *cleanupManifest, payloads map[string][]byte) error {
 	if _, err := f.Write(buf.Bytes()); err != nil {
 		return err
 	}
+	if pending {
+		if err := f.Sync(); err != nil {
+			return err
+		}
+	}
 	if err := f.Close(); err != nil {
 		return err
+	}
+	if pending {
+		sidecar, err := os.OpenFile(filepath.Join(dir, m.ID+".json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		_, werr := sidecar.Write(mj)
+		if err := errors.Join(werr, sidecar.Close()); err != nil {
+			_ = os.Remove(sidecar.Name())
+			return err
+		}
+		ok = true
+		return nil
 	}
 	ok = true
 	// Sidecar manifest for listing; best-effort (the tar.gz is the source of truth).
@@ -164,21 +213,24 @@ func tarAdd(tw *tar.Writer, name string, b []byte) error {
 // listCleanupArchives returns stored manifests, newest first (id is time-sortable). Bytes is the
 // tarball's size only: measuring a deleted space's folder walks it, which callers that only read
 // manifests must not pay for.
-func listCleanupArchives() []cleanupManifest { return listArchives(nil) }
+func listCleanupArchives() []cleanupManifest { return listArchives(nil, true) }
 
 // listCleanupArchivesSized is listCleanupArchives with each deleted space's folder counted into
 // Bytes (what a purge gives back), the whole list sharing one walk budget so a trash full of
 // large spaces is bounded as a whole.
 func listCleanupArchivesSized() []cleanupManifest {
 	budget := cleanupUsageMaxEntries
-	return listArchives(&budget)
+	return listArchives(&budget, false)
 }
 
-func listArchives(budget *int) []cleanupManifest {
+func listArchives(budget *int, includePending bool) []cleanupManifest {
 	entries, _ := os.ReadDir(cleanupStoreDir())
 	var out []cleanupManifest
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if !includePending && trashPending(strings.TrimSuffix(e.Name(), ".json")) {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), e.Name()))
@@ -333,6 +385,9 @@ func purgeCleanupArchive(id string) (cleanupManifest, error) {
 	if filepath.Base(id) != id || strings.Contains(id, "..") {
 		return man, fmt.Errorf("invalid archive id")
 	}
+	if trashPending(id) {
+		return man, errTrashPending
+	}
 	// A mark alone does not block: only a session actually left half back does. So a mark
 	// that outlived its reason (an earlier attempt placed a transcript, and the session was
 	// since deleted again) never makes the archive impossible to purge.
@@ -439,6 +494,9 @@ func placeNoReplace(tmp, dest string) (created bool, err error) {
 var restoreAfterStage func()
 
 func restoreCleanupArchive(id string) (map[string]any, error) {
+	if trashPending(id) {
+		return nil, errTrashPending
+	}
 	m, payloads, err := readCleanupArchive(id)
 	if err != nil {
 		return nil, err
@@ -502,6 +560,10 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	// conversation back without its files is the one outcome this lock exists to prevent.
 	var handErr error
 	sessionx.WithCleanupLock(func() {
+		if trashPending(id) {
+			handErr = errTrashPending
+			return
+		}
 		if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
 			handErr = fmt.Errorf("archive %s was purged while it was being restored", id)
 			return

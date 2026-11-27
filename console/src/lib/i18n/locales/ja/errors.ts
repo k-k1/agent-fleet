@@ -308,7 +308,7 @@ export const errors = {
   "err.move_delivery_done": "最初の指示はすでに届いています（またはセッションがありません）。",
   "err.move_delivery_in_flight": "最初の指示をいま送っているところです。",
   "err.move_target_not_created": "移動がまだ移動先を作っていません。移動元のセッションで完了するか取り消してください。",
-  "err.meta_write_failed": "セッションは起動しましたが、その情報をディスクに書けませんでした。",
+  "err.meta_write_failed": "セッション情報をディスクに書き込めませんでした。",
   "err.session_gate": "このセッションの移動が終わるのを待てませんでした。もう一度試してください。",
   "err.bad_kind": "知らないエージェントの種類です。",
   "err.title_feature_disabled": "この AI 補助機能がオフです（設定 > AI 補助の「AI 補助生成を使う機能」でオンにしてください）",

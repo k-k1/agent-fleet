@@ -73,8 +73,9 @@ type Deps struct {
 	// before it removes anything and returns an error if it could not; with belongs set it leaves a
 	// session that no longer belongs, wrapping ErrSessionLeftFolder). A no-op for either would
 	// quietly leave rows pointing at a folder that is gone.
-	ShelveSession func(m session.Meta)
-	TrashSession  func(m session.Meta, belongs func(session.Meta) bool) error
+	ShelveSession        func(m session.Meta) error
+	TrashSession         func(m session.Meta, belongs func(session.Meta) bool) error
+	RemoveWithShellTrash func(shells []session.Meta, belongs func(session.Meta) bool, remove func() error) (failed string, err error)
 
 	// WithDeletionGate runs fn inside the gate the lock endpoints also take, so a working-copy
 	// delete and a lock on it (or on a session in it) never interleave (ADR 0101). A plain
@@ -82,9 +83,9 @@ type Deps struct {
 	WithDeletionGate func(fn func())
 
 	// RecordDeletedWorktree pins a worktree's commit and writes its tombstone to the trash
-	// before the worktree is removed (issue #1042); undo takes both back for a delete that
-	// stops after it. A no-op would quietly make a worktree delete irreversible again.
-	RecordDeletedWorktree func(t WorktreeTombstone) (undo func(), err error)
+	// before the worktree is removed (issue #1042). finish releases the entry for restore or
+	// purge, or drops it and its pin if the removal never ran.
+	RecordDeletedWorktree func(t WorktreeTombstone) (finish func(keep bool), err error)
 
 	// --- Import jobs (repo_jobs.go) ---
 	//
@@ -235,15 +236,15 @@ func liveSessionsInDir(dir string) []string { return deps.LiveSessionsInDir(dir)
 
 func managedAlive(m session.Meta) bool { return deps.ManagedAlive(m) }
 
-func shelveSession(m session.Meta) { deps.ShelveSession(m) }
-
 func trashSession(m session.Meta, belongs func(session.Meta) bool) error {
 	return deps.TrashSession(m, belongs)
 }
 
 func withDeletionGate(fn func()) { deps.WithDeletionGate(fn) }
 
-func recordDeletedWorktree(t WorktreeTombstone) (func(), error) { return deps.RecordDeletedWorktree(t) }
+func recordDeletedWorktree(t WorktreeTombstone) (func(bool), error) {
+	return deps.RecordDeletedWorktree(t)
+}
 
 func repoJobActive(name string) bool { return deps.RepoJobActive(name) }
 

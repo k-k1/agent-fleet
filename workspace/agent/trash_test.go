@@ -315,6 +315,105 @@ func TestWorktreeStaysWhenItsShellCannotBeTrashed(t *testing.T) {
 	}
 }
 
+func TestWorktreeDeleteRollsBackShellsWhenGitRefusesRemoval(t *testing.T) {
+	e := tombstoneSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	names := []string{"shgit01", "shgit02"}
+	for _, name := range names {
+		session.WriteMeta(session.Meta{Name: name, Dir: e.wt, Kind: session.KindShell})
+		writeAt(t, terminalHistoryPath(name), name)
+	}
+	// A git worktree lock is independent of the Agent's lock. The remove --force still
+	// refuses it, after the shell archives and tombstone are already prepared.
+	gitAt(t, e.parent, "worktree", "lock", e.wt)
+	path := "/repos/" + filepath.Base(e.wt) + "?force=1"
+	do(t, e.srv, "DELETE", path, nil, http.StatusBadGateway, nil)
+	if !gitx.IsGitRepo(e.wt) {
+		t.Fatal("the locked worktree was removed")
+	}
+	for _, name := range names {
+		if _, ok := session.ReadMeta(name); !ok || trashHolds(t, name) {
+			t.Fatalf("session %s did not roll back", name)
+		}
+		if got, _ := os.ReadFile(terminalHistoryPath(name)); string(got) != name {
+			t.Fatalf("session %s lost terminal history: %q", name, got)
+		}
+	}
+	gitAt(t, e.parent, "worktree", "unlock", e.wt)
+	do(t, e.srv, "DELETE", path, nil, http.StatusOK, nil)
+	for _, name := range names {
+		if _, ok := session.ReadMeta(name); ok || !trashHolds(t, name) {
+			t.Fatalf("session %s was not trashed on retry", name)
+		}
+	}
+}
+
+func TestTrashReportsFailedMetaUnlinkAndCanRetry(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	e := spaceDeleteSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	name := "shfail1"
+	session.WriteMeta(session.Meta{Name: name, Dir: e.home, Kind: session.KindShell})
+	writeAt(t, terminalHistoryPath(name), "terminal")
+	old := trashAfterArchive
+	t.Cleanup(func() { trashAfterArchive = old; _ = os.Chmod(session.MetaDir(), 0o700) })
+	trashAfterArchive = func(session.Meta) {
+		if err := os.Chmod(session.MetaDir(), 0o500); err != nil {
+			t.Error(err)
+		}
+	}
+	path := "/sessions/" + name
+	do(t, e.srv, "DELETE", path, nil, http.StatusInternalServerError, nil)
+	if _, ok := session.ReadMeta(name); !ok || trashHolds(t, name) {
+		t.Fatal("a failed unlink lost the live meta or left a duplicate archive")
+	}
+	if got, _ := os.ReadFile(terminalHistoryPath(name)); string(got) != "terminal" {
+		t.Fatalf("failed unlink lost terminal history: %q", got)
+	}
+	trashAfterArchive = nil
+	if err := os.Chmod(session.MetaDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	do(t, e.srv, "DELETE", path, nil, http.StatusOK, nil)
+	if _, ok := session.ReadMeta(name); ok || !trashHolds(t, name) {
+		t.Fatal("the session was not trashed on retry")
+	}
+}
+
+func TestShellTrashKeepsPreparedArchivesAndRejectsRestoreDuringRemoval(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	m := session.Meta{Name: "shpend1", Dir: e.home, Kind: session.KindShell}
+	session.WriteMeta(m)
+	prior := map[string]string{}
+	do(t, e.srv, "DELETE", "/sessions/"+m.Name, nil, http.StatusOK, &prior)
+	oldID := prior["archive"]
+	do(t, e.srv, "POST", "/cleanup/archives/"+oldID+"/restore", nil, http.StatusOK, nil)
+	_, err := removeWithShellTrash([]session.Meta{m}, func(session.Meta) bool { return true }, func() error {
+		entries := listCleanupArchives()
+		if len(entries) != 2 || len(listCleanupArchivesSized()) != 1 {
+			t.Fatalf("one prepared archive should be retained, with only the older one listed: %+v", entries)
+		}
+		newID := entries[0].ID
+		if newID == oldID {
+			newID = entries[1].ID
+		}
+		path := "/cleanup/archives/" + newID
+		do(t, e.srv, "DELETE", path, nil, http.StatusConflict, nil)
+		do(t, e.srv, "POST", path+"/restore", nil, http.StatusConflict, nil)
+		do(t, e.srv, "POST", "/cleanup/archives/"+oldID+"/restore", nil, http.StatusConflict, nil)
+		return os.ErrPermission
+	})
+	if err != os.ErrPermission {
+		t.Fatalf("remove result = %v, want the folder error", err)
+	}
+	if _, ok := session.ReadMeta(m.Name); !ok || len(listCleanupArchives()) != 1 {
+		t.Fatal("a failed remove did not roll back the session and its prepared archive")
+	}
+}
+
 // Review 115 🔴3: a lock request waits for a working-copy delete in flight instead of being
 // answered and then deleted anyway.
 func TestLockWaitsForAWorkingCopyDelete(t *testing.T) {

@@ -10,6 +10,6 @@ func SessionsToSettleUnder(dir string) ([]session.Meta, error) { return sessions
 // ShelveSessionsUnder is shelveSessionsUnder for the same caller: after the move, the stopped
 // sessions still living in dir (settleAfterRemoval; before is what the delete decided, and
 // onlyDecided keeps it to them) go to the shelf, and a shell / ssm one to the trash.
-func ShelveSessionsUnder(dir string, before []session.Meta, onlyDecided bool) {
-	settleAfterRemoval(dir, before, onlyDecided)
+func ShelveSessionsUnder(dir string, before []session.Meta, onlyDecided bool) error {
+	return settleAfterRemoval(dir, before, onlyDecided)
 }

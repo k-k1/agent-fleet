@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,6 +147,7 @@ func trashSessionIn(m session.Meta, stop bool, belongs func(session.Meta) bool) 
 	if err != nil {
 		return "", sessionx.TrashErrArchive, err
 	}
+	defer releaseTrash(arch)
 	if trashAfterArchive != nil {
 		trashAfterArchive(m)
 	}
@@ -153,6 +156,7 @@ func trashSessionIn(m session.Meta, stop bool, belongs func(session.Meta) bool) 
 	// again, or its transcript grew), or deleted by something else. In each case nothing is
 	// removed, and the archive just written goes — it would be a stale duplicate.
 	abort, left, code, why := false, false, "", ""
+	var releaseMeta func()
 	sessionx.WithSessionMetaLock(func() {
 		cur, ok := session.ReadMeta(m.Name)
 		switch {
@@ -173,17 +177,30 @@ func trashSessionIn(m session.Meta, stop bool, belongs func(session.Meta) bool) 
 				abort, left, code = true, true, "not_found"
 				return
 			}
-			session.RemoveMetaAndLineage(m.Name) // a person's delete (ADR 0096 decision 6)
+			var err error
+			if releaseMeta, err = session.RemoveMetaAndLineage(m.Name); err != nil {
+				abort, code, why = true, sessionx.TrashErrArchive, "could not remove the session meta: "+err.Error()
+			}
 		}
 	})
 	if abort {
-		sessionx.WithCleanupLock(func() { _, _ = purgeCleanupArchive(arch) })
+		discardPreparedTrash(arch)
 		if left {
 			return "", code, fmt.Errorf("%w: %s", gitx.ErrSessionLeftFolder, m.Name)
 		}
 		return "", code, errors.New(why)
 	}
-	// Now that the conversation is safely bundled and the meta is gone, delete the live jsonl(s).
+	defer releaseMeta()
+	finishTrashedSession(m)
+	return arch, "", nil
+}
+
+func discardPreparedTrash(id string) {
+	sessionx.WithCleanupLock(func() { removeOwnEntry(id) })
+}
+
+// finishTrashedSession runs only after the meta is gone and the archive can restore it.
+func finishTrashedSession(m session.Meta) {
 	if keepsLocalTranscript(m) {
 		if _, _, matched := claude.TranscriptRead(session.UUID(m.Dir, m.Name)); len(matched) > 0 {
 			for _, p := range matched {
@@ -203,8 +220,128 @@ func trashSessionIn(m session.Meta, stop bool, belongs func(session.Meta) bool) 
 	sessionsearch.Forget(m.Name) // the trash bundle is now the only copy of its text (ADR 0110)
 	removeSessionSideFiles(m.Name)
 	removeTerminalHistory(m.Name)
-	invalidateCleanupUsage() // the trash just grew
-	return arch, "", nil
+	invalidateCleanupUsage()
+}
+
+// removeWithShellTrash prepares every archive before hiding the first meta. A failed removal
+// restores the original metas before returning, while their runtime and side files still exist.
+// Each prepared archive remains pinned until either rollback or cleanup under its name finishes.
+func removeWithShellTrash(shells []session.Meta, belongs func(session.Meta) bool, remove func() error) (failed string, err error) {
+	if len(shells) == 0 {
+		return "", remove()
+	}
+	names := make([]string, 0, len(shells))
+	for _, m := range shells {
+		if !session.ValidName(m.Name) {
+			return m.Name, errors.New("invalid terminal session name")
+		}
+		names = append(names, m.Name)
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	for _, name := range names {
+		unlock := lockTrashName(name)
+		defer unlock()
+	}
+
+	type preparedShell struct {
+		meta   session.Meta
+		id     string
+		staged *session.StagedMeta
+	}
+	var prepared []preparedShell
+	committed := false
+	defer func() {
+		for _, p := range prepared {
+			if p.staged == nil {
+				discardPreparedTrash(p.id)
+			} else if !committed {
+				if rollbackErr := p.staged.Rollback(); rollbackErr != nil {
+					err = errors.Join(err, fmt.Errorf("could not put session %s back; restore archive %s: %w", p.meta.Name, p.id, rollbackErr))
+				} else {
+					discardPreparedTrash(p.id)
+				}
+			} else {
+				p.staged.Commit()
+				finishTrashedSession(p.meta)
+				p.staged.Release()
+			}
+			releaseTrash(p.id)
+		}
+	}()
+
+	for _, name := range names {
+		m, st := session.ReadMetaState(name)
+		if st == session.MetaUnreadable {
+			return name, errors.New("could not read the session meta")
+		}
+		if st == session.MetaAbsent || m.Archived || !belongs(m) {
+			continue
+		}
+		if m.Name != name || (m.Kind != session.KindShell && m.Kind != session.KindSSM) {
+			return name, errors.New("session identity changed while preparing its archive")
+		}
+		if m.Locked || sessionx.SessionAlive(m) {
+			return name, errors.New("session is running or locked")
+		}
+		usagesvc.FinalizeSessionUsage(m)
+		id, err := archiveSessionForDelete(m)
+		if err != nil {
+			return name, err
+		}
+		prepared = append(prepared, preparedShell{meta: m, id: id})
+		if trashAfterArchive != nil {
+			trashAfterArchive(m)
+		}
+	}
+
+	sessionx.WithSessionMetaLock(func() {
+		for i := range prepared {
+			p := &prepared[i]
+			cur, st := session.ReadMetaState(p.meta.Name)
+			if st == session.MetaAbsent {
+				continue
+			}
+			failed = p.meta.Name
+			switch {
+			case st == session.MetaUnreadable:
+				err = errors.New("could not read the session meta")
+			case cur.Archived && !cur.Locked:
+				failed = ""
+				continue
+			case cur.Locked || sessionx.SessionAlive(cur):
+				err = errors.New("session is running or locked")
+			case !belongs(cur):
+				failed = ""
+				continue
+			case !reflect.DeepEqual(p.meta, cur):
+				err = errors.New("session changed while preparing its archive; try again")
+			default:
+				if err = sessionx.PreserveQueueMoveBeforeTrash(cur); err != nil {
+					return
+				}
+				if !belongs(cur) {
+					failed = ""
+					continue
+				}
+				var staged session.StagedMeta
+				staged, err = session.StageMetaRemoval(cur.Name)
+				if err == nil {
+					p.staged = &staged
+				}
+			}
+			if err != nil {
+				return
+			}
+			failed = ""
+		}
+	})
+	if err != nil {
+		return failed, err
+	}
+	err = remove()
+	committed = err == nil
+	return "", err
 }
 
 // trashAfterArchive is a test seam: it runs between writing the archive and the final check,
@@ -404,7 +541,7 @@ func archiveSessionForDelete(m session.Meta) (string, error) {
 		ID: newCleanupID(nowUTC(), idSlug(m.Name)), At: nowUTC().Format(time.RFC3339),
 		Reason: "delete_session", Sessions: []cleanupArchivedSession{as},
 	}
-	if err := writeCleanupArchive(&man, payloads); err != nil {
+	if err := writeCleanupBundle(&man, payloads, true); err != nil {
 		return "", err
 	}
 	return man.ID, nil
@@ -574,6 +711,10 @@ func handleRestoreCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	// restoreCleanupArchive takes the cleanup lock itself, for the meta hand-over only.
 	restored, err := restoreCleanupArchive(id)
+	if errors.Is(err, errTrashPending) {
+		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), err.Error())
+		return
+	}
 	if errors.Is(err, errRestoreStopped) {
 		// Not "no such archive": it exists, part of it may be back, and restoring again is
 		// what finishes it — the Console says so.
@@ -642,6 +783,10 @@ func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	var err error
 	var man cleanupManifest
 	sessionx.WithCleanupLock(func() { man, err = purgeCleanupArchive(id) })
+	if errors.Is(err, errTrashPending) {
+		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), err.Error())
+		return
+	}
 	if errors.Is(err, errRestoreIncomplete) {
 		httpx.WriteErr(w, http.StatusConflict, "restore_incomplete", err.Error())
 		return

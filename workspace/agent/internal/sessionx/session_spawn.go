@@ -130,15 +130,17 @@ type spawnSlot struct {
 // slot still held counts one child twice (a parent under the limit is refused), and slot freed
 // but meta not yet written counts it zero (the limit is exceeded). Writing then releasing as two
 // steps only narrows that window — it does not close it.
-func (s *spawnSlot) publish(m session.Meta) {
+func (s *spawnSlot) publish(m session.Meta) error {
 	if s.parent == "" {
-		session.WriteMeta(m)
-		return
+		return session.WriteMetaChecked(m)
 	}
 	spawnInflight.mu.Lock()
 	defer spawnInflight.mu.Unlock()
-	session.WriteMeta(m)
+	if err := session.WriteMetaChecked(m); err != nil {
+		return err
+	}
 	s.releaseLocked()
+	return nil
 }
 
 // release is the failure net: every path that ends without a meta. Idempotent, because the

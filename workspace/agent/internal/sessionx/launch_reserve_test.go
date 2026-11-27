@@ -58,6 +58,32 @@ func TestCreateHoldsItsFolderUntilTheMetaIsPublished(t *testing.T) {
 	}
 }
 
+func TestCreateStopsAnUnpublishedLaunchBeforeReleasingItsFolder(t *testing.T) {
+	p := newCreateProbe(t)
+	prevStop := stopUnpublishedLaunch
+	t.Cleanup(func() { stopUnpublishedLaunch = prevStop })
+	var launched, stopped string
+	launchTmuxFn = func(m session.Meta, _ bool) error {
+		launched = m.Name
+		// The launch succeeds, but the final rename of the meta cannot replace a directory.
+		return os.Mkdir(session.MetaPath(m.Name), 0o700)
+	}
+	stopUnpublishedLaunch = func(m session.Meta) error {
+		stopped = m.Name
+		if !gitx.LaunchingUnder(p.repo) {
+			t.Error("the folder reservation was released before the session was stopped")
+		}
+		return nil
+	}
+	rec := p.post(map[string]any{"kind": "shell", "dir": p.repo}, "")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), errCodeMetaWriteFailed) {
+		t.Fatalf("create: %d %s, want meta_write_failed", rec.Code, rec.Body)
+	}
+	if launched == "" || stopped != launched || gitx.LaunchingUnder(p.repo) {
+		t.Fatalf("launch %q, stop %q, folder reserved %v", launched, stopped, gitx.LaunchingUnder(p.repo))
+	}
+}
+
 // A create naming a folder a delete has decided on is refused before anything starts, whatever
 // the folder is: the space path's own check covers spaces only.
 func TestCreateInAWorkingCopyBeingDeletedIsRefused(t *testing.T) {

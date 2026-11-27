@@ -33,8 +33,9 @@ func gitDeps() gitx.Deps {
 		LiveSessionsInDir: sessionx.LiveSessionsInDir,
 		ManagedAlive:      sessionx.ManagedAlive,
 
-		ShelveSession: sessionx.ArchiveSession,
-		TrashSession:  trashStoppedSession,
+		ShelveSession:        sessionx.ArchiveSession,
+		TrashSession:         trashStoppedSession,
+		RemoveWithShellTrash: removeWithShellTrash,
 
 		WithDeletionGate: sessionx.WithDeletionGate,
 
