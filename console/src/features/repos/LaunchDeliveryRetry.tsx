@@ -50,7 +50,7 @@ function LaunchDeliveryNotice({ draftKey }: { draftKey: string }) {
       kind: "warn",
       key: draftKey,
       duration: 0,
-      closeLabel: t("rp.delivery_discard"),
+      closeLabelKey: "rp.delivery_discard",
       canClose: () => {
         if (dialog.open || useHeldLaunchDrafts.getState().operations[draftKey]) return false;
         const draft = useHeldLaunchDrafts.getState().drafts[draftKey];

@@ -6,8 +6,7 @@
 // session could be named for (a shared daemon's) is always a toast. Closing a toast declines the
 // call, as closing a card does in the ADR.
 //
-// The App mounts one with toasts; a popped-out pane mounts one without, so its mirror's cards
-// still come, while the main window keeps the toasts.
+// A popped-out pane mounts without toasts and tells the main window which cards it can show.
 import { useEffect, useMemo, useRef } from "react";
 import { errText } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
@@ -18,6 +17,7 @@ import { useNotificationStore } from "../notifications/store.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { McpElicitCard, useHeld, useNow } from "./McpElicitCard.tsx";
 import { isSending, live, ownerKey, useMcpElicitStore } from "./store.ts";
+import { useRemoteMcpCards } from "./useRemoteMcpCards.ts";
 
 export const MCP_ELICITATION_NOTICE = "mcp-elicitation";
 const POLL_HELD_MS = 3000;
@@ -56,18 +56,17 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
     }
   }, [noticeSeq, refresh]);
 
-  const toasted = useMemo(
-    () =>
-      toasts
-        ? items.filter(
-            (e) =>
-              live(until, e, now) &&
-              !closedIds.current.has(e.id) &&
-              !(e.session && Object.hasOwn(mirrors, e.session) && mirrors[e.session] > 0),
-          )
-        : [],
-    [toasts, items, until, mirrors, now],
+  const liveItems = useMemo(() => items.filter((e) => live(until, e, now)), [items, until, now]);
+  const localCards = useMemo(
+    () => liveItems.filter(({ session }) => session && Object.hasOwn(mirrors, session) && mirrors[session] > 0)
+      .map(({ id }) => id),
+    [liveItems, mirrors],
   );
+  const remoteCards = useRemoteMcpCards(localCards, toasts && liveItems.length > 0);
+  const toasted = useMemo(() => toasts
+    ? liveItems.filter(({ id, session }) => !closedIds.current.has(id) &&
+      !(session && (localCards.includes(id) || remoteCards.has(id))))
+    : [], [toasts, liveItems, localCards, remoteCards]);
   const shown = useRef(new Set<string>());
   useEffect(() => {
     const next = new Set<string>();
@@ -98,7 +97,7 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
           // While an answer from the card is on its way or given, the X does nothing: the toast
           // stays with the member's choices until the answer settles.
           canClose: () => !isSending(e.id),
-          closeLabel: t("mcpelicit.decline"),
+          closeLabelKey: "mcpelicit.decline",
         })) {
         next.add(key);
       }
