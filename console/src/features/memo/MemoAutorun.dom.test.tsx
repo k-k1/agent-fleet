@@ -2214,6 +2214,34 @@ describe("Run next in the memo menu (#5021)", () => {
     expect(nextItem()).not.toBeNull();
   });
 
+  it("keeps arrow navigation working when a refresh removes the focused Run next item", async () => {
+    // jsdom has no layout, so expose the rendered menu items to the visibility filter.
+    const layout = vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockImplementation(function (this: HTMLElement) {
+      return this.parentElement;
+    });
+    try {
+      servedMemos = [waiting()];
+      await render();
+      await click(rowMenuBtn());
+      const item = must(nextItem(), "run next item");
+      const menu = must(item.closest(".ui-menu"), "row menu");
+      item.focus();
+      expect(document.activeElement).toBe(item);
+
+      servedMemos = [waiting({ deliveryId: "d1" })];
+      await bump();
+      expect(nextItem()).toBeNull();
+      expect(menu.contains(document.activeElement)).toBe(true);
+
+      const focused = document.activeElement!;
+      focused.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      expect(menu.contains(document.activeElement)).toBe(true);
+      expect(document.activeElement).not.toBe(focused);
+    } finally {
+      layout.mockRestore();
+    }
+  });
+
   for (const code of ["memo_locked", "memo_in_queue"]) {
     it(`says the memo is no longer waiting on ${code}, and reads the list again`, async () => {
       memoSetRunNext.mockResolvedValueOnce({ error: { code, message: "refused" } });
