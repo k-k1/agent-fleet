@@ -179,9 +179,12 @@ func recordPolledTurnEnd(m session.Meta, state string) {
 	}
 	failure := ""
 	if traits.TurnFailure != nil {
-		if mark, ok := status.TurnMarkOf(sid); ok {
+		if mark, ok := status.TurnMarkOf(sid); ok || traits.TurnFailureUnmarked {
 			failure = traits.TurnFailure(m, mark)
 		}
+	}
+	if failure == agents.TurnFailurePending {
+		return // nothing is recorded, not even the end's time: the next read decides
 	}
 	status.RecordTurnEndFailure(sid, st.Rev, failure)
 }

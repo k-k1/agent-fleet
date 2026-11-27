@@ -274,3 +274,22 @@ func TestRanTurnSinceCountsAShortTurnRightAfterTheEpisode(t *testing.T) {
 		t.Fatal("a turn completed 500ms after the episode was ignored")
 	}
 }
+
+// A quota-refused turn reads limited in the list before any sweep episode exists, and a normal
+// idle still reads idle.
+func TestWireLiveReadsAQuotaRefusalAsLimited(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	rows := [][3]any{{14, stepStatusDone, []byte("x")}, {15, stepStatusDone, []byte("x")}}
+	m, _ := staleFixture(t, "slot-wl", rows, [][]byte{executorRow(4, 1)}, time.Minute)
+	defer forgetQuota(m.Name)
+	for _, tc := range []struct{ name, frame, want string }{
+		{"refused", quotaLine + idleChrome, agents.StateLimited},
+		{"clean", idleFrame(), "idle"},
+	} {
+		capturePaneFrame = func(string) string { return tc.frame }
+		if got := (agentImpl{}).WireLive(m, true).State; got != tc.want {
+			t.Errorf("%s: state %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

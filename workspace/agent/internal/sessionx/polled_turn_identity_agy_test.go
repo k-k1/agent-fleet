@@ -322,3 +322,40 @@ func TestPolledTurnEndAgyVerdictDoesNotOverwriteTheNextTurn(t *testing.T) {
 		})
 	}
 }
+
+// The list's read and the notifier's read of one turn agree: a pane that is not drawn yet is
+// carried over by both (nothing recorded, not even a failure), and the verdict that follows is
+// the same one.
+func TestPolledTurnEndAgyListCarriesAnUnpaintedPaneOver(t *testing.T) {
+	m, sid, add := agyIdentityFixture(t, "agy_quota_list_pending")
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	pre := captureTurnMark(m.Name)
+	add([][2]int{{2, 14}, {3, 15}}, 3)
+	markSessionWorkingFrom(m.Name, pre)
+	agyFakePane(t, "partial\n  esc to cancel      Gemini · high\n")
+	recordPolledTurnEnd(m, "idle")
+	if _, reason := status.LatestTurnEnd(sid); reason != "" {
+		t.Fatalf("an unpainted pane was recorded as %q", reason)
+	}
+	if !status.TurnEndUnrecorded(sid) {
+		t.Fatal("the list consumed the end it could not confirm")
+	}
+	agyFakePane(t, "done\n─────\n> \n─────\n? for shortcuts      Gemini · high\n")
+	notifyPolledTurnEnd(m, "idle")
+	if rec, _ := status.Read(sid); rec.State != "idle" || rec.TurnEndReason != "" {
+		t.Fatalf("a clean turn ended as %+v", rec)
+	}
+}
+
+// A first input (no mark) refused for quota is a failed turn in the list too, so a queue row
+// that only the list reads still learns it.
+func TestPolledTurnEndAgyListReadsAnUnmarkedQuotaRefusal(t *testing.T) {
+	m, sid, add := agyIdentityFixture(t, "agy_quota_list_unmarked")
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	agyFakePane(t, agyQuotaFrame)
+	status.Persist(sid, "working")
+	recordPolledTurnEnd(m, "idle")
+	if _, reason := status.LatestTurnEnd(sid); reason != status.TurnEndReasonFailed {
+		t.Fatalf("reason %q, want %q", reason, status.TurnEndReasonFailed)
+	}
+}
