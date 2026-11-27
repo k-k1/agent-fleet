@@ -278,11 +278,15 @@ describe("dedupeWorkItems", () => {
 });
 
 describe("stateTone", () => {
-  it("mutes done and warns on in_progress", () => {
-    expect(stateTone("done")).toBe("muted");
-    expect(stateTone("in_progress")).toBe("warn");
-    expect(stateTone("open")).toBe("ok");
-    expect(stateTone("weird")).toBe("ok");
+  it("uses green for an active GitHub issue and preserves other state tones", () => {
+    const issue = { kind: "issue", provider: "github" };
+    expect(stateTone({ ...issue, state: "done" })).toBe("muted");
+    expect(stateTone({ ...issue, state: "in_progress" })).toBe("ok");
+    expect(stateTone({ ...issue, state: "in_review" })).toBe("ok");
+    expect(stateTone({ ...issue, provider: "jira", state: "in_progress" })).toBe("warn");
+    expect(stateTone({ ...issue, kind: "pr", state: "in_progress" })).toBe("warn");
+    expect(stateTone({ ...issue, state: "open" })).toBe("ok");
+    expect(stateTone({ ...issue, state: "weird" })).toBe("ok");
   });
 });
 

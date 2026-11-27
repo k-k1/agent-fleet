@@ -215,6 +215,7 @@ export const workitems = {
   "wi.start_review": "レビューを始める",
   "wi.state_open": "未着手",
   "wi.state_in_progress": "進行中",
+  "wi.state_in_review": "レビュー中",
   "wi.state_done": "完了",
   "wi.state_other": "その他",
   "wi.state_closed": "クローズ（マージなし）",

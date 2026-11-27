@@ -127,7 +127,7 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	}
 	env.body = func() string {
 		return `{"items":[{"queryId":"ok","provider":"github","kind":"issue","key":"acme/web#9",
-		          "title":"新しい行","state":"open","url":"https://example.invalid/9",
+		          "title":"新しい行","state":"in_progress","url":"https://example.invalid/9",
 		          "labels":["bug"],"labelColors":{"bug":"d73a4a"},
 		          "repo":"acme/web","updatedAt":"2026-08-26T00:00:00Z",
 		          "checks":{"state":"failure","total":40,"failed":3,"pending":1},"mergeable":"conflict",
@@ -147,6 +147,9 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	for _, it := range items {
 		if it.Key == "acme/web#9" {
 			dto := workItemToDTO(it)
+			if dto.State != "in_progress" {
+				t.Errorf("issue state through the cache = %q, want in_progress", dto.State)
+			}
 			if got := dto.LabelColors["bug"]; got != "d73a4a" {
 				t.Errorf("bug colour through the cache = %q, want d73a4a", got)
 			}

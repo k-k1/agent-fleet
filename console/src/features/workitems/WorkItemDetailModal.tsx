@@ -75,7 +75,6 @@ import {
   canReadLive,
   checksText,
   detailStateLabel,
-  detailStateTone,
   checksTone,
   fullLocal,
   mergeGate,
@@ -91,11 +90,13 @@ import {
   stateBadge,
   stateLabel,
   stateTone,
+  workItemIcon,
   type LaunchRepoSource,
   type WorkItem,
   type WorkItemDetail,
   type WorkItemSessionRef,
 } from "./read.ts";
+import { WorkItemStateIcon } from "./WorkItemStateIcon.tsx";
 
 /** Sentinel for "create a new working copy (worktree)" — not a folder name, so it cannot
  * collide with one. */
@@ -495,6 +496,7 @@ export function WorkItemDetailModal({
       : item;
   // A stand-in's own state is unread, so the dot and the State row come from the live answer.
   const stateText = d ? detailStateLabel(d) : view.state ? stateLabel(view.state) : "";
+  const titleTone = d || view.state ? stateTone(view) : "muted";
   const badge = stateBadge(item, d);
 
   // If the review branch already has a working copy, default straight to it. Left at "new
@@ -583,9 +585,8 @@ export function WorkItemDetailModal({
           frame. */}
       <div className="ui-modal-body">
         <div className="wi-dhead">
-          {/* No state read (a stand-in) is muted: stateTone's default would paint it as open. */}
-          <span className={`wi-dot tone-${d ? detailStateTone(d) : view.state ? stateTone(view.state) : "muted"}`} title={stateText || undefined}>
-            <Icon name={!kindKnown ? "link" : shownPR ? "git-pull-request" : "issues"} />
+          <span className={`wi-dot tone-${titleTone}`} title={stateText || undefined}>
+            <WorkItemStateIcon name={kindKnown ? workItemIcon(view) : "link"} />
           </span>
           {/* Never ellipsised here: this is the panel people open to read what the rail row cut
               to one line, so it wraps and shows the title in full. */}
@@ -598,7 +599,7 @@ export function WorkItemDetailModal({
             {/* Out of the facts list the value would be read with no name; this restores it. */}
             <span className="wi-vh">{tr("wi.detail_state")}</span>
             <span className={`wi-dstate tone-${badge.tone}`}>
-              <Icon name={badge.icon} />
+              <WorkItemStateIcon name={badge.icon} />
               <span>{stateText}</span>
             </span>
           </div>

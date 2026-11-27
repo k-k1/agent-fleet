@@ -144,6 +144,20 @@
   color: var(--merged, #a371f7);
 }
 
+.wi-issue-progress {
+  position: relative;
+}
+.wi-issue-progress::after {
+  content: "";
+  position: absolute;
+  inset: 29%;
+  border: 1.5px solid currentColor;
+  border-left-color: transparent;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  rotate: 45deg;
+}
+
 /* CI / conflict marker on a pull request row, between the title and the age. */
 .wi-flag {
   flex: 0 0 auto;

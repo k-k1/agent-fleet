@@ -24,6 +24,7 @@ func TestParseGitHubSearchItems(t *testing.T) {
 	   "type":{"id":1,"name":"Bug"},
 	   "labels":[{"name":"bug","color":"D73A4A"},{"name":"p1","color":"url(x)"}]},
 	  {"number":46,"title":"draft pr","state":"open","draft":true,
+	   "status":{"name":"In review","category":"started"},
 	   "html_url":"https://github.com/acme/web/pull/46",
 	   "repository_url":"https://api.github.com/repos/acme/web",
 	   "updated_at":"2026-08-24T00:00:00Z",
@@ -194,6 +195,45 @@ func TestNormalizeGitHubState(t *testing.T) {
 		if got := normalizeGitHubState(tc.state, tc.draft); got != tc.want {
 			t.Errorf("normalizeGitHubState(%q,%v) = %q, want %q", tc.state, tc.draft, got, tc.want)
 		}
+	}
+}
+
+func TestGitHubIssueStatusInSearchAndDetail(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fields string
+		want   string
+	}{
+		{"todo", `"state":"open","status":{"name":"Todo","category":"planned"}`, "open"},
+		{"backlog", `"state":"open","status":{"name":"Backlog","category":"backlog"}`, "open"},
+		{"progress", `"state":"open","status":{"name":"In progress","category":"started"}`, "in_progress"},
+		{"review", `"state":"open","status":{"name":"In review","category":"started"}`, "in_review"},
+		{"missing", `"state":"open"`, "open"},
+		{"null", `"state":"open","status":null`, "open"},
+		{"unknown", `"state":"open","status":{"name":"Verifying","category":"started"}`, "open"},
+		{"unrecognized shape", `"state":"open","status":"started"`, "open"},
+		{"closed", `"state":"closed","state_reason":"not_planned","status":{"name":"In progress","category":"started"}`, "done"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issue := `{"number":45,"repository_url":"https://api.github.com/repos/acme/web",` + tc.fields + `}`
+			rows, err := parseGitHubSearchItems([]byte(`{"items":[`+issue+`]}`), "q1")
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("search rows = %+v, err = %v", rows, err)
+			}
+			if rows[0].State != tc.want {
+				t.Errorf("search state = %q, want %q", rows[0].State, tc.want)
+			}
+			detail, isPR, err := parseGitHubIssue([]byte(issue), "acme/web#45")
+			if err != nil || detail == nil || isPR {
+				t.Fatalf("detail = %+v, isPR = %v, err = %v", detail, isPR, err)
+			}
+			if detail.State != tc.want {
+				t.Errorf("detail state = %q, want %q", detail.State, tc.want)
+			}
+			if tc.name == "closed" && detail.StateReason != "not_planned" {
+				t.Errorf("detail state reason = %q, want not_planned", detail.StateReason)
+			}
+		})
 	}
 }
 

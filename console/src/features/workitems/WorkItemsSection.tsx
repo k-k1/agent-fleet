@@ -39,6 +39,7 @@ import { useWorkItemStore, startWorkItemPolling } from "./store.ts";
 import { useWorkItemModal } from "./modal.ts";
 import { useOpenWorkItemSession } from "./WorkItemModalHost.tsx";
 import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
+import { WorkItemStateIcon } from "./WorkItemStateIcon.tsx";
 import { LabelBadge } from "./LabelBadge.tsx";
 import { resolveSessionRef } from "./sessionRefs.ts";
 import {
@@ -56,6 +57,7 @@ import {
   sortWorkItems,
   stateLabel,
   stateTone,
+  workItemIcon,
   uniformMeta,
   readWorkItemSearch,
   type WorkItem,
@@ -85,7 +87,8 @@ const CHECK_ICON: Record<string, string> = { success: "pass", failure: "error", 
 
 const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, uniform, unread, onOpen, onOpenSession }: RowProps) {
   const tr = useT();
-  const tone = stateTone(item.state);
+  const tone = stateTone(item);
+  const stateText = stateLabel(item.state);
   const busy = started.length > 0;
   // The row shows only what differs between rows (docs/log/80 §80.18.2). An assignee or repo
   // that is the same on every row is dropped, and if nothing is left the second line is not
@@ -102,7 +105,8 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
   const conflictText = item.mergeable === "conflict" ? tr("wi.detail_merge_conflict") : "";
   const unreadText = unread ? tr(unread === "comments" ? "wi.unread_comments" : "wi.unread_updated") : "";
   const commentCount = item.commentCount ?? 0;
-  const label = [tr("wi.open_detail", { key: item.key }), unreadText, ciText, conflictText].filter(Boolean).join(" — ");
+  const issueState = item.kind === "issue" && item.provider === "github" ? stateText : "";
+  const label = [tr("wi.open_detail", { key: item.key }), issueState, unreadText, ciText, conflictText].filter(Boolean).join(" — ");
   return (
     // The whole row opens the detail modal. The external link and the started badge nested
     // inside it are controls of their own, so each stops propagation before acting; otherwise
@@ -120,8 +124,8 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
         }
       }}
     >
-      <span className={`wi-dot tone-${tone}`} title={stateLabel(item.state)}>
-        <Icon name={item.kind === "pr" ? "git-pull-request" : "issues"} />
+      <span className={`wi-dot tone-${tone}`} title={stateText}>
+        <WorkItemStateIcon name={workItemIcon(item)} />
       </span>
       <div className="wi-info">
         <div className="wi-head">

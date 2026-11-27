@@ -60,7 +60,7 @@ type workItemQueryIn struct {
 }
 
 // workItemOut is one row. Kind is "issue" or "pr"; State is normalised across providers
-// to open / in_progress / done / other; Repo is "owner/name" when the provider has one
+// to open / in_progress / in_review / done / other; Repo is "owner/name" when the provider has one
 // (the Console seeds the launch target from it).
 type workItemOut struct {
 	QueryID  string   `json:"queryId"`
@@ -403,16 +403,17 @@ func knownCount(p *int) *int {
 func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) {
 	var gr struct {
 		Items []struct {
-			NodeID      string `json:"node_id"`
-			Number      int    `json:"number"`
-			Title       string `json:"title"`
-			State       string `json:"state"`
-			StateReason string `json:"state_reason"`
-			HTMLURL     string `json:"html_url"`
-			RepoURL     string `json:"repository_url"`
-			UpdatedAt   string `json:"updated_at"`
-			Comments    *int   `json:"comments"`
-			Draft       bool   `json:"draft"`
+			NodeID      string          `json:"node_id"`
+			Number      int             `json:"number"`
+			Title       string          `json:"title"`
+			State       string          `json:"state"`
+			StateReason string          `json:"state_reason"`
+			Status      json.RawMessage `json:"status"`
+			HTMLURL     string          `json:"html_url"`
+			RepoURL     string          `json:"repository_url"`
+			UpdatedAt   string          `json:"updated_at"`
+			Comments    *int            `json:"comments"`
+			Draft       bool            `json:"draft"`
 			PullRequest *struct {
 				URL string `json:"url"`
 			} `json:"pull_request"`
@@ -433,8 +434,12 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 	for _, it := range gr.Items {
 		repo := repoFromGitHubAPIURL(it.RepoURL)
 		kind := "issue"
+		var state string
 		if it.PullRequest != nil {
 			kind = "pr"
+			state = normalizeGitHubState(it.State, it.Draft)
+		} else {
+			state = normalizeGitHubIssueState(it.State, it.Status)
 		}
 		assignee := ""
 		if len(it.Assignees) > 0 {
@@ -454,13 +459,36 @@ func parseGitHubSearchItems(body []byte, queryID string) ([]workItemOut, error) 
 		}
 		out = append(out, workItemOut{
 			QueryID: queryID, Provider: "github", Kind: kind, Key: key,
-			Title: it.Title, State: normalizeGitHubState(it.State, it.Draft),
+			Title: it.Title, State: state,
 			URL: it.HTMLURL, Assignee: assignee, Labels: labels, Type: typ,
 			LabelColors: gitHubLabelColors(it.Labels), Repo: repo, UpdatedAt: it.UpdatedAt, CommentCount: knownCount(it.Comments),
 			nodeID: it.NodeID,
 		})
 	}
 	return out, nil
+}
+
+func normalizeGitHubIssueState(state string, status json.RawMessage) string {
+	base := normalizeGitHubState(state, false)
+	if base != "open" || len(status) == 0 {
+		return base
+	}
+	// Both active statuses belong to the started category. An unfamiliar status shape
+	// must leave the issue's state readable while the GitHub API field is in preview.
+	var issueStatus struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(status, &issueStatus); err != nil {
+		return base
+	}
+	switch issueStatus.Name {
+	case "In progress":
+		return "in_progress"
+	case "In review":
+		return "in_review"
+	default:
+		return base
+	}
 }
 
 // normalizeGitHubState maps GitHub's two states onto the shared vocabulary. A draft PR
