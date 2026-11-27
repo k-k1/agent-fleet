@@ -77,10 +77,8 @@ issue に `rebuild` の行があり、通常のリリースがすぐには出な
 - リリースのイメージはクリーンなランナーでレイヤキャッシュなしにビルドされる（リリースでは
   `CP_CACHE_REF` / `WS_CACHE_REF` は空）ので、浮動ベースタグと golang イメージは*ビルド時点*のものに
   解決される。これと、control-plane・workspace のランタイム段の `apt-get upgrade` が更新のすべてである。
-  0.51.0 までのタグでは upgrade は control-plane の Dockerfile にしかない
-  （`git grep -n 'apt-get upgrade' <tag> -- workspace/Dockerfile control-plane/Dockerfile` で確かめる）。
-  そのタグから workspace イメージやネイティブ rootfs の Debian の行を直すには、`workspace/Dockerfile` に
-  upgrade を足したコミットをリリースブランチに cherry-pick する（手順 2）。修正が `golang:1.26-trixie` より
+  古いタグでは、片方または両方のランタイム段にこの upgrade が無いことがある（v0.51.0 は control-plane の段にだけある）。
+  手順 2 で確かめて持ち込む。修正が `golang:1.26-trixie` より
   新しい Go マイナーにしかない場合は、再ビルドでは入らない。通常の PR で Dockerfile と `go` ディレクティブを上げる。
 
 手順（自分のシェルで。例は `0.40.0` → `0.40.1`）:
@@ -97,6 +95,11 @@ deploy/local/apt-pin-check.sh        # exit 0 は「ピンがまだ配られて�
 #    issue に出ているピン済みパッケージ（remedy `bump`）ごとに、workspace/Dockerfile のピンと
 #    issue の "Fixed in" を比べ、ピンが古ければ main の apt-pin-bump の ARG 値を持ち込むか
 #    deploy/local/apt-pin-bump.sh を実行し、commit する（"build(workspace): ..."）。
+#    続いてランタイム段の upgrade: Debian の `rebuild` 行があるイメージごとに、タグの Dockerfile が
+#    それを走らせているか確かめ、無ければ main のランタイム段の apt ブロック一式
+#    （`apt-get update --error-on=any` と `apt-get upgrade`。workspace/Dockerfile と control-plane/Dockerfile）を
+#    持ち込み、commit する（"build(images): ..."）。無いままだと、同じベースから同じ脆弱なパッケージを作り直すだけになる。
+git grep -n -e 'apt-get update' -e 'apt-get upgrade' HEAD -- workspace/Dockerfile control-plane/Dockerfile
 
 # 3) リリースノートは通常どおり（deploy/release/notes/README.md）: 0.40.1.md と 0.40.1.ja.md、
 #    SUMMARY.md / SUMMARY.ja.md の節、index.tsv 末尾に `pending` 行、deploy/release/gen-changelog.sh。
@@ -119,9 +122,10 @@ git tag -a v0.40.1 <build commit> -m "agent-fleet 0.40.1" && git push origin v0.
 ブランチからの `publish-dist.yml` 実行が通るのは、ワークフローのファイルが default branch と対象 ref の
 両方にあるから。それ以外（スクリプト・Dockerfile）は ref から読まれる。実行が成功すると
 `image-vuln-scan` が自動で走り、直せるものが残っていなければ issue を close する。close されないなら、
-残りは `bump` の行か、ビルドが取り込めなかった Debian の修正である。後者なら、タグの Dockerfile が
-`apt-get upgrade` を走らせているか（上記）と、修正版がすでに trixie-security か trixie-updates に
-出ているかを確かめる。
+残りは `bump` の行か、ビルドで直らなかった `rebuild` の行である。Debian パッケージなら、Dockerfile が
+`apt-get upgrade` を走らせたか（手順 2）と、修正版がすでに trixie-security か trixie-updates に出ているかを
+確かめる。Go の `stdlib` の行なら、バイナリをビルドした Go の版を "Fixed in" と比べる。修正が
+`golang:1.26-trixie` より新しい Go マイナーにしかなければ、上記の toolchain の引き上げが要る。
 
 デプロイ側にとってパッチ版は普通の新しい `ImageTag` で、特別な展開手順はない。通常の publish 手順は
 [deploy/release/notes](../../deploy/release/notes/README.md#publishing-a-version) にある。
