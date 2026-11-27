@@ -173,6 +173,87 @@ func TestHandlePTY_ShellExitClosesWithPTYClosed(t *testing.T) {
 	}
 }
 
+func TestHandlePTY_SessionExitsBeforeAttach(t *testing.T) {
+	tmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux not installed")
+	}
+	const name = "af-test-attach-race"
+	target := session.TmuxName(name)
+	other := target + "-other"
+
+	// Make the real has-session succeed, then remove its target before the attach runs.
+	const script = `#!/bin/sh
+if [ "$3" = has-session ]; then
+    "$AF_TEST_REAL_TMUX" "$@" || exit $?
+    if [ "$AF_TEST_TMUX_KEEP_OTHER" = true ]; then
+        exec "$AF_TEST_REAL_TMUX" "$1" "$2" kill-session -t "$5"
+    fi
+    exec "$AF_TEST_REAL_TMUX" "$1" "$2" kill-server
+fi
+socket=$2
+shift 2
+exec "$AF_TEST_REAL_TMUX" -L "$socket" -f "$AF_TEST_TMUX_RESTART_CONFIG" "$@"
+`
+	for _, tc := range []struct {
+		name      string
+		keepOther bool
+	}{
+		{name: "another session remains", keepOther: true},
+		{name: "server exits"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("AF_TMUX_SOCKET", "af-test-attach-race-"+strconv.Itoa(os.Getpid()))
+			t.Setenv("AF_TERMINAL_HISTORY_DIR", dir)
+			t.Cleanup(func() { _ = tmuxx.Cmd("kill-server").Run() })
+
+			names := []string{target}
+			if tc.keepOther {
+				// A non-exact attach would match this session by prefix.
+				names = append(names, other)
+			}
+			for _, tn := range names {
+				if out, err := tmuxx.Cmd("-f", "/dev/null", "new-session", "-d", "-s", tn, "sleep 60").CombinedOutput(); err != nil {
+					t.Fatalf("new-session %s: %v %s", tn, err, out)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			// If attach starts a replacement server, its config leaves a session behind.
+			config := filepath.Join(dir, "tmux.conf")
+			if err := os.WriteFile(config, []byte("new-session -d -s "+other+" 'sleep 60'\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("AF_TEST_REAL_TMUX", tmux)
+			t.Setenv("AF_TEST_TMUX_KEEP_OTHER", strconv.FormatBool(tc.keepOther))
+			t.Setenv("AF_TEST_TMUX_RESTART_CONFIG", config)
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			srv := httptest.NewServer(http.HandlerFunc(handlePTY))
+			defer srv.Close()
+			conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"?session="+name, nil)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.Close()
+			ce := readCloseReason(t, conn)
+			if ce.Code != websocket.CloseNormalClosure || ce.Text != ptyCloseSessionStopped {
+				t.Fatalf("close = %d %q, want %d %q", ce.Code, ce.Text, websocket.CloseNormalClosure, ptyCloseSessionStopped)
+			}
+			out, err := tmuxx.Cmd("list-sessions", "-F", "#{session_name}").CombinedOutput()
+			if tc.keepOther {
+				if err != nil || strings.TrimSpace(string(out)) != other {
+					t.Fatalf("sessions after attach = %q, error %v, want only %q", out, err, other)
+				}
+			} else if err == nil {
+				t.Fatalf("attach restarted the tmux server with sessions %q", out)
+			}
+		})
+	}
+}
+
 // A session halted while its pane is attached kills the tmux session under the attach client;
 // the PTY then reaches EOF and the close must carry the same "session stopped" reason as an
 // already-stopped session, so the pane offers Resume.
@@ -195,8 +276,7 @@ func TestHandlePTY_HaltWhileAttachedClosesWithSessionStopped(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	// Wait (bounded) until the attach client is really on the session; a fixed sleep lets
-	// kill-session win on a loaded host and new-session -A then recreates the session.
+	// Wait until the client is attached so this covers a halt during a live attachment.
 	target := session.ExactTarget(session.TmuxName(name))
 	attached := false
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
