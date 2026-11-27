@@ -1,6 +1,7 @@
 package agy
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,16 @@ func TestQuotaBannerInFrame(t *testing.T) {
 			"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h3\n9m46s." + idleChrome, true},
 		{"wrap between Individual and quota",
 			"Individual\nquota reached. Please upgrade your subscription to increase your limits." + idleChrome, true},
+		{"bulleted quote of the full text",
+			"- " + quotaLine + idleChrome, false},
+		{"markdown quote of the full text above the composer",
+			"> " + quotaLine + idleChrome, false},
+		{"line before ends with individual",
+			"A message about an individual\nquota reached. Please upgrade your subscription to increase your limits." + idleChrome, false},
+		{"phrase then an ordinary reply (no panic)",
+			"Individual quota reached\nHere is the explanation." + idleChrome, false},
+		{"wrap inside the phrase and inside a number",
+			"Individual quota\nreached. Please upgrade your subscription to increase your\nlimits. Resets in 1h3\n9m46s." + idleChrome, true},
 		{"older refusal then a newer refusal",
 			quotaLine + "\n> again\n" + quotaLine + idleChrome, true},
 	} {
@@ -101,12 +112,17 @@ func TestQuotaResetCountsFromFirstSighting(t *testing.T) {
 	m := session.Meta{Name: "qr1", Dir: t.TempDir()}
 	defer forgetQuota(m.Name)
 	t0 := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
-	at, src, ok := quotaResetAt(m, false, t0)
+	clock := t0
+	oldNow := quotaNow
+	defer func() { quotaNow = oldNow }()
+	quotaNow = func() time.Time { return clock }
+	at, src, ok := quotaResetAt(m, false, t0.Add(-time.Hour)) // the sweep's own start time is not the base
 	want := t0.Add(time.Hour + 39*time.Minute + 46*time.Second)
 	if !ok || !at.Equal(want) || src != quotaRefusalSource {
 		t.Fatalf("got %v %q %v, want %v", at, src, ok, want)
 	}
-	if at2, _, _ := quotaResetAt(m, false, t0.Add(10*time.Minute)); !at2.Equal(want) {
+	clock = t0.Add(10 * time.Minute)
+	if at2, _, _ := quotaResetAt(m, false, time.Time{}); !at2.Equal(want) {
 		t.Fatalf("second poll moved the reset to %v", at2)
 	}
 	// The banner leaves the tail, then a new refusal with the same text counts from its own sighting.
@@ -116,36 +132,76 @@ func TestQuotaResetCountsFromFirstSighting(t *testing.T) {
 	}
 	capturePaneFrame = func(string) string { return "x\n" + quotaLine + idleChrome }
 	t1 := t0.Add(3 * time.Hour)
-	if at3, _, _ := quotaResetAt(m, false, t1); !at3.Equal(t1.Add(time.Hour + 39*time.Minute + 46*time.Second)) {
+	clock = t1
+	if at3, _, _ := quotaResetAt(m, false, time.Time{}); !at3.Equal(t1.Add(time.Hour + 39*time.Minute + 46*time.Second)) {
 		t.Fatalf("new refusal reset %v", at3)
 	}
 }
 
-// A capture that fails once, or a footer not painted yet, must not end as a clean completion.
-func TestTurnFailureRetriesAnUnreadablePane(t *testing.T) {
-	old, oldWait := capturePaneFrame, quotaRetryWait
-	defer func() { capturePaneFrame, quotaRetryWait = old, oldWait }()
-	quotaRetryWait = 0
-	m := session.Meta{Name: "qr2", Dir: t.TempDir()}
-	defer forgetQuota(m.Name)
-	calls := 0
-	capturePaneFrame = func(string) string {
-		calls++
-		switch calls {
-		case 1:
-			return ""
-		case 2:
-			return "partial\n─────\n> \n─────\n  esc to cancel      Gemini · high\n"
-		}
-		return quotaLine + idleChrome
+func idleFrame() string { return "done" + idleChrome }
+
+// An unreadable or unpainted pane right after the DB's last write holds the completion back; an
+// idle pane, or a pane that stays unreadable past the grace, does not.
+func TestTurnEndPendingWaitsForThePaneOnlyBriefly(t *testing.T) {
+	old, oldAlive := capturePaneFrame, paneSessionAlive
+	defer func() { capturePaneFrame, paneSessionAlive = old, oldAlive }()
+	paneSessionAlive = func(string) bool { return true }
+	user, model := 14, 15
+	rows := [][3]any{{user, stepStatusDone, []byte("x")}, {model, stepStatusDone, []byte("x")}}
+	for _, tc := range []struct {
+		name, frame string
+		age         time.Duration
+		want        bool
+	}{
+		{"capture failed, DB just written", "", time.Second, true},
+		{"footer not painted, DB just written", "partial\nesc to cancel\n", time.Second, true},
+		{"idle footer", idleFrame(), time.Second, false},
+		{"capture failed, past the grace", "", 5 * time.Minute, false},
+		{"no tmux session at all", "\x00", time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := staleFixture(t, "slot-pend", rows, [][]byte{executorRow(4, 1)}, tc.age)
+			capturePaneFrame = func(string) string { return strings.TrimPrefix(tc.frame, "\x00") }
+			paneSessionAlive = func(string) bool { return !strings.HasPrefix(tc.frame, "\x00") }
+			if got := TurnEndPending(m); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
 	}
-	if got := TurnFailure(m, ""); got != quotaLine {
-		t.Fatalf("got %q after %d captures", got, calls)
+}
+
+// A booking is cancelled only by a newer turn that COMPLETED: an input that landed, a turn still
+// running, an interrupted run and a bare DB write keep it.
+func TestRanTurnSinceNeedsACompletedRun(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	user, model := 14, 15
+	rows := [][3]any{{user, stepStatusDone, []byte("x")}, {model, stepStatusDone, []byte("x")}}
+	for _, tc := range []struct {
+		name  string
+		turns [][]byte
+		frame string
+		want  bool
+	}{
+		{"completed run, idle", [][]byte{executorRow(4, 1)}, idleFrame(), true},
+		{"completed run but the screen is generating", [][]byte{executorRow(4, 1)}, "x\nesc to cancel\n", false},
+		{"run interrupted by Esc", [][]byte{executorRow(2, 1)}, idleFrame(), false},
+		{"newest run ended before the last step", [][]byte{executorRow(4, 0)}, idleFrame(), false},
+		{"no run recorded", nil, idleFrame(), false},
+		{"pane gone", [][]byte{executorRow(4, 1)}, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, now := staleFixture(t, "slot-ran", rows, tc.turns, time.Minute)
+			capturePaneFrame = func(string) string { return tc.frame }
+			if got := ranTurnSince(m, now.Add(-time.Hour)); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
 	}
-	// An idle frame with no banner is a clean end and is not retried.
-	calls = 0
-	capturePaneFrame = func(string) string { calls++; return "done" + idleChrome }
-	if got := TurnFailure(m, "7"); got != "" || calls != 1 {
-		t.Fatalf("got %q after %d captures", got, calls)
+	// The write predates the episode: nothing newer ran.
+	m, now := staleFixture(t, "slot-ran-old", rows, [][]byte{executorRow(4, 1)}, 2*time.Hour)
+	capturePaneFrame = func(string) string { return idleFrame() }
+	if ranTurnSince(m, now.Add(-time.Hour)) {
+		t.Fatal("a write older than the episode counted as a newer turn")
 	}
 }

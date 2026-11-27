@@ -11,6 +11,7 @@ package agy
 // refusal would send a prompt onto unrelated work.
 
 import (
+	"database/sql"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // quotaBannerLines bounds how many transcript lines the banner may be wrapped over.
@@ -27,9 +29,10 @@ const quotaBannerLines = 4
 // the countdown, in either's absence. Anything else after it is a newer line of the transcript.
 var quotaTailRe = regexp.MustCompile(`(?i)^[\s.:,]*(?:please upgrade your subscription to increase your limits\.?)?\s*(?:resets in (?:\d+\s*[a-z]+\s*)+\.?)?\s*$`)
 
-// quotaPrefixRe is what may precede "quota reached" on its line: glyphs and the "error:" label
-// agy puts there. A sentence that merely mentions the phrase has words in front of it.
-var quotaPrefixRe = regexp.MustCompile(`(?i)^[^\p{L}\p{N}]*(?:(?:error|warning)\b[:\s]*)?(?:individual\s*)?$`)
+// quotaHeadRe is how the banner starts: optional glyphs and an "error:" label, then the phrase
+// itself, at the very start. A markdown quote or bullet (">", "-", "*"), a prompt echo and a
+// sentence that merely mentions the phrase all have something else in front of it.
+var quotaHeadRe = regexp.MustCompile(`(?i)^(?:[^\p{L}\p{N}>\-*+•]\s*)*(?:(?:error|warning)\b[:\s]*)?individual\s*quota\s*reached\b`)
 
 // quotaRefusalSource is the episode's Source for a reset read off the banner.
 const quotaRefusalSource = "agy:quota-banner"
@@ -72,50 +75,62 @@ func contentAboveComposer(frame string) ([]string, bool) {
 // quotaBannerInFrame returns the refusal text, and only that, when the frame's newest
 // transcript content just above the idle composer is agy's quota banner. ok=false for a frame
 // without the idle footer (a turn running, a prompt waiting), a banner with anything after it,
-// a sentence that quotes the phrase, and no banner.
+// a line that quotes the phrase, and no banner.
 func quotaBannerInFrame(frame string) (text string, ok bool) {
 	content, ok := contentAboveComposer(frame)
 	if !ok {
 		return "", false
 	}
-	j := -1
-	for k, l := range content {
-		if quotaReachedRe.MatchString(l) {
-			j = k
-		}
-	}
-	if j < 0 {
-		return "", false
-	}
-	first := j
-	loc := quotaReachedRe.FindStringIndex(content[j])
-	prefix := content[j][:loc[0]]
-	if strings.TrimSpace(prefix) == "" && j > 0 && strings.HasSuffix(strings.ToLower(content[j-1]), "individual") {
-		first = j - 1
-	} else if !quotaPrefixRe.MatchString(prefix) {
-		return "", false
-	}
-	// A wrap that splits a word or a number joins without the space.
-	for _, sep := range []string{" ", ""} {
-		joined := strings.Join(content[first:], sep)
-		locs := quotaReachedRe.FindAllStringIndex(joined, -1)
-		tail := joined[locs[len(locs)-1][1]:]
-		if quotaTailRe.MatchString(tail) && strings.Trim(tail, " .:,") != "" {
-			return joined, true
+	// Newest candidate first: the banner may be wrapped over several lines, and a wrap that
+	// splits a word or a number joins without the space.
+	for k := len(content) - 1; k >= 0; k-- {
+		for _, join := range []func([]string) string{joinWrapped, joinWith(" "), joinWith("")} {
+			joined := join(content[k:])
+			loc := quotaHeadRe.FindStringIndex(joined)
+			if loc == nil {
+				continue
+			}
+			if tail := joined[loc[1]:]; quotaTailRe.MatchString(tail) && strings.Trim(tail, " .:,") != "" {
+				return joined, true
+			}
 		}
 	}
 	return "", false
 }
 
+func joinWith(sep string) func([]string) string {
+	return func(l []string) string { return strings.Join(l, sep) }
+}
+
+// joinWrapped joins wrapped lines with a space except where a digit meets a digit, which is a
+// number the wrap cut ("1h3" / "9m46s"), so a banner wrapped between words and through a number
+// reads whole.
+func joinWrapped(lines []string) string {
+	var b strings.Builder
+	for i, l := range lines {
+		if i > 0 {
+			prev := lines[i-1]
+			if !(prev[len(prev)-1] >= '0' && prev[len(prev)-1] <= '9' && l[0] >= '0' && l[0] <= '9') {
+				b.WriteByte(' ')
+			}
+		}
+		b.WriteString(l)
+	}
+	return b.String()
+}
+
 func isRule(t string) bool { return strings.Trim(t, "─━-═ ") == "" }
 
-// Reading the pane is allowed to fail or to lag the state source: the DB can say idle before the
-// footer is painted, and a capture can error out. Both read as "no banner", which would book a
-// clean completion for good, so a turn-end read retries a few times first.
-var (
-	quotaRetryWait   = 200 * time.Millisecond
-	quotaRetryRounds = 5
-)
+// paneSessionAlive is the tmux liveness probe, replaceable by tests.
+var paneSessionAlive = tmuxx.HasSession
+
+// quotaNow is the clock of the first sighting, read when the pane was actually captured (not the
+// sweep's start time, which a slow earlier session can leave seconds behind).
+var quotaNow = time.Now
+
+// quotaPaintGrace is how long after the conversation's last write an unreadable or unpainted
+// pane still counts as "not drawn yet" rather than as a clean end.
+const quotaPaintGrace = 30 * time.Second
 
 // paneQuotaBanner is quotaBannerInFrame on the session's live pane.
 func paneQuotaBanner(name string) (string, bool) {
@@ -156,52 +171,103 @@ func forgetQuota(name string) {
 // quota when the banner is the last thing it drew. Without it the poll reports a clean
 // completion. The mark is not used: the pane carries no turn identity, and a turn without a mark
 // (a first input, one typed into the terminal) must still be judged (TurnFailureUnmarked).
+// It reads the pane once and never waits: a poll that blocks here can outlive the turn it judges.
 func TurnFailure(m session.Meta, _ string) string {
-	for try := 0; ; try++ {
-		frame := capturePaneFrame(session.TmuxName(m.Name))
-		if text, ok := quotaBannerInFrame(frame); ok {
-			firstSeenQuota(m.Name, text, time.Now())
-			return text
-		}
-		// A frame without the idle footer is not yet painted (or not readable): ask again.
-		if hasIdleFooter(frame) || try >= quotaRetryRounds {
-			return ""
-		}
-		time.Sleep(quotaRetryWait)
+	if text, ok := paneQuotaBanner(m.Name); ok {
+		return text
 	}
+	return ""
+}
+
+// TurnEndPending is agents.LiveStateTraits.TurnEndPending: the state source says the turn ended,
+// but the pane cannot confirm it yet (not captured, or the idle footer not painted) and the
+// conversation was written within quotaPaintGrace, so a refusal may still be about to appear.
+// The poll leaves the end unrecorded and asks again; past the grace it completes as before, so
+// an unreadable pane cannot hold a completion back for good.
+func TurnEndPending(m session.Meta) bool {
+	frame := capturePaneFrame(session.TmuxName(m.Name))
+	if hasIdleFooter(frame) {
+		return false
+	}
+	// No frame at all only counts as "not captured" while the tmux session is there: a session
+	// without a pane has nothing to wait for.
+	if strings.TrimSpace(frame) == "" && !paneSessionAlive(session.TmuxName(m.Name)) {
+		return false
+	}
+	captureConversation(m)
+	conv := sids.Read(session.UUID(m.Dir, m.Name))
+	if conv == "" {
+		return false
+	}
+	mt, ok := dbModTime(conv)
+	return ok && quotaNow().Sub(mt) < quotaPaintGrace
 }
 
 // atQuotaLimit is agents.UsageLimitTraits.AtLimit: the quota is a window that waiting clears.
 func atQuotaLimit(m session.Meta) (agents.LimitKind, bool) {
-	_, ok := paneQuotaBanner(m.Name)
+	text, ok := paneQuotaBanner(m.Name)
 	if !ok {
 		forgetQuota(m.Name)
+		return agents.LimitWindow, false
 	}
-	return agents.LimitWindow, ok
+	firstSeenQuota(m.Name, text, quotaNow())
+	return agents.LimitWindow, true
 }
 
 // quotaResetAt is agents.UsageLimitTraits.ResetAt: the banner's countdown from its first
 // sighting. ok=false when the newest banner names no countdown, so an older one is never read.
-func quotaResetAt(m session.Meta, _ bool, now time.Time) (time.Time, string, bool) {
+func quotaResetAt(m session.Meta, _ bool, _ time.Time) (time.Time, string, bool) {
 	text, ok := paneQuotaBanner(m.Name)
 	if !ok {
 		return time.Time{}, "", false
 	}
-	at, ok := LimitInMessage(text, firstSeenQuota(m.Name, text, now))
+	at, ok := LimitInMessage(text, firstSeenQuota(m.Name, text, quotaNow()))
 	if !ok || at.IsZero() {
 		return time.Time{}, "", false
 	}
 	return at, quotaRefusalSource, true
 }
 
-// ranTurnSince is agents.UsageLimitTraits.RanTurnSince: the episode is only followed up once the
-// banner has left the tail of the transcript, so a conversation write after the episode opened is
-// a newer turn, and a booked "continue" would land on unrelated work.
+// ranTurnSince is agents.UsageLimitTraits.RanTurnSince: the session finished a turn successfully
+// after the episode opened, so a booked "continue" would land on unrelated work. The evidence is
+// the newest executor run ending COMPLETED (field 1 = 4, an Esc cancel is 2) at the last step,
+// the conversation written after the episode, and the idle composer on screen. A write alone
+// (an input that has just landed, a turn still running, a checkpoint at exit) is not evidence;
+// neither is a run that was interrupted.
 func ranTurnSince(m session.Meta, at time.Time) bool {
 	conv := sids.Read(session.UUID(m.Dir, m.Name))
-	if conv == "" {
+	if conv == "" || !hasIdleFooter(capturePaneFrame(session.TmuxName(m.Name))) {
 		return false
 	}
-	mt, ok := dbModTime(conv)
-	return ok && mt.After(at.Add(2*time.Second))
+	if mt, ok := dbModTime(conv); !ok || !mt.After(at.Add(2*time.Second)) {
+		return false
+	}
+	return lastRunCompleted(conv)
+}
+
+// executorCompleted is the executor_metadata field 1 of a run that ended normally (measured,
+// v1.2.14: 4 completed, 2 canceled).
+const executorCompleted = 4
+
+// lastRunCompleted: the newest executor run completed and ended at the newest step.
+func lastRunCompleted(conv string) bool {
+	db, err := sql.Open("sqlite", "file:"+conversationDBPath(conv)+"?mode=ro&_pragma=busy_timeout(3000)")
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	var data []byte
+	if db.QueryRow(`SELECT data FROM executor_metadata ORDER BY idx DESC LIMIT 1`).Scan(&data) != nil {
+		return false
+	}
+	kind, found, ok := protoVarintField(data, 1)
+	if !ok || !found || kind != executorCompleted {
+		return false
+	}
+	var last int
+	if db.QueryRow(`SELECT MAX(idx) FROM steps`).Scan(&last) != nil {
+		return false
+	}
+	end, state := turnEnd(db)
+	return state == turnLogRead && end >= last
 }

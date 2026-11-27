@@ -55,6 +55,9 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 			}
 		}
 	}
+	if t := liveStateTraits(m.Kind); t.TurnEndPending != nil && t.TurnEndPending(m) {
+		return
+	}
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)
 }
 

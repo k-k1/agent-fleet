@@ -164,3 +164,22 @@ func TestPolledTurnEndAgyQuotaRefusalWithoutMarkFails(t *testing.T) {
 		})
 	}
 }
+
+// An unpainted pane right after the DB says idle holds the completion back (no clean end is
+// stored that a refusal drawn a moment later could not undo); once the frame is there, the
+// refusal is recorded as a failure.
+func TestPolledTurnEndAgyWaitsForThePaneThenFails(t *testing.T) {
+	m, sid, add := agyIdentityFixture(t, "agy_quota_pending")
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	agyFakePane(t, "partial\n  esc to cancel      Gemini · high\n")
+	status.Persist(sid, "working")
+	notifyPolledTurnEnd(m, "idle")
+	if st, _ := status.Read(sid); st.State != "working" || st.TurnEnd {
+		t.Fatalf("a completion was stored before the pane confirmed the end: %+v", st)
+	}
+	agyFakePane(t, agyQuotaFrame)
+	notifyPolledTurnEnd(m, "idle")
+	if rec, _ := status.Read(sid); rec.State != "idle" || rec.TurnEndReason != status.TurnEndReasonFailed {
+		t.Fatalf("state=%q reason=%q, want idle/failed", rec.State, rec.TurnEndReason)
+	}
+}
