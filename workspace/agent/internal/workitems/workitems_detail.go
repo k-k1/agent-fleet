@@ -379,6 +379,7 @@ func parseGitHubIssue(body []byte, key string) (out *workItemDetailOut, isPR boo
 		Title       string          `json:"title"`
 		State       string          `json:"state"`
 		StateReason string          `json:"state_reason"`
+		Status      json.RawMessage `json:"status"`
 		HTMLURL     string          `json:"html_url"`
 		UpdatedAt   string          `json:"updated_at"`
 		Comments    int             `json:"comments"`
@@ -404,7 +405,7 @@ func parseGitHubIssue(body []byte, key string) (out *workItemDetailOut, isPR boo
 	repo, _, _ := parseGitHubIssueKey(key)
 	out = &workItemDetailOut{
 		Provider: "github", Key: key, Kind: "issue", Title: is.Title,
-		State: normalizeGitHubState(is.State, false), StateReason: is.StateReason, URL: is.HTMLURL,
+		State: normalizeGitHubIssueState(is.State, is.Status), StateReason: is.StateReason, URL: is.HTMLURL,
 		Author: is.User.Login, Repo: repo, UpdatedAt: is.UpdatedAt, Comments: is.Comments,
 		Mergeable: "unknown", Labels: []string{}, LabelColors: gitHubLabelColors(is.Labels),
 		Assignees: []string{}, Reviews: []workItemReviewOut{}, MergeMethods: []string{},

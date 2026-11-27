@@ -217,6 +217,7 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.start_review": "Start review",
   "wi.state_open": "Open",
   "wi.state_in_progress": "In progress",
+  "wi.state_in_review": "In review",
   "wi.state_done": "Done",
   "wi.state_other": "Other",
   "wi.state_closed": "Closed",

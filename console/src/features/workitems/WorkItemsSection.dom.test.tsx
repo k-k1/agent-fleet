@@ -14,6 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { t } from "../../lib/i18n/index.ts";
 
 const workItemList = vi.fn();
+const workItemRefresh = vi.fn();
 const workItemQueryCreate = vi.fn();
 const bitbucketRepoList = vi.fn();
 const workItemDetail = vi.fn();
@@ -24,7 +25,7 @@ vi.mock("./api.ts", () => ({
   workItemSearch: (...a: unknown[]) => workItemSearch(...a),
   workItemList: (...a: unknown[]) => workItemList(...a),
   workItemDetail: (...a: unknown[]) => workItemDetail(...a),
-  workItemRefresh: vi.fn(async () => ({ items: [], queries: [] })),
+  workItemRefresh: (...a: unknown[]) => workItemRefresh(...a),
   workItemQueryCreate: (...a: unknown[]) => workItemQueryCreate(...a),
   workItemQueryUpdate: vi.fn(),
   workItemQueryDelete: vi.fn(),
@@ -145,6 +146,7 @@ beforeEach(() => {
   openTerminal.mockReset();
   useSessionsStore.setState({ sessions: [], refresh: vi.fn(async () => {}) });
   workItemList.mockReset();
+  workItemRefresh.mockReset().mockResolvedValue({ items: [], queries: [] });
   workItemMerge.mockReset();
   workItemSearch.mockReset();
   workItemQueryCreate.mockReset();
@@ -271,7 +273,9 @@ describe("WorkItemsSection", () => {
     expect(row("acme/web#1").getAttribute("aria-label")).toBe(
       [t("wi.open_detail", { key: "acme/web#1" }), ci, t("wi.detail_merge_conflict")].join(" — "),
     );
-    expect(row("acme/web#5").getAttribute("aria-label")).toBe(t("wi.open_detail", { key: "acme/web#5" }));
+    expect(row("acme/web#5").getAttribute("aria-label")).toBe(
+      [t("wi.open_detail", { key: "acme/web#5" }), t("wi.state_open")].join(" — "),
+    );
     // "unknown" mergeability is not a conflict and not drawn.
     expect([...flags("acme/web#2")].map((f) => f.className)).toEqual(["wi-flag tone-warn"]);
     expect([...flags("acme/web#3")].map((f) => f.className)).toEqual(["wi-flag tone-ok"]);
@@ -389,6 +393,38 @@ describe("WorkItemsSection", () => {
     expect(shown).toContain("@taro");
     expect(shown).toContain("bug");
     expect(modal.querySelector<HTMLAnchorElement>(".wi-dlink")?.href).toBe("https://github.com/acme/web/issues/45");
+  });
+
+  it("refreshes the GitHub issue icon and badge in an already-open detail", async () => {
+    const payload = { queries: [query], sessions: [], fetchedAt: "", running: true };
+    workItemList.mockResolvedValue({ ...payload, items: [item()] });
+    await render();
+    await openRow();
+    const modal = document.querySelector(".wi-dmodal")!;
+    const expectState = (icon: string, label: string) => {
+      const row = host.querySelector(".wi-row")!;
+      expect(row.querySelector(`.wi-dot.tone-ok ${icon}`)).not.toBeNull();
+      expect(row.getAttribute("aria-label")).toContain(label);
+      expect(modal.querySelector(`.wi-dhead .wi-dot.tone-ok ${icon}`)).not.toBeNull();
+      expect(modal.querySelector(`.wi-dstate.tone-green ${icon}`)).not.toBeNull();
+      expect(modal.querySelector(".wi-dstate")?.textContent).toBe(label);
+    };
+    const refreshTo = async (state: string) => {
+      workItemRefresh.mockResolvedValue({ ...payload, items: [item({ state })] });
+      const button = [...host.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === t("wi.refresh"))!;
+      await act(async () => button.click());
+    };
+
+    expectState(".codicon-issues", t("wi.state_open"));
+    await refreshTo("in_progress");
+    expectState(".wi-issue-progress", t("wi.state_in_progress"));
+    await refreshTo("open");
+    expectState(".codicon-issues", t("wi.state_open"));
+    await refreshTo("in_review");
+    expectState(".codicon-eye", t("wi.state_in_review"));
+    await refreshTo("open");
+    expectState(".codicon-issues", t("wi.state_open"));
+    expect(workItemDetail).not.toHaveBeenCalled();
   });
 
   it("does not open the detail modal from the row's link or started badge (nested controls)", async () => {
@@ -592,7 +628,7 @@ describe("WorkItemsSection", () => {
     workItemSearch.mockResolvedValue({
       items: [
         item({ id: "github:acme/web#45", key: "acme/web#45" }), // already on the rail
-        item({ id: "github:acme/web#1028", key: "acme/web#1028", title: "SSM login" }),
+        item({ id: "github:acme/web#1028", key: "acme/web#1028", title: "SSM login", state: "in_progress" }),
       ],
       errors: [],
       skipped: [],
@@ -611,6 +647,9 @@ describe("WorkItemsSection", () => {
     const found = host.querySelectorAll(".wi-remote .wi-row");
     expect(found.length).toBe(1);
     expect(found[0].textContent).toContain("SSM login");
+    expect(found[0].querySelector(".wi-dot.tone-ok .wi-issue-progress")).not.toBeNull();
+    await openRow();
+    expect(document.querySelector(".wi-dstate")?.textContent).toBe(t("wi.state_in_progress"));
     // Typing on drops the answer to the old needle.
     await act(async () => typeInto(input, "10289"));
     expect(host.querySelector(".wi-remote")).toBeNull();
@@ -1926,6 +1965,14 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       expect(modal.querySelector(".wi-dstatebar")?.textContent).toBe(t("wi.detail_state") + t("wi.detail_merge_merged"));
       expect(modal.textContent).toContain(t("wi.detail_live_fresh_ref", { name: "GitHub" }));
       expect(modal.querySelector(".wi-dref")).toBeNull();
+    });
+
+    it("shows the progress glyph and label for a GitHub issue read outside the cache", async () => {
+      workItemDetail.mockResolvedValue(live({ state: "in_progress" }));
+      const modal = await openRef();
+      expect(modal.querySelector(".wi-dhead .wi-dot.tone-ok .wi-issue-progress")).not.toBeNull();
+      expect(modal.querySelector(".wi-dstate.tone-green .wi-issue-progress")).not.toBeNull();
+      expect(modal.querySelector(".wi-dstate")?.textContent).toBe(t("wi.state_in_progress"));
     });
 
     it("reads a Jira key live and says Jira, without a completed/not-planned reason", async () => {

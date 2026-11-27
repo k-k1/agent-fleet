@@ -22,7 +22,7 @@ import { useWorkItemModal } from "./modal.ts";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import { readShelf, resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
-import { branchForItem, promptForItem, resolveLaunchRepo, sessionsOnItem, titleForItem, type WorkItem } from "./read.ts";
+import { branchForItem, dedupeWorkItems, promptForItem, resolveLaunchRepo, sessionsOnItem, titleForItem, type WorkItem } from "./read.ts";
 import "./workitems.css";
 
 /** Opens a session a ticket was started in. A slug that is not on the live list used to open
@@ -141,7 +141,13 @@ export function WorkItemModalHost() {
   };
 
   if (detail) {
-    const item = detail.item;
+    const opened = detail.item;
+    // A cached issue has no live detail read. Use the same row the rail picks from overlapping
+    // queries, with the opening row as a fallback if a refresh removes it from the inbox.
+    const cached = !detail.reference && opened.provider === "github" && opened.kind === "issue" && payload
+      ? dedupeWorkItems(payload.items.filter((row) => row.provider === opened.provider && row.key === opened.key))[0]
+      : undefined;
+    const item = cached ?? opened;
     const queryHint = payload?.queries.find((q) => q.id === item.queryId)?.repoHint || "";
     const launch = resolveLaunchRepo(item, { link: detail.repoHint, query: queryHint, map: liveRepoMap(settings.workItemRepoMap) }, folders);
     return (

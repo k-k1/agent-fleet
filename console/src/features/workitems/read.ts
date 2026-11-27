@@ -22,7 +22,7 @@ export interface WorkItem {
   /** "owner/name#45" (GitHub) or "PROJ-123" (Jira, P1). */
   key: string;
   title: string;
-  /** Normalised across providers: open / in_progress / done / other. */
+  /** Normalised across providers: open / in_progress / in_review / done / other. */
   state: string;
   url: string;
   assignee: string;
@@ -483,9 +483,14 @@ export function detailStateLabel(d: Pick<WorkItemDetail, "kind" | "state" | "mer
   return stateLabel(d.state);
 }
 
-/** Dot tone for a live read: a merged pull request is its own tone, not the muted "closed". */
-export function detailStateTone(d: Pick<WorkItemDetail, "kind" | "state" | "merged">): "ok" | "warn" | "muted" | "merged" {
-  return d.kind === "pr" && d.merged ? "merged" : stateTone(d.state);
+/** The glyph shared by the rail and detail title. */
+export function workItemIcon({ kind, provider, state }: Pick<WorkItem, "kind" | "provider" | "state">): string {
+  if (kind === "pr") return "git-pull-request";
+  if (kind === "issue" && provider === "github") {
+    if (state === "in_progress") return "issue-in-progress";
+    if (state === "in_review") return "eye";
+  }
+  return "issues";
 }
 
 export type StateBadgeTone = "green" | "amber" | "blue" | "grey" | "purple" | "red";
@@ -494,7 +499,7 @@ export type StateBadgeTone = "green" | "amber" | "blue" | "grey" | "purple" | "r
  * so it reads at a glance:
  *   GitHub / Bitbucket pull request  open green, draft grey, merged purple, closed-unmerged red
  *                                    (Bitbucket DECLINED / SUPERSEDED included)
- *   GitHub issue                     open green, closed as completed purple, not planned grey
+ *   GitHub issue                     active green, closed as completed purple, not planned grey
  *   Jira issue                       Jira's status categories: To Do grey, In Progress blue,
  *                                    Done green — Jira users read those, not GitHub's purple
  * `d` is the live read when there is one. Without it only the cached kind and state are known, so
@@ -529,7 +534,9 @@ export function stateBadge(
     if (d.stateReason === "not_planned") return { tone: "grey", icon: "circle-slash" };
     return { tone: "purple", icon: "issue-closed" };
   }
-  if (st === "open" || st === "in_progress") return { tone: "green", icon: "issues" };
+  if (st === "open" || st === "in_progress" || (provider === "github" && st === "in_review")) {
+    return { tone: "green", icon: workItemIcon({ kind, provider, state: st }) };
+  }
   return { tone: "grey", icon: "issues" };
 }
 
@@ -735,13 +742,14 @@ export function fullLocal(iso: string): string {
   });
 }
 
-/** State → the rail's existing tone vocabulary (same words the session chips use). */
-export function stateTone(state: string): "ok" | "warn" | "muted" {
+/** Icon tone for the rail and detail title. */
+export function stateTone({ kind, provider, state, merged }: Pick<WorkItem, "kind" | "provider" | "state"> & { merged?: boolean }): "ok" | "warn" | "muted" | "merged" {
+  if (kind === "pr" && merged) return "merged";
   switch (state) {
     case "done":
       return "muted";
     case "in_progress":
-      return "warn";
+      return kind === "issue" && provider === "github" ? "ok" : "warn";
     default:
       return "ok";
   }
@@ -753,6 +761,8 @@ export function stateLabel(state: string): string {
       return t("wi.state_done");
     case "in_progress":
       return t("wi.state_in_progress");
+    case "in_review":
+      return t("wi.state_in_review");
     case "open":
       return t("wi.state_open");
     default:

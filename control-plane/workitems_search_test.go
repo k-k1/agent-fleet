@@ -76,7 +76,7 @@ func TestWorkItemSearchNarrowsAndDoesNotCache(t *testing.T) {
 		Provider: "bitbucket", Label: "bb", Query: "acme/web", Enabled: true, CreatedAt: store.NowTS()}); err != nil {
 		t.Fatal(err)
 	}
-	row := `{"queryId":"%s","provider":"github","kind":"issue","key":"k-k1/agent-fleet#1028","title":"SSM login","state":"open","labels":[],"labelColors":{}}`
+	row := `{"queryId":"%s","provider":"github","kind":"issue","key":"k-k1/agent-fleet#1028","title":"SSM login","state":"in_progress","labels":[],"labelColors":{}}`
 	env.body = func() string {
 		return `{"items":[` + strings.Replace(row, "%s", "a", 1) + `,` + strings.Replace(row, "%s", "b", 1) + `],"errors":[]}`
 	}
@@ -102,6 +102,8 @@ func TestWorkItemSearchNarrowsAndDoesNotCache(t *testing.T) {
 	}
 	if len(out.Items) != 1 || out.Items[0].Key != "k-k1/agent-fleet#1028" {
 		t.Errorf("items = %+v, want the one ticket once", out.Items)
+	} else if out.Items[0].State != "in_progress" {
+		t.Errorf("issue state through search = %q, want in_progress", out.Items[0].State)
 	}
 	if len(out.Skipped) != 1 || out.Skipped[0] != "bb" {
 		t.Errorf("skipped = %v, want [bb]", out.Skipped)
