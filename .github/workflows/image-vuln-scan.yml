@@ -1,8 +1,7 @@
 # Detect security fixes the published images are missing (#3320).
 #
-# The images build from floating base tags with no `apt-get upgrade`, and the Go binaries
-# only pick up a new standard library when rebuilt, so a release carries whatever was
-# current at build time and nothing moves afterwards. This workflow scans what was actually
+# A published image carries the packages and Go standard library selected at build time;
+# nothing in it moves afterwards. This workflow scans what was actually
 # PUBLISHED and keeps one tracking issue open while a fix exists that the release lacks:
 #
 #   - the control-plane and workspace images (ghcr.io/k-k1/agent-fleet/<name>:<version>,

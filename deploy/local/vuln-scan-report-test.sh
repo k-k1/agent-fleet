@@ -25,7 +25,7 @@ hasnt() { ! grep -qF -- "$1" "$WORK/body.md" || fail "body must not contain: $1"
 report --trivy "image=$FX/trivy-findings.json" --pinned-dockerfile "$FX/Dockerfile.pins"
 [ "$rc" = 0 ] || fail "1: rc=$rc"
 [ "$(cat "$WORK/out")" = "fixable=5" ] || fail "1: expected fixable=5"
-# A package the Dockerfile pins is not cured by a fresh base: bump, not rebuild.
+# A package the Dockerfile pins is not cured by a rebuild: bump, not rebuild.
 grep -F "CVE-2099-0007" "$WORK/body.md" | grep -qF "| bump |" || fail "1: pinned chromium should be bump"
 grep -F "CVE-2099-0002" "$WORK/body.md" | grep -qF "| rebuild |" || fail "1: unpinned OS package should be rebuild"
 has "CVE-2099-0001"; has "CVE-2099-0002"
@@ -33,7 +33,7 @@ hasnt "CVE-2099-0003"   # no fix available
 hasnt "CVE-2099-0004"   # MEDIUM
 grep -F "CVE-2099-0005" "$WORK/body.md" | grep -qF "| rebuild |" || fail "1: own-binary stdlib should be rebuild"
 grep -F "CVE-2099-0006" "$WORK/body.md" | grep -qF "| bump |" || fail "1: third-party tool stdlib should be bump"
-has "**3** can be cured by rebuilding"
+has "**3** can be cured by rebuilding with current Debian archive fixes, a refreshed base image, or Go toolchain"
 
 # 2. Table cells cannot be broken by scanner text (the title is not rendered at all).
 hasnt "a | b"
