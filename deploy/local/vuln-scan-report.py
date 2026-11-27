@@ -177,7 +177,7 @@ def render(release, targets):
            f"contain **{total}** fixable finding(s) "
            "(HIGH/CRITICAL with a fixed version; Go findings from `govulncheck`, which has no severity).", ""]
     if total:
-        out += [f"- **{rebuild}** can be cured by rebuilding with a refreshed base image or Go toolchain "
+        out += [f"- **{rebuild}** can be cured by rebuilding with current Debian archive fixes, a refreshed base image, or Go toolchain "
                 "(remedy `rebuild`): cut a patch release.",
                 f"- **{total - rebuild}** need a pin or dependency bump (remedy `bump`: a Go module, an npm "
                 "package, a baked tool): fix those through a normal PR first; a rebuild alone does not move them.",
