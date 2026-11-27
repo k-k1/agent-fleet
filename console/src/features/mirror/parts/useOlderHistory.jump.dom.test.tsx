@@ -43,7 +43,7 @@ function Harness({ session, loaded = true, first = 1000 }: { session: string; lo
     jumpTo: (m: unknown) => { jumped.push(m); turnsAtJump.push(turns[0].idx); return true; },
   };
   older = useOlderHistory({ session, st: st as never, scroll: scroll as never, toast: (m) => toasts.push(m) });
-  return <div data-first={turns[0].idx} />;
+  return <div data-indexes={turns.map((turn) => turn.idx).join(",")} />;
 }
 
 let root: Root | null = null;
@@ -74,6 +74,13 @@ afterEach(() => {
 });
 
 describe("useOlderHistory explicit jump", () => {
+  it("merges an overlapping Antigravity page by turn index", async () => {
+    apiMock.mockResolvedValueOnce({ stepIndexed: true, messages: [{ idx: 700 }, { idx: 1000 }], firstLine: 700, hasMore: true });
+    mount({ session: "s" });
+    await act(async () => older!());
+    expect(host?.firstElementChild?.getAttribute("data-indexes")).toBe("700,1000");
+  });
+
   it("pages back to a hit older than the window, then jumps once the turns are mounted", async () => {
     mount({ session: "s" });
     act(() => requestJump("s", { atBottom: false, idx: 300, offset: 0, near: true }));

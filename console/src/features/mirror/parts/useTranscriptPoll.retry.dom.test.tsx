@@ -101,3 +101,33 @@ it("inserts an Antigravity failure in order and updates the same turn when its l
     act(() => root.unmount());
   }
 });
+
+it("preserves the loaded Antigravity history range when an echo refreshes the tail", async () => {
+  const { st, fns, refs } = fakeState();
+  const root = createRoot(document.createElement("div"));
+  const latest = { role: "assistant", idx: 11, text: "last reply" };
+  const oldTail = { stepIndexed: true, cursor: 12, firstLine: 10, hasMore: true, messages: [latest] };
+  vi.mocked(api)
+    .mockResolvedValueOnce(oldTail)
+    .mockResolvedValueOnce({ stepIndexed: true, cursor: 12, messages: [] })
+    .mockResolvedValueOnce(oldTail)
+    .mockResolvedValueOnce({ stepIndexed: true, cursor: 12, messages: [latest] });
+  try {
+    await act(async () => root.render(<Probe session="agy-resync" st={st} />));
+    refs.firstLineRef.current = 0; // the reader paged to the beginning
+    fns.setHasMore.mockClear();
+    refs.pendingSendsRef.current = [{ id: "echo", at: Date.now() - 21000 }];
+    const tick = refs.tickRef.current as () => void;
+    await act(async () => tick());
+    expect(refs.cursorRef.current).toBe(0);
+    refs.pendingSendsRef.current = []; // the one-shot retry has been scheduled
+    await act(async () => tick());
+    expect(api).toHaveBeenLastCalledWith("api/sessions/agy-resync/messages?since=0&tail=1&limit=400");
+    expect(refs.firstLineRef.current).toBe(0);
+    expect(fns.setHasMore).not.toHaveBeenCalledWith(true);
+    await act(async () => tick());
+    expect(api).toHaveBeenLastCalledWith("api/sessions/agy-resync/messages?since=12&from=0");
+  } finally {
+    act(() => root.unmount());
+  }
+});

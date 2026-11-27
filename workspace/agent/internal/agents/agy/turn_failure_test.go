@@ -150,7 +150,8 @@ func TestTranscriptBackfillsFailureWithStableIdentity(t *testing.T) {
 					t.Fatalf("indexes = %v, want %v, failure parts = %+v", got, indexes, parts)
 				}
 				for i, kind := range kinds {
-					if parts[i].Kind != kind || (kind == "error" && parts[i].Text != canceledStepFailure) {
+					if parts[i].Kind != kind || (kind == "error" && parts[i].Text != canceledStepFailure) ||
+						(kind == "tool" && parts[i].Output != "tool") {
 						t.Fatalf("failure parts = %+v, want %v", parts, kinds)
 					}
 				}
@@ -161,7 +162,8 @@ func TestTranscriptBackfillsFailureWithStableIdentity(t *testing.T) {
 			if !promptPresent {
 				log += prompt
 			}
-			writeTranscript(t, conv, "transcript_full.jsonl", log+`{"step_index":3,"source":"MODEL","type":"RUN_COMMAND","content":"tool"}
+			writeTranscript(t, conv, "transcript_full.jsonl", log+`{"step_index":3,"source":"MODEL","type":"RUN_COMMAND","content":"old tool output"}
+{"step_index":3,"source":"MODEL","type":"RUN_COMMAND","content":"tool"}
 {"step_index":4,"source":"SYSTEM","type":"ERROR_MESSAGE","content":"unredacted CLI error"}
 `)
 			after, _ := agentImpl{}.Transcript(m)

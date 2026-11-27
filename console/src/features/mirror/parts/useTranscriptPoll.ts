@@ -153,6 +153,7 @@ export function useTranscriptPoll({
     if (!session) return;
     let alive = true;
     let stepIndexed = false;
+    let heldStepWindow = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       // Hidden tab: skip the fetch entirely (mobile data / battery); the
@@ -250,8 +251,13 @@ export function useTranscriptPoll({
             }
             // Windowed (initial tail) response carries the oldest line we now hold.
             if (typeof d.firstLine === "number") {
-              firstLineRef.current = d.firstLine;
-              setHasMore(!!d.hasMore);
+              // An echo resync merges a newer tail into the history already held.
+              // Keep paging and live backfill anchored to the older loaded range.
+              if (!stepIndexed || !heldStepWindow || d.reset || d.firstLine <= firstLineRef.current) {
+                firstLineRef.current = d.firstLine;
+                setHasMore(!!d.hasMore);
+              }
+              heldStepWindow = stepIndexed && d.cursor > 0;
             }
             // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
             // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
@@ -474,9 +480,9 @@ export function useOlderHistory({
       if (d && !d.error && Array.isArray(d.messages)) {
         if (d.messages.length) {
           scroll.capturePrependAnchor(); // keep the viewport steady across the prepend
-          const older = d.messages;
+          const older: Turn[] = d.messages;
           for (const t of older) if (typeof t.idx === "number" && t.idx < oldestRef.current) oldestRef.current = t.idx;
-          setTurns((t) => [...older, ...t]);
+          setTurns((t) => d.stepIndexed === true ? mergeTurns(older, t) : [...older, ...t]);
         }
         if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
         setHasMore(!!d.hasMore);

@@ -86,8 +86,13 @@ func TestGenericMessagesKeepsStepIndexedPagesStableAcrossBackfill(t *testing.T) 
 	}
 	t.Cleanup(agentreg.SwapForTest(session.KindAgy, a))
 	m := session.Meta{Name: "slot-step-indexed", Kind: session.KindAgy, Dir: t.TempDir(), Title: "Paging test"}
+	edit := func(path string) transcript.Part {
+		return transcript.Part{Kind: "tool", Tool: "edit", File: path, Edits: []transcript.Edit{{Old: "old", New: "new"}}}
+	}
+	a.turns[1].Cwd, a.turns[1].Parts = m.Dir, []transcript.Part{edit("first.go")}
 	type page struct {
 		Messages    []transcript.Turn
+		Files       []transcript.FileTouch
 		Cursor      int
 		FirstLine   int
 		HasMore     bool
@@ -115,7 +120,7 @@ func TestGenericMessagesKeepsStepIndexedPagesStableAcrossBackfill(t *testing.T) 
 	if !tail.HasMore || tail.FirstLine != 1 || tail.Cursor != 68 {
 		t.Fatalf("tail = %+v", tail)
 	}
-	failed := transcript.Turn{Role: "assistant", Idx: 5, Parts: []transcript.Part{{Kind: "error", Text: "executor failed"}}}
+	failed := transcript.Turn{Role: "assistant", Idx: 5, Cwd: m.Dir, Parts: []transcript.Part{{Kind: "error", Text: "executor failed"}}}
 	a.turns = slices.Insert(a.turns, 2, failed)
 	older := read("before="+strconv.Itoa(tail.FirstLine), 0)
 	if older.HasMore || older.FirstLine != 0 {
@@ -126,11 +131,20 @@ func TestGenericMessagesKeepsStepIndexedPagesStableAcrossBackfill(t *testing.T) 
 	if live.Cursor != tail.Cursor || len(live.Messages[0].Parts) != 1 {
 		t.Fatalf("live = %+v", live)
 	}
-	a.turns[2].Parts = append([]transcript.Part{{Kind: "tool", Tool: "RUN_COMMAND"}}, failed.Parts...)
-	read("before=10", 0, 1, 5)
-	updated := read(poll, 5, 67)
-	if len(updated.Messages[0].Parts) != 2 || updated.Messages[0].Parts[1].Kind != "error" {
+	a.turns[2].Parts = append([]transcript.Part{edit("late.go")}, failed.Parts...)
+	a.turns = slices.Insert(a.turns, 2, transcript.Turn{Role: "user", Idx: 4, Text: "failed prompt"})
+	read("before=5", 0, 1, 4)
+	read("since=68&from=5", 5, 67)
+	updated := read(poll, 4, 5, 67)
+	if len(updated.Messages[1].Parts) != 2 || updated.Messages[1].Parts[1].Kind != "error" {
 		t.Fatalf("updated = %+v", updated)
+	}
+	counts := make(map[string]int)
+	for _, file := range updated.Files {
+		counts[filepath.Base(file.Path)] = file.Count
+	}
+	if len(counts) != 2 || counts["first.go"] != 1 || counts["late.go"] != 1 {
+		t.Fatalf("file edit counts = %v, want one edit per file", counts)
 	}
 }
 
