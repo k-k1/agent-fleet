@@ -156,7 +156,6 @@ Resources:
         Namespace: !GetAtt Namespace.Arn
 
   # --- IAM: Control Plane execution role (ECR pull + logs + the CP's own secrets) ---
-  # Keeps /af-ws/* for one release (older task definitions still name it): PARAMETERS.md, "Execution roles".
   ExecRole:
     Type: AWS::IAM::Role
     Properties:
@@ -174,11 +173,10 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # CP master key, cookie secret, OAuth client secrets; /af-ws/* is transitional.
+              # CP master key, cookie secret and OAuth client secrets.
               - Effect: Allow
                 Action: [ ssm:GetParameters ]
                 Resource:
-                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-cp/*"
               # Secret injection decrypts /af-cp/master-key as this role: no grant, no CP task.
               - !If

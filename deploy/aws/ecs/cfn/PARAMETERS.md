@@ -1454,17 +1454,16 @@ Two execution roles in 20-platform, because the secrets they read have different
 - `ExecRole` (export `ExecRoleArn`) is the Control Plane's: `/af-cp/*` (master key, cookie
   secret, OAuth client secrets), the RDS-managed password and the egress token. The CP task
   and the home task name it.
-- `WsExecRole` (export `WsExecRoleArn`) is the workspaces': `/af-ws/*` only. The CP passes it to
-  every new workspace task definition (`AF_ECS_EXEC_ROLE`); 50-tts and 60-engines name it too.
-  It can never read `/af-cp/*`.
+- `WsExecRole` (export `WsExecRoleArn`) reads `/af-ws/*` and receives the Secrets Manager grants
+  for the Hugging Face and Civitai tokens from 60-engines. The CP passes this role to every new
+  workspace task definition (`AF_ECS_EXEC_ROLE`). The 50-tts and 60-engines task definitions also
+  name it, and the role has no access to `/af-cp/*`.
 
-Transitional: `ExecRole` keeps `/af-ws/*`, and 60-engines attaches its Secrets Manager grants to
-both roles. Task definitions registered before the split, and the ECS services running them,
-still name `ExecRole`; a service replaces a stopped task from that definition until the CP next
-starts the workspace, so removing the grant at once would break those restarts. Removing it
-(and the second role on the 60-engines policies) is a separate change, after every workspace
-service has moved to a definition naming `WsExecRole`. Until then the CP execution role can
-still read `/af-ws/*`; the slot role no longer can.
+Before applying these templates to a deployment that still has the transitional grants, check
+that each active workspace service and every 50-tts and 60-engines service uses a task definition
+with `WsExecRole`. ECS replaces a failed task using its service's current definition. If a service
+still uses the old role, move it to the new definition before removing the grants. A stopped
+workspace picks up the new definition on its next start from the Console.
 
 Scoping `WsExecRole` per workspace (`/af-ws/<name>/*`) is not done (#3469, decided 2026-11-08).
 A shared role cannot be scoped per task: ECS injects `secrets:` by calling `ssm:GetParameters`
@@ -1476,8 +1475,7 @@ the CP does not have today (it only passes three fixed roles), so it was not ado
 reasoned from the ECS/IAM model, not tested live; revisit if ECS gains a per-task value usable
 in the execution role's IAM context.
 
-The ids and the `ExecRoleArn` export are kept, so no stack update removes an export
-that is still imported, and the update order does not matter for task starts.
+The `ExecRoleArn` export still serves the Control Plane and home task definitions.
 
 `SlotRole` (40-ec2-pool) carries an explicit Deny of `ssm:GetParameter*` on `/af-cp` and
 `/af-ws` (inline policy `af-slot-deny-af-parameters`), because `AmazonSSMManagedInstanceCore`
