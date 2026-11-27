@@ -496,6 +496,19 @@ describe("LaunchModal branch mode", () => {
     expect(promptBox().value).toBe("");
   });
 
+  it("clears the launch fields after transferring them to the created session's retry draft", async () => {
+    onLaunch = vi.fn<Launch>(async () => ({
+      ok: true, name: "s1", incomplete: { files: ["shot.png"], prompt: true, saved: false, held: true },
+    }));
+    await render();
+    await type("直して");
+    await pasteImage("shot.png");
+    await click(byText("Start in a worktree"));
+    await reopen();
+    expect(promptBox().value).toBe("");
+    expect(chips()).toHaveLength(0);
+  });
+
   // Coming back from a failed launch, the typed text is still needed (fix the collision and
   // press again).
   it("keeps the draft when the launch did not happen", async () => {

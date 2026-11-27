@@ -141,9 +141,9 @@ export interface LaunchResult {
    *  needs it to tell the offering side which session took the work. */
   name?: string;
   /** The session exists (ok), but part of the draft did not reach it: files whose upload failed
-   *  and/or a first prompt the Agent refused. `saved`: the whole draft was stored as a memo. Callers keep the restored memo;
-   *  the form keeps its draft only when it was not saved. */
-  incomplete?: { files: string[]; prompt: boolean; saved: boolean };
+   *  and/or a first prompt the Agent refused. Callers keep a memo used to seed the launch.
+   *  `saved` reports a memo fallback, and `held` transfers the draft to the created session’s retry form. */
+  incomplete?: { files: string[]; prompt: boolean; saved: boolean; held?: boolean };
   /** The space the launch named does not exist (any more). The form keeps refusing that pick
    *  until another place is chosen, whatever the list says: the list is re-read meanwhile and
    *  can be slow or fail. */
@@ -1088,10 +1088,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       // Only a registered full id of an agent whose row shows recents: a tier alias would push the
       // registered ones out of the three slots, and a live catalog never reads the list.
       else if (hasModel && !agentOf(kind).caps.liveModels && !isTierAlias(model)) rememberRecentModel(kind, model);
-      // A successful launch means this text and its attachments reached the new session in
-      // full, and this is the only place the draft may be discarded: coming back from a failure
-      // (a name collision, say) keeps both the typed text and the attachments.
-      if (!r.incomplete || r.incomplete.saved) {
+      // Clear this form once delivery succeeds or recovery moves to a memo or retry form.
+      // An unsuccessful launch leaves the fields here for the next attempt.
+      if (!r.incomplete || r.incomplete.saved || r.incomplete.held) {
         clearPromptDraft();
         attach.clear();
       }

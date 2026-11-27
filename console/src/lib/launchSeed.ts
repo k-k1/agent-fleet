@@ -12,9 +12,22 @@
 // Module-level so it doesn't thread through context, and one-shot so a re-open / poll
 // re-render doesn't show it twice.
 const seeds = new Map<string, string>();
+const listeners = new Map<string, Set<() => void>>();
+
+export function subscribeLaunchSeed(session: string, onSeed: () => void): () => void {
+  let group = listeners.get(session);
+  if (!group) listeners.set(session, group = new Set());
+  group.add(onSeed);
+  return () => {
+    group.delete(onSeed);
+    if (!group.size) listeners.delete(session);
+  };
+}
 
 export function setLaunchSeed(session: string, prompt: string): void {
-  if (prompt) seeds.set(session, prompt);
+  if (!prompt) return;
+  seeds.set(session, prompt);
+  listeners.get(session)?.forEach((onSeed) => onSeed());
 }
 
 // takeLaunchSeed returns the pending prompt for a session and clears it (one-shot).

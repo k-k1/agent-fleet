@@ -18,6 +18,8 @@ vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTer
 const { useStartWork } = await import("./useStartWork.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { takeLaunchSeed, subscribeLaunchSeed } = await import("../../lib/launchSeed.ts");
+const { readPromptHistory } = await import("../../lib/promptHistory.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -30,6 +32,8 @@ const toasts = () => [...document.querySelectorAll(".ui-toast-msg")].map((n) => 
 const file = (name: string) => new File(["x"], name, { type: "image/png" });
 
 beforeEach(async () => {
+  localStorage.clear();
+  takeLaunchSeed("s1");
   apiJSON.mockReset();
   pasteImage.mockReset();
   stash.mockReset();
@@ -78,21 +82,108 @@ describe("partial draft delivery", () => {
     expect(toasts()).not.toContain(t("rp.draft_kept"));
   });
 
-  it("reports the file whose upload was refused", async () => {
+  it("retains a refused attachment for retry to the created session", async () => {
     apiJSON.mockImplementation((p: string) => created(p));
     pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" }).mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large" } });
     const r = await launch([file("a.png"), file("b.png")]);
     expect(r.ok).toBe(true);
-    expect(r.incomplete).toEqual({ files: ["b.png"], prompt: false, saved: true });
-    expect(stash).toHaveBeenCalledWith("x", "look at these", expect.any(Array));
-    expect(toasts()).toContain(t("rp.draft_saved"));
+    expect(r.incomplete).toEqual({ files: ["b.png"], prompt: true, saved: false, held: true });
+    expect(stash).toHaveBeenCalledExactlyOnceWith("x", "look at these", []);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
+    await act(async () => review.click());
+    let dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
+    expect(dialog.querySelector("textarea")?.value).toBe("look at these");
+    expect(dialog.textContent).toContain("b.png");
+    const submit = async () => {
+      await act(async () => dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    };
+
+    pasteImage.mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large" } });
+    await submit();
+    expect(dialog.textContent).toContain("b.png");
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+
+    await act(async () => dialog.querySelector<HTMLButtonElement>("header button")!.click());
+    expect(dialog.isConnected).toBe(false);
+    await act(async () => review.click());
+    dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
+    expect(dialog.textContent).toContain("b.png");
+    await act(async () => dialog.querySelectorAll<HTMLButtonElement>("li button")[1].click());
+    const picker = dialog.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(picker, "files", { value: [file("smaller.png")] });
+    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+
+    pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/smaller.png" });
+    await submit();
+    expect(pasteImage.mock.calls.map(([session, f]) => [session, f.name])).toEqual([
+      ["s1", "a.png"], ["s1", "b.png"], ["s1", "b.png"], ["s1", "smaller.png"],
+    ]);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    expect(apiJSON).toHaveBeenLastCalledWith("api/sessions/s1/input", "POST", {
+      prompt: expect.stringMatching(/look at these[\s\S]*\/p\/a\.png[\s\S]*\/p\/smaller\.png/),
+      when_ready: true,
+    });
+    expect(document.querySelector("form[role=dialog]")).toBeNull();
+    expect(review.isConnected).toBe(false);
+  });
+
+  it("keeps the retry draft if the session refuses the input", async () => {
+    apiJSON.mockImplementation((p: string) => created(p, { error: { code: "busy" } }));
+    pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/b.png" });
+    await launch([file("b.png")]);
+    const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
+    await act(async () => review.click());
+    const dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
+    const submit = () => act(async () => {
+      dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    await submit();
+    const refusedCall = apiJSON.mock.lastCall;
+    expect(dialog.isConnected).toBe(true);
+    expect(dialog.querySelector("textarea")?.value).toBe("look at these");
+    expect(dialog.textContent).toContain("b.png");
+    expect(readPromptHistory("x")).toEqual([]);
+
+    const onSeed = vi.fn(() => takeLaunchSeed("s1"));
+    const unsubscribe = subscribeLaunchSeed("s1", onSeed);
+    try {
+      apiJSON.mockImplementation((p: string) => created(p));
+      await submit();
+      expect(apiJSON).toHaveBeenCalledTimes(3);
+      expect(apiJSON.mock.lastCall).toEqual(refusedCall);
+      expect(pasteImage).toHaveBeenCalledTimes(2);
+      expect(onSeed).toHaveBeenCalledTimes(1);
+      expect(onSeed.mock.results[0]?.value).toContain("/p/b.png");
+      expect(readPromptHistory("x")).toEqual(["look at these"]);
+      expect(dialog.isConnected).toBe(false);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("discards a held draft only after the retry dialog is closed", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("b.png")]);
+    const review = document.querySelector<HTMLButtonElement>(".ui-toast-msg button")!;
+    const discard = document.querySelector<HTMLButtonElement>(`[aria-label="${t("rp.delivery_discard")}"]`)!;
+    await act(async () => review.click());
+    const dialog = document.querySelector("form[role=dialog]")!;
+    await act(async () => discard.click());
+    expect(dialog.isConnected).toBe(true);
+    await act(async () => dialog.querySelector<HTMLButtonElement>("header button")!.click());
+    await act(async () => discard.click());
+    expect(review.isConnected).toBe(false);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
   });
 
   it("reports the file whose upload failed on the network", async () => {
     apiJSON.mockImplementation((p: string) => created(p));
     pasteImage.mockRejectedValue(new Error("offline"));
     const r = await launch([file("a.png")]);
-    expect(r.incomplete).toEqual({ files: ["a.png"], prompt: false, saved: true });
+    expect(r.incomplete).toEqual({ files: ["a.png"], prompt: true, saved: false, held: true });
   });
 
   it("reports a first prompt the Agent refused", async () => {
@@ -105,8 +196,8 @@ describe("partial draft delivery", () => {
 
   it("says so when the draft could not be saved as a memo either", async () => {
     stash.mockResolvedValue({ ok: false, reason: "failed" });
-    apiJSON.mockImplementation((p: string) => created(p));
-    pasteImage.mockRejectedValue(new Error("offline"));
+    pasteImage.mockResolvedValue({ status: 200, path: "/p/a.png" });
+    apiJSON.mockImplementation((p: string) => created(p, { error: { code: "busy" } }));
     const r = await launch([file("a.png")]);
     expect(r.incomplete?.saved).toBe(false);
     expect(toasts()).toContain(t("rp.draft_kept"));
@@ -115,8 +206,8 @@ describe("partial draft delivery", () => {
   it("falls back to saving the text alone when the files cannot be saved", async () => {
     stash.mockReset();
     stash.mockResolvedValueOnce({ ok: false, reason: "too_large" }).mockResolvedValueOnce({ ok: true });
-    apiJSON.mockImplementation((p: string) => created(p));
-    pasteImage.mockResolvedValue({ status: 413, error: { code: "paste_too_large" } });
+    apiJSON.mockImplementation((p: string) => created(p, { error: { code: "busy" } }));
+    pasteImage.mockResolvedValue({ status: 200, path: "/p/big.png" });
     const r = await launch([file("big.png")]);
     expect(stash).toHaveBeenNthCalledWith(2, "x", "look at these", []);
     expect(r.incomplete?.saved).toBe(true);
