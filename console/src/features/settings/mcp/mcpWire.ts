@@ -483,6 +483,7 @@ export interface TenantServer {
   oauth_client?: { issuer: string; client_id: string; client_secret?: string };
   // OAuth only: the scopes the sign-in requests instead of what the server names (ADR 0146).
   scopes?: string[];
+  elicitation?: "relay";
   created_by?: string;
   updated_at?: string;
 }
@@ -521,6 +522,7 @@ export interface TenantForm {
   // OAuth only: the definition's scopes as typed, separated by spaces or newlines. Empty = the
   // sign-in requests what the server names.
   oauthScopes: string;
+  relayElicitation: boolean;
 }
 
 export const emptyTenantForm = (): TenantForm => ({
@@ -547,6 +549,7 @@ export const emptyTenantForm = (): TenantForm => ({
   oauthOrigIssuer: "",
   oauthOrigClientId: "",
   oauthScopes: "",
+  relayElicitation: false,
 });
 
 export const tenantFormOf = (s: TenantServer): TenantForm => ({
@@ -573,6 +576,7 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   oauthOrigIssuer: s.oauth_client?.issuer || "",
   oauthOrigClientId: s.oauth_client?.client_id || "",
   oauthScopes: (s.scopes || []).join("\n"),
+  relayElicitation: s.auth === "oauth" && s.elicitation === "relay",
 });
 
 // urlMoved mirrors the control plane's urlHostChanged: another host, another effective port
@@ -686,6 +690,7 @@ export const bodyOfTenant = (f: TenantForm, tenantSlug: string): Record<string, 
   ...(f.auth === "oauth" ? { auth: "oauth" } : {}),
   ...(tenantOAuthClient(f) ? { oauth_client: tenantOAuthClient(f) } : {}),
   ...(tenantScopes(f).length > 0 ? { scopes: tenantScopes(f) } : {}),
+  ...(f.auth === "oauth" && f.relayElicitation ? { elicitation: "relay" } : {}),
 });
 
 // A tenant client names the authorization server it was registered at: an https issuer.

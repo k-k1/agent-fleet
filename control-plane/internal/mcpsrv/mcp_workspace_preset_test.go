@@ -149,7 +149,7 @@ func TestAdminWorkspaceMCPPresetCreatesOrdinaryDefinitions(t *testing.T) {
 	}
 	for _, def := range payload.Servers {
 		if def.OAuthClient == nil || !def.OAuthClient.Confidential || def.OAuthClient.ClientID != "tenant-agent" ||
-			def.Auth != "oauth" || len(def.Scopes) == 0 || !def.Enabled || !def.Targets.Session || !def.Targets.Assistant {
+			def.Auth != "oauth" || len(def.Scopes) == 0 || def.Elicitation != "" || !def.Enabled || !def.Targets.Session || !def.Targets.Assistant {
 			t.Errorf("definition %s did not carry the preset's OAuth settings", def.Name)
 		}
 	}

@@ -110,6 +110,25 @@ A list of more than 12 scopes, here or in a connection test, is folded into "**S
 
 When your administrator distributes Google Workspace, its services appear with the **Tenant** label. Leave the services you want switched on and press **Sign in** on any of their rows. Sign in to your Google account and approve the requested scopes. The same consent connects all switched-on services sharing the client when Google accepts the shared request. If the Console asks you to sign in separately, sign in on each service you want to use.
 
+## Answer an MCP confirmation card
+
+A tenant administrator can turn on Console confirmation cards for a distributed OAuth server.
+If that server asks for confirmation during a supported tool call, the call waits for your answer.
+The card supports forms with a fixed list of choices for every field. A form that asks for typed
+text ends the call with an error. Cards work in both Managed and Terminal (CLI) sessions.
+
+1. Look for the card above the session's message box. If the session's conversation is out of view or
+   the Console cannot identify the session, look for a pop-up notification in the main Console window.
+2. Check the server, the tool, and **What the server will run**. Read the server's message and choose
+   an option for each required field. When options have the same label, the card also shows their
+   values so you can tell them apart.
+3. Press **Send answer** to send your choices to the server. If the server offers an option to
+   always allow a tool, choosing it can let future calls run without another card.
+
+Press **Decline** or close the pop-up notification to decline the call. Agent Fleet also declines
+it at the time shown on the card. The card can disappear sooner if the agent cancels the call or
+stops waiting for the server.
+
 ## What you can change, by origin
 
 Each row carries a label saying who registered it.

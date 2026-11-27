@@ -65,11 +65,16 @@ const (
 	codeMCPOAuthReenter   = "mcp_oauth_secret_reenter"
 	codeMCPHeaderReenter  = "mcp_header_secret_reenter"
 	codeMCPOAuthScopes    = "mcp_oauth_scopes_invalid"
+	codeMCPElicitUnknown  = "mcp_elicitation_unknown"
+	codeMCPElicitOAuth    = "mcp_elicitation_oauth_only"
 )
 
 // mcpAuthOAuth marks a definition each member signs in to with OAuth (ADR 0119 decision 9). It
 // distributes no credential, so it has no headers and no user_secret.
 const mcpAuthOAuth = "oauth"
+
+// mcpElicitationRelay matches the Agent's mcpreg.ElicitationRelay (ADR 0146 decision 6).
+const mcpElicitationRelay = "relay"
 
 // MaskedValue is what a stored header value is replaced with on the wire. Sending it
 // back unchanged keeps the stored value, so the admin UI can edit a definition without
@@ -152,10 +157,11 @@ type mcpServerBody struct {
 	// secret is write-only: it comes back as MaskedValue, which sent back keeps it.
 	OAuthClient *mcpOAuthClientBody `json:"oauth_client,omitempty"`
 	// Scopes replaces what an OAuth server's sign-in would otherwise request (ADR 0146 decision 2).
-	Scopes    []string `json:"scopes,omitempty"`
-	CreatedBy string   `json:"created_by,omitempty"`
-	CreatedAt string   `json:"created_at,omitempty"`
-	UpdatedAt string   `json:"updated_at,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
+	Elicitation string   `json:"elicitation,omitempty"`
+	CreatedBy   string   `json:"created_by,omitempty"`
+	CreatedAt   string   `json:"created_at,omitempty"`
+	UpdatedAt   string   `json:"updated_at,omitempty"`
 }
 
 type mcpOAuthClientBody struct {
@@ -191,7 +197,8 @@ type distDef struct {
 	// Scopes is the agent's ServerDef.Scopes. The Agent drops a definition whose scopes it refuses,
 	// and a dropped OAuth definition ends its sign-in on the next fetch, so only a list that passed
 	// validDefScopes is ever stored to be sent here.
-	Scopes []string `json:"scopes,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
+	Elicitation string   `json:"elicitation,omitempty"`
 }
 
 // distOAuthClient is the agent's secrets.MCPTenantClient.
@@ -304,6 +311,15 @@ func validateMCPBody(b mcpServerBody) *APIError {
 	if len(b.Scopes) > 0 && (b.Auth != mcpAuthOAuth || !validDefScopes(b.Scopes)) {
 		return &APIError{http.StatusBadRequest, codeMCPOAuthScopes, fmt.Sprintf(
 			"scopes belong to an OAuth server and must be scope tokens without commas, %d bytes at most together with offline_access", maxScopeLen)}
+	}
+	switch b.Elicitation {
+	case "":
+	case mcpElicitationRelay:
+		if b.Auth != mcpAuthOAuth {
+			return &APIError{http.StatusBadRequest, codeMCPElicitOAuth, "the relay answers elicitation only for an OAuth server"}
+		}
+	default:
+		return &APIError{http.StatusBadRequest, codeMCPElicitUnknown, "unknown elicitation handling: " + b.Elicitation}
 	}
 	for k, v := range b.Headers {
 		if strings.TrimSpace(k) == "" || strings.ContainsAny(k, "\r\n:") {
@@ -599,7 +615,7 @@ func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody 
 		Headers: headers, Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 		TimeoutMS: row.TimeoutMS, Enabled: row.Enabled, UserSecret: row.UserSecret, Auth: row.Auth,
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-		OAuthClient: maskedOAuthClient(row), Scopes: distScopesOf(row),
+		OAuthClient: maskedOAuthClient(row), Scopes: distScopesOf(row), Elicitation: distElicitationOf(row),
 	}
 }
 
@@ -749,7 +765,7 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		Transport: "http", URL: strings.TrimSpace(b.URL), HeadersEnc: enc, KeyRef: keyRef,
 		Targets: joinTargets(b.Targets), Kinds: strings.Join(b.Kinds, ","), TimeoutMS: b.TimeoutMS,
 		Enabled: b.Enabled, UserSecret: b.UserSecret, Auth: b.Auth, OAuthScopes: joinScopes(b.Scopes),
-		UpdatedAt: store.NowTS(),
+		Elicitation: b.Elicitation, UpdatedAt: store.NowTS(),
 	}
 	if aerr := a.resolveOAuthClient(r.Context(), t.ID, b, stored, &row); aerr != nil {
 		writeAPIErr(w, aerr)
@@ -796,7 +812,8 @@ func (a ServerAPI) recordMCPUpsert(ctx context.Context, ident store.Identity, ro
 	}
 	a.auditMCP(ctx, ident, row.TenantID, "mcp.upsert", row.Name,
 		"url="+row.URL+changed+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth+
-			" oauth_client="+row.OAuthClientID+" confidential="+boolStr(row.OAuthSecretEnc != "")+" scopes="+strings.ReplaceAll(row.OAuthScopes, " ", ","))
+			" oauth_client="+row.OAuthClientID+" confidential="+boolStr(row.OAuthSecretEnc != "")+
+			" scopes="+strings.ReplaceAll(row.OAuthScopes, " ", ",")+" elicitation="+row.Elicitation)
 }
 
 // AdminDelete (DELETE /api/admin/mcp-servers/{id}?tenant=<slug>).
@@ -859,6 +876,15 @@ func distScopesOf(row store.MCPServerRow) []string {
 	return splitScopes(row.OAuthScopes)
 }
 
+// distElicitationOf hides a stale mode left behind if an older Control Plane changed
+// the row's authentication during a rollback. The Agent would reject the entire row.
+func distElicitationOf(row store.MCPServerRow) string {
+	if row.Auth != mcpAuthOAuth {
+		return ""
+	}
+	return row.Elicitation
+}
+
 // Distribute (GET /internal/mcp-servers) serves the caller's tenant's ENABLED
 // definitions to their Workspace agent, which caches them (docs/log/48 §6). The tenant comes
 // from the token's membership, never the request, so this can never read another
@@ -893,7 +919,7 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 			Transport: "http", URL: row.URL, Headers: h, Enabled: true,
 			Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 			TimeoutMS: row.TimeoutMS, UserSecret: row.UserSecret, Auth: row.Auth,
-			OAuthClient: distClientOf(row), Scopes: distScopesOf(row),
+			OAuthClient: distClientOf(row), Scopes: distScopesOf(row), Elicitation: distElicitationOf(row),
 		})
 	}
 	// The tenant switch for member-added watch sources rides on the same poll. A read that fails
