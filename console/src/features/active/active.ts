@@ -72,6 +72,22 @@ export interface ActiveGroup {
 
 export const OTHER_GROUP = "o:";
 
+/** Resolve the heading's launch targets from the working-copy list, independently of which
+ *  sessions are visible. A linked worktree can be the only session's folder in a group. */
+export function activeLaunchCopies(repos: Repo[]): Map<string, Repo[]> {
+  const byFolder = new Map(repos.map((r) => [r.name, r]));
+  const copies = new Map<string, Repo[]>();
+  for (const repo of repos) {
+    if (repo.worktree || !repo.path?.trim()) continue;
+    const { key } = repoGroupId(repo.name, byFolder);
+    const group = copies.get(key) ?? [];
+    group.push(repo);
+    copies.set(key, group);
+  }
+  for (const group of copies.values()) group.sort((a, b) => compareText(a.name, b.name));
+  return copies;
+}
+
 /** How long a stopped session stays in the view after the Agent first saw it stopped (ADR 0145
  *  decision 8). Fixed, not a setting. */
 export const RECENT_STOP_MS = 24 * 60 * 60 * 1000;

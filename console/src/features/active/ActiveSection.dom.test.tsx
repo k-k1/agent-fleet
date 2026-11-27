@@ -34,7 +34,7 @@ const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
-const { useReposStore } = await import("../repos/store.ts");
+const { useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { spacesOwner, useSpacesStore } = await import("../spaces/store.ts");
 const { setSettings } = await import("../../lib/settings.ts");
 
@@ -74,7 +74,8 @@ beforeEach(() => {
   // The names are the Sessions view's to ask for; this view only reads what is there.
   useSpacesStore.setState({ spaces: LIST.spaces, owner: spacesOwner(), failures: 0, failOwner: "" });
   setFoldScope({ user: "u", tenant: "t1" });
-  useReposStore.setState({ repos: [{ name: "app", remote: "github.com", remotePath: "acme/app" }] });
+  useReposStore.setState({ repos: [{ name: "app", remote: "github.com", remotePath: "acme/app" }], loaded: true });
+  useLaunchTarget.getState().clear();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -298,6 +299,70 @@ describe("ActiveSection", () => {
       await render([sess("home"), sess("sp", { space: "q3-abcdef" })]);
       expect(headBtn("o:").getAttribute("aria-expanded")).toBe("false");
       expect(headBtn("s:q3-abcdef").getAttribute("aria-expanded")).toBe("true");
+    });
+  });
+
+  describe("repository heading launch", () => {
+    const remote = { remote: "github.com", remotePath: "acme/app" };
+    const base = { ...remote, name: "app-clone", path: "/home/dev/repos/app-clone", branch: "main" };
+    const worktree = { ...remote, name: "app@task", path: "/home/dev/repos/app@task", branch: "task", worktree: true, parent: base.name };
+    const launchButton = () => host.querySelector<HTMLButtonElement>(".act-launch")!;
+    const menuItems = () => [...document.querySelectorAll<HTMLButtonElement>('.act-launch-menu [role="menuitem"]')];
+
+    it("opens the actual base checkout from a folded group with only a worktree session", async () => {
+      const unrelated = { remote: "github.com", remotePath: "other/app", name: "app", path: "/home/dev/repos/app" };
+      useReposStore.setState({ repos: [worktree, unrelated, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true }), sess("sp", { space: "q3-abcdef" }), sess("home")]);
+      expect(host.querySelectorAll(".act-launch")).toHaveLength(1);
+      const fold = host.querySelector<HTMLButtonElement>(".act-gfold")!;
+      await act(async () => fold.click());
+      const button = launchButton();
+      expect(button.textContent).toBe("Launch");
+      expect(button.disabled).toBe(false);
+      await act(async () => button.click());
+      expect(useLaunchTarget.getState().target).toEqual(base);
+      expect(fold.getAttribute("aria-expanded")).toBe("false");
+      expect(cards()).toEqual(["sp", "home"]);
+    });
+
+    it("offers folder names for multiple local clones and opens the selected one", async () => {
+      const other = { ...base, name: "second-clone", path: "/home/dev/repos/second-clone", branch: "develop" };
+      useReposStore.setState({ repos: [other, worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      const button = launchButton();
+      await act(async () => button.click());
+      expect(button.getAttribute("aria-expanded")).toBe("true");
+      expect(menuItems().map((item) => item.textContent)).toEqual(["app-clone", "second-clone"]);
+      expect(useLaunchTarget.getState().target).toBeNull();
+      await act(async () => menuItems()[1].click());
+      expect(useLaunchTarget.getState().target).toEqual(other);
+      expect(button.getAttribute("aria-expanded")).toBe("false");
+      expect(document.activeElement).toBe(button);
+    });
+
+    it("launches from the parent folder for a local-only worktree", async () => {
+      const local = { name: "local", path: "/home/dev/repos/local" };
+      useReposStore.setState({ repos: [{ name: "local@task", path: "/home/dev/repos/local@task", worktree: true, parent: local.name }, local] });
+      await render([sess("wt", { repo: "local@task", worktree: true })]);
+      await act(async () => launchButton().click());
+      expect(useLaunchTarget.getState().target).toEqual(local);
+    });
+
+    it("disables launch while the workspace is stopped or a base checkout cannot be resolved", async () => {
+      useWorkspaceStore.setState({ state: "stopped" });
+      useReposStore.setState({ repos: [worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      expect(launchButton().disabled).toBe(true);
+      await act(async () => launchButton().click());
+      expect(useLaunchTarget.getState().target).toBeNull();
+
+      await act(async () => {
+        useWorkspaceStore.setState({ state: "running" });
+        useReposStore.setState({ repos: [worktree, { ...base, path: undefined }] });
+      });
+      expect(launchButton().disabled).toBe(true);
+      await act(async () => launchButton().click());
+      expect(useLaunchTarget.getState().target).toBeNull();
     });
   });
 

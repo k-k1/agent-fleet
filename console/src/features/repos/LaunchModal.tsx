@@ -832,7 +832,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // makes the browser scroll the target into view, pushing what sits above it off screen.
   // preventScroll keeps the top visible and still lets typing start at once.
   useEffect(() => {
-    if (!coarsePointer()) textRef.current?.focus({ preventScroll: true });
+    // Let the modal's focus trap capture the opener before the prompt takes focus.
+    if (!coarsePointer()) queueMicrotask(() => textRef.current?.focus({ preventScroll: true }));
   }, []);
 
   // Switching to an agent without attachment support drops any staged files (they'd have
