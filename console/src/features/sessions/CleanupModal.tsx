@@ -49,6 +49,8 @@ interface CleanupArchive {
   space?: { folder: string; name?: string; path: string; shelved?: string[] };
   /** Size of the archive's tarball and, for a deleted space, of its folder (what purging it reclaims). */
   bytes?: number;
+  /** The walk of the folder ran out of budget: `bytes` is a lower bound. */
+  bytesPartial?: boolean;
 }
 
 /** "Delete permanently: older ones" in the trash tab (ADR 0101 decision 6). A person presses it —
@@ -726,7 +728,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                               ? tr("clean.archive_reason_delete_space", { name: a.space?.name || a.space?.folder || "" })
                               : tr("clean.archive_reason_delete_session")}
                         {a.worktree?.snapshot ? " · " + tr("clean.archive_worktree_snapshot") : ""}
-                        {a.space && a.bytes ? " · " + humanSize(a.bytes) : ""}
+                        {a.space && a.bytes ? " · " + humanSize(a.bytes) + (a.bytesPartial ? tr("clean.archive_size_partial") : "") : ""}
                         {a.sessions && a.sessions.length > 0
                           ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
                           : ""}

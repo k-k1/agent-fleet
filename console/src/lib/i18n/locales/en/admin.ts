@@ -954,6 +954,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.cache_feature_codex_view_image": "Images codex viewed",
   "clean.cache_size": "{dirs} folders · {size}",
   "clean.cache_partial": " (partial)",
+  "clean.archive_size_partial": " or more",
   "clean.safety_regenerable": "Regenerable",
   "clean.wto_title": "Build output in dormant working copies",
   "clean.wto_intro": "node_modules, .next, target and .gradle in working copies nobody has touched for a while. They are rebuilt on the next build, but this delete skips the trash.",

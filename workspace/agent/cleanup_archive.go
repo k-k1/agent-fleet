@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -56,6 +57,12 @@ type cleanupArchivedSession struct {
 	Meta       string   `json:"meta"`                 // marshaled session.Meta, replayed on restore
 	JSONLPaths []string `json:"jsonlPaths,omitempty"` // original absolute paths (restore targets)
 	JSONLNames []string `json:"jsonlNames,omitempty"` // tar entry names, index-aligned with JSONLPaths
+	// History is the tar entry holding a trashed shell's terminal history (terminal_history.go),
+	// kept only while the tenant's history retention is on. HistoryMod is the history file's
+	// modification time (RFC3339): restore drops a history older than the retention and gives the
+	// placed file this time, so the janitor ages it from when it was written, not from the restore.
+	History    string `json:"history,omitempty"`
+	HistoryMod string `json:"historyMod,omitempty"`
 }
 
 // cleanupArchivedBranch is a deleted branch's coordinates. The commits survive in the
@@ -79,6 +86,9 @@ type cleanupManifest struct {
 	// Bytes is the size of the archive's tarball, filled in by listCleanupArchives for the
 	// trash tab (what a purge reclaims). Never written into the archive itself.
 	Bytes int64 `json:"bytes,omitempty"`
+	// BytesPartial marks Bytes as a lower bound: the walk of a deleted space's folder ran out of
+	// its shared entry budget. Never written into the archive itself.
+	BytesPartial bool `json:"bytesPartial,omitempty"`
 }
 
 // newCleanupID builds a sortable, unique archive id. now is passed in (never
@@ -269,6 +279,13 @@ func listArchivesIn(root *os.Root, budget *int, includePending bool) []cleanupMa
 					return fs.WalkDir(root.FS(), name, visit)
 				}, budget)
 				m.Bytes += b
+				// Each visited entry spends one unit, so an empty budget afterwards means the
+				// walk may have stopped early. A walk that used the last unit on its last entry
+				// is flagged too: a lower bound that turns out exact is harmless, a silent one
+				// is not.
+				if *budget <= 0 {
+					m.BytesPartial = true
+				}
 			}
 		}
 		out = append(out, m)
@@ -597,6 +614,36 @@ func placeNoReplace(tmp, dest string) (created bool, err error) {
 	return false, err
 }
 
+// restoreTerminalHistory puts a restored shell's archived terminal history back where nothing
+// is, best effort: the shell is already back, and a screen history is not worth failing a restore
+// over. It is skipped when retention is off or the history has outlived it, and the placed file
+// keeps its original modification time so the janitor ages it from when it was written.
+func restoreTerminalHistory(s cleanupArchivedSession, payloads map[string][]byte) {
+	data, ok := payloads[s.History]
+	if s.History == "" || !ok || !session.ValidName(s.Name) {
+		return
+	}
+	retention := terminalHistoryRetention()
+	mod, err := time.Parse(time.RFC3339Nano, s.HistoryMod)
+	if retention <= 0 || err != nil || time.Since(mod) >= retention {
+		return
+	}
+	dest := terminalHistoryPath(s.Name)
+	if _, err := os.Lstat(dest); err == nil {
+		return // a history written since is the live one
+	}
+	tmp, err := stageNextTo(dest, data)
+	if err != nil {
+		log.Printf("restore %s: terminal history not restored: %v", s.Name, err)
+		return
+	}
+	defer os.Remove(tmp)
+	_ = os.Chtimes(tmp, mod, mod)
+	if _, err := placeNoReplace(tmp, dest); err != nil {
+		log.Printf("restore %s: terminal history not restored: %v", s.Name, err)
+	}
+}
+
 // restoreAfterStage, when set, runs after a restore has read its archive and staged the
 // transcripts and before it takes the cleanup lock. Tests only: it is the point a purge has to
 // win at to exercise the race.
@@ -775,6 +822,9 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	dropStaged() // placed ones are hard links, so the staging names are only temporary
 	if handErr != nil {
 		return nil, handErr
+	}
+	for _, entry := range entries {
+		restoreTerminalHistory(entry.record, payloads)
 	}
 	for _, b := range m.Branches {
 		dir, ok := gitx.ResolveRepoDir(b.Repo)
