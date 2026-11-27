@@ -35,9 +35,8 @@ type MemoPRSnapshotStore interface {
 	// ListPRSnapshotsDue returns, of every member but those in except, the closed clean deliveries
 	// a pending message waits for whose snapshot is not final and was last tried before before
 	// (never tried first), at most limit, in (pr_tried_at, closed_at, id) order and past after when
-	// it is given (the last row of the page before), of member alone when it is not "". A delivery
-	// that can no longer satisfy step 1 (retired as overdue, a bad first turn) is left out: its
-	// dependents go to held whatever its PRs say.
+	// it is given (the last row of the page before), of member alone when it is not "". Overdue
+	// retires are excluded because their PRs cannot satisfy a dependency.
 	ListPRSnapshotsDue(ctx context.Context, before string, after *MemoDelivery, except []string, member string, limit int) ([]MemoDelivery, error)
 	// ListPRSnapshotStoppedMembers returns the members with a row ListPRSnapshotsDue would list
 	// whose workspace is recorded as stopped, at most limit (memoDueStoppedMembersSQL).
@@ -67,11 +66,10 @@ func memoPRSnapshotsDueSQL(before string) (string, []any) {
 	return `state=? AND outcome=? AND session<>''
 		  AND pr_state IN ('',?) AND pr_tried_at<?
 		  AND NOT (overdue_at<>'' AND retire_gen<>0)
-		  AND NOT (turn_ended_at<>'' AND (turn_outcome IN ('turn-failed','turn-aborted') OR (turn_outcome<>'clean' AND turn_ms<?)))
 		  AND EXISTS (SELECT 1 FROM memo p JOIN memo m ON m.membership_id=p.membership_id AND m.repo=p.repo AND m.category=p.category
 		    WHERE p.membership_id=memo_delivery.membership_id AND p.delivery_id=memo_delivery.id AND p.state=?
 		      AND m.state=? AND m.after_ids LIKE '%"' || p.id || '"%')`,
-		[]any{DeliveryClosed, DeliveryClean, PRStateWaiting, before, MemoQuickTurnMs, MemoStateDelivered, MemoStatePending}
+		[]any{DeliveryClosed, DeliveryClean, PRStateWaiting, before, MemoStateDelivered, MemoStatePending}
 }
 
 func (s *SQL) ListPRSnapshotsDue(ctx context.Context, before string, after *MemoDelivery, except []string, member string, limit int) ([]MemoDelivery, error) {

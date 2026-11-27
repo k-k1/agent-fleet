@@ -268,9 +268,7 @@ func (e *deliveryEnv) statsOf(queueID string) (sql, goSide store.QueuePending) {
 	return all[queueID], goSide
 }
 
-// The SQL statistics and the Go rule agree on every state a prerequisite can be in, and only a
-// clean close with a good first turn satisfies it, and a run without a PR only when its last answer
-// reads as done.
+// The SQL statistics agree with the Go claim on when a delivery can satisfy a prerequisite.
 func TestMemoAfterSQLAgreesWithGo(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
@@ -299,6 +297,11 @@ func TestMemoAfterSQLAgreesWithGo(t *testing.T) {
 				e.setAnswer(d.ID, "Partial: part 1", store.AnswerPartial)
 			}, true},
 			{"clean, clean turn, merged", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateMerged) }, true},
+			{"clean, failed turn, merged", func(_ memoDTO, q string) {
+				e.closeWithPRs(e.fired(q).ID, "turn-failed", 90_000, now, store.PRStateMerged)
+			}, true},
+			{"clean, short turn, merged", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "none", 5_000, now, store.PRStateMerged) }, true},
+			{"clean, failed turn, no PR, answer done", func(_ memoDTO, q string) { e.closeNoPR(e.fired(q).ID, "turn-failed", 90_000, now, store.AnswerDone) }, false},
 			// Step 2: a snapshot not taken, a PR open, closed unmerged or a session gone.
 			{"clean, clean turn, no snapshot", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "clean", 5_000, now) }, false},
 			{"clean, clean turn, PR open", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateWaiting) }, false},
@@ -315,10 +318,14 @@ func TestMemoAfterSQLAgreesWithGo(t *testing.T) {
 			{"clean, no turn yet", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "", 120_000, now) }, false},
 			{"clean, overdue retire", func(_ memoDTO, q string) {
 				d := e.fired(q)
-				e.closeDeliveryAs(d.ID, "clean", "clean", 5_000, now)
+				e.closeWithPRs(d.ID, "clean", 5_000, now, store.PRStateMerged)
 				e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET overdue_at=?, retire_gen=3 WHERE id=?`, store.DeliveryTS(now), d.ID)
 			}, false},
-			{"aborted", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "aborted", "clean", 5_000, now) }, false},
+			{"aborted with merged PR", func(_ memoDTO, q string) {
+				d := e.fired(q)
+				e.closeDeliveryAs(d.ID, "aborted", "clean", 5_000, now)
+				e.setPRs(d.ID, store.PRStateMerged)
+			}, false},
 			{"sent by hand", func(p memoDTO, _ string) { e.markSent(p.ID) }, false},
 			{"deleted", func(p memoDTO, _ string) {
 				e.st.DB().ExecContext(context.Background(), `DELETE FROM memo WHERE id=?`, p.ID)

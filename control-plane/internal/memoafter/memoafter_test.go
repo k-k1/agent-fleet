@@ -7,9 +7,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// "Satisfied", one delivery state at a time: step 1 (a clean close with a good first turn) and
-// step 2 (the PR snapshot). A first turn that is never recorded is satisfied by a merged PR alone,
-// and a run without a PR only by a last answer that reads as done (issue #4876).
+// A clean delivery with merged PRs can satisfy a dependency regardless of its first turn.
+// A delivery without PRs needs both a good first turn and a Done answer.
 func TestDeliveryState(t *testing.T) {
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	closed := func(ago time.Duration) string { return store.DeliveryTS(now.Add(-ago)) }
@@ -34,7 +33,16 @@ func TestDeliveryState(t *testing.T) {
 		{"overdue, no retire", with(func(d *store.MemoDelivery) { d.OverdueAt = closed(2 * time.Hour) }), true, Satisfied, ""},
 		{"failed turn", with(func(d *store.MemoDelivery) { d.TurnOutcome = "turn-failed" }), true, Failed, WhyBadFirstTurn},
 		{"quick turn of a quiet kind", with(func(d *store.MemoDelivery) { d.TurnOutcome = "" }), true, Failed, WhyBadFirstTurn},
-		{"a bad turn with a merged PR", with(func(d *store.MemoDelivery) { d.TurnOutcome, d.PRState = "turn-failed", store.PRStateMerged }), true, Failed, WhyBadFirstTurn},
+		{"a bad turn with a merged PR", with(func(d *store.MemoDelivery) { d.TurnOutcome, d.PRState = "turn-failed", store.PRStateMerged }), true, Satisfied, ""},
+		{"a short turn with a merged PR", with(func(d *store.MemoDelivery) { d.TurnOutcome, d.PRState = "", store.PRStateMerged }), true, Satisfied, ""},
+		{"a bad turn without a snapshot", with(func(d *store.MemoDelivery) { d.TurnOutcome, d.PRState = "turn-failed", "" }), true, Waiting, WhyPR},
+		{"a bad turn with an open PR", with(func(d *store.MemoDelivery) { d.TurnOutcome, d.PRState = "turn-failed", store.PRStateWaiting }), true, Waiting, WhyPR},
+		{"a bad turn with a closed PR", with(func(d *store.MemoDelivery) { d.TurnOutcome, d.PRState = "turn-failed", store.PRStateClosed }), true, Failed, WhyPRClosed},
+		{"a bad turn with a missing session", with(func(d *store.MemoDelivery) { d.TurnOutcome, d.PRState = "turn-failed", store.PRStateGone }), true, Failed, WhySessionGone},
+		{"an aborted delivery with a merged PR", with(func(d *store.MemoDelivery) { d.Outcome, d.PRState = store.DeliveryAborted, store.PRStateMerged }), true, Failed, WhyAborted},
+		{"an overdue retire with a merged PR", with(func(d *store.MemoDelivery) {
+			d.OverdueAt, d.RetireGen, d.PRState = closed(2*time.Hour), 4, store.PRStateMerged
+		}), true, Failed, WhyOverdue},
 		// Step 2.
 		{"good, no snapshot yet", with(func(d *store.MemoDelivery) { d.PRState = "" }), true, Waiting, WhyPR},
 		{"good, a PR open", with(func(d *store.MemoDelivery) { d.PRState = store.PRStateWaiting }), true, Waiting, WhyPR},

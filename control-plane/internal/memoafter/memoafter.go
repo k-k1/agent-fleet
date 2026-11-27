@@ -5,12 +5,8 @@
 // Satisfied is both steps of the addendum (store.AfterDeliverySatisfies, which the dispatcher's
 // SQL statistics mirror): the prerequisite was delivered by a delivery (not sent by hand) that
 // closed as clean and was not retired as overdue, and the PR snapshot of its session, read from
-// the running Agent after the close, is final with every PR merged, or with no PR when the first
-// turn is recorded and was not bad and the session's last answer starts with Done: (issue #4876).
-// A first turn that is never recorded (a kind whose ledger
-// records none, a void ledger, a session gone before the collection window ended) cannot show a
-// success, so only a merged PR satisfies then. A dependent is never fired over a prerequisite
-// that went wrong.
+// the running Agent after the close, names at least one PR and every PR is merged. With no PRs,
+// satisfaction requires a recorded good first turn and a last answer that starts with Done:.
 package memoafter
 
 import (
@@ -442,8 +438,6 @@ func DeliveryState(d store.MemoDelivery, found bool, now time.Time) (state, reas
 		return Failed, WhyNotClean
 	case store.RetiredOverdue(d):
 		return Failed, WhyOverdue
-	case d.TurnEndedAt != "" && store.TurnBad(d):
-		return Failed, WhyBadFirstTurn
 	}
 	switch d.PRState {
 	case store.PRStateGone:
@@ -452,6 +446,9 @@ func DeliveryState(d store.MemoDelivery, found bool, now time.Time) (state, reas
 		return Failed, WhyPRClosed
 	case store.PRStateMerged:
 	case store.PRStateNone:
+		if d.TurnEndedAt != "" && store.TurnBad(d) {
+			return Failed, WhyBadFirstTurn
+		}
 		closed, err := time.Parse("2006-01-02T15:04:05.000000Z", d.ClosedAt)
 		late := err == nil && now.Sub(closed) > ClosedTurnWindow
 		if d.TurnEndedAt == "" {

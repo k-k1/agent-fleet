@@ -1252,3 +1252,14 @@ The Agent reports stopped-limit evidence independently of the resume booking (#5
 Older Agents still provide live limit states and booked resumes. While the Workspace is stopped,
 the queue uses the last kept observation. A fresh clear report removes the same-kind hold and
 starts the usual count of clear reads for completion.
+
+## Addendum 2026-11-27: verified merges can satisfy a prerequisite after a failed first turn (#5343)
+
+A clean delivery can satisfy a dependency once the snapshot verifies at least one PR and every
+PR is merged. A recorded first-turn failure keeps its original place in run history and still
+counts for the circuit breaker. An unresolved snapshot keeps the dependent waiting. A delivery
+without PRs still needs a recorded first turn that meets the first-turn rule and a `Done:`
+last answer. An overdue retire or an unsuccessful delivery still blocks its dependents.
+
+Older versions cleared approval when they held a dependent for a bad first turn. Reapproving
+that memo keeps its dependency and makes the prerequisite eligible for a snapshot check.
