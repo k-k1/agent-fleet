@@ -86,7 +86,9 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
       return next;
     });
   const go = async (accept: boolean) => {
+    const who = ownerKey();
     const err = await answer(e, accept ? toChoices(e, chosen) : null);
+    if (ownerKey() !== who) return;
     // busy and stale: an answer is already on its way, or the card is a leftover; nothing new.
     if (err && err.code !== "busy" && err.code !== "stale") toast(tr("mcpelicit.answer_failed", { reason: errText(err) }));
   };
