@@ -123,9 +123,9 @@ type stepLine struct {
 // <USER_SETTINGS_CHANGE> blocks meant for the model, not the user.
 var userRequestRe = regexp.MustCompile(`(?s)<USER_REQUEST>\n?(.*?)\n?</USER_REQUEST>`)
 
-// stepMetaLineRe strips the "Created At:/Completed At:" bookkeeping lines agy
-// prefixes to tool-step content.
-var stepMetaLineRe = regexp.MustCompile(`^(?:Created At: [^\n]*\n?)?(?:Completed At: [^\n]*\n?)?`)
+// Both the tool result and its serializer can add timestamps. Strip the whole
+// prefix while keeping matching lines inside the result body.
+var stepMetaLineRe = regexp.MustCompile(`^(?:(?:Created At|Completed At): [^\n]*\n?)+`)
 
 // toolOutputMax bounds a tool part's output shown in the mirror (the terminal
 // remains the raw view; the mirror wants the gist).

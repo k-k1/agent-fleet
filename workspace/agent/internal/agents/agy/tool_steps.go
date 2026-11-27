@@ -10,6 +10,7 @@ import (
 var (
 	commandExitRe       = regexp.MustCompile(`^(?:The command|Command) exited with code (-?[0-9]+)\.$`)
 	backgroundCommandRe = regexp.MustCompile(`^Background command ID: ([A-Za-z0-9_-]+)$`)
+	backgroundTaskRe    = regexp.MustCompile(`^Tool is running as a background task with task id: ([A-Za-z0-9_-]+)$`)
 	taskStatusRe        = regexp.MustCompile(`^Task: ([A-Za-z0-9_-]+)\nStatus: ((?i:pending|queued|running|waiting|done|completed|error|failed|canceled|interrupted|halted))(?:\n|$)`)
 	readFileRe          = regexp.MustCompile("^File Path: `((?:file:///|/)[^`\n]+)`\nTotal Lines: [0-9]+\nTotal Bytes: [0-9]+(?:\n|$)")
 )
@@ -55,6 +56,9 @@ func describeToolResult(typ, body string) (tool, info string) {
 		}
 	}
 	if typ == "GENERIC" {
+		if m := backgroundTaskRe.FindStringSubmatch(first); m != nil {
+			return "Background task", transcript.Clip(m[1] + " · started in background")
+		}
 		// The whole status header distinguishes a task check from arbitrary output.
 		if m := taskStatusRe.FindStringSubmatch(body); m != nil {
 			return "Check task status", transcript.Clip(m[1] + " · " + strings.ToLower(m[2]) + " when checked")

@@ -63,7 +63,7 @@ const EDIT_TURN: Turn[] = [
     parts: [
       // `file` is the coordinate the Agent always attaches to an edit-family tool
       // (docs/log/68). Without it there is no chip for the files this turn changed.
-      { kind: "tool", tool: "Edit", info: "app.ts", file: "src/app.ts", edits: [{ old: "const a = 1", new: "const a = 2" }] },
+      { kind: "tool", tool: "Edit", info: "app.ts", file: "src/app.ts", edits: [{ old: "const a = 1", new: "const a = 2" }], output: "Raw edit result" },
       { kind: "text", text: "直しました" },
     ],
   },
@@ -130,12 +130,14 @@ describe("TranscriptCaps: no capability, no control", () => {
     expect(el.querySelector(".mt-fork")).toBeNull();
   });
 
-  it("turns a recipient's edit trace into an inline diff rather than a dead button", () => {
+  it("expands the diff and raw edit result inline for recipients", () => {
     const el = render(EDIT_TURN, RECIPIENT);
     expect(el.querySelector(".mt-tool-diff")).toBeNull(); // no button to open a pane
+    expect(el.querySelector(".mt-tool-edit-output")).toBeNull();
     const head = el.querySelector<HTMLButtonElement>(".mt-tool-outhead");
     expect(head).not.toBeNull();
     expect(el.querySelector(".mt-tool-diff-inline")).toBeNull(); // collapsed by default
+    expect(el.querySelector(".mt-tool-output")).toBeNull();
     act(() => head!.click());
     const inline = el.querySelector(".mt-tool-diff-inline");
     expect(inline).not.toBeNull();
@@ -143,6 +145,7 @@ describe("TranscriptCaps: no capability, no control", () => {
     expect(inline!.querySelectorAll(".dv-row.dv-add").length).toBe(1);
     expect(inline!.querySelectorAll(".dv-row.dv-del").length).toBe(1);
     expect(inline!.textContent).toContain("const a = 2");
+    expect(el.querySelector(".mt-tool-output")?.textContent).toBe("Raw edit result");
   });
 
   it("lets a recipient expand a plan in full in place, with no pane", () => {

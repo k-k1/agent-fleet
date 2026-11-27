@@ -793,7 +793,7 @@ export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) =
       );
       if (!p.output) return diffButton;
       return (
-        <div className="mt-tool-out">
+        <div className={"mt-tool-out" + (open ? " open" : "")}>
           <div className="mt-tool-edit-actions">
             {diffButton}
             <button

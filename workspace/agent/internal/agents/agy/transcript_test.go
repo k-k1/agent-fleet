@@ -86,13 +86,14 @@ func TestTranscriptClassifiesRecognizableToolResults(t *testing.T) {
 		{"The command exited with code 7.\nOutput:\nCreated At: printed by the command\n" + check, "RUN_COMMAND", "exit code 7"},
 		{"Command exited with code 0.\n\ndone", "RUN_COMMAND", "exit code 0"},
 		{"Background command ID: task-42\nOutput snapshot:\nstarting", "RUN_COMMAND", "task-42 · started in background"},
+		{"Tool is running as a background task with task id: task-42", "Background task", "task-42 · started in background"},
 		{check, "Check task status", "task-42 · running when checked"},
 		{agyReadStep, "VIEW_FILE", path},
 		{agyCreateStep, "WRITE_FILE", path},
 		{agyEditStep, "EDIT_FILE", path},
 		{"Task: task-42\nStatus: DONE", "Check task status", "task-42 · done when checked"},
 		{"Task: task-42\nStatus: looks fine", "GENERIC", ""},
-		{"Tool is running as a background task with task id: task-42", "GENERIC", ""},
+		{"Tool is running as a background task with task id: ", "GENERIC", ""},
 		{"Unrecognized result\n" + agyReadStep, "GENERIC", ""},
 		{"", "GENERIC", ""},
 	}
@@ -103,7 +104,8 @@ func TestTranscriptClassifiesRecognizableToolResults(t *testing.T) {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	for _, row := range rows {
-		if err := enc.Encode(stepLine{Source: "MODEL", Type: "GENERIC", Content: "Created At: first\nCompleted At: last\n" + row.body}); err != nil {
+		const timestamps = "Created At: first\nCompleted At: last\n"
+		if err := enc.Encode(stepLine{Source: "MODEL", Type: "GENERIC", Content: timestamps + timestamps + row.body}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -121,6 +123,9 @@ func TestTranscriptClassifiesRecognizableToolResults(t *testing.T) {
 		}
 		if p.Tool == "VIEW_FILE" && p.File != "" {
 			t.Errorf("read tool registered a write to %q", p.File)
+		}
+		if p.Tool == "EDIT_FILE" && (p.File != path || len(p.Edits) != 1) {
+			t.Errorf("edit tool lost its file or diff: %+v", p)
 		}
 	}
 }
