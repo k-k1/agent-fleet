@@ -766,10 +766,14 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		err = a.store.UpdateMCPServer(r.Context(), row)
 	}
 	if err != nil {
+		if errors.Is(err, store.ErrMCPServerNameTaken) {
+			writeAPIErr(w, mcpNameConflict(row.Name))
+			return
+		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	a.auditMCPUpsert(r.Context(), ident, row, stored)
+	a.recordMCPUpsert(r.Context(), ident, row, stored)
 	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
 }
 
@@ -778,7 +782,7 @@ func mcpNameConflict(name string) *APIError {
 }
 
 // Audit detail names the server and the flags, never a header value (docs/log/48 §9).
-func (a ServerAPI) auditMCPUpsert(ctx context.Context, ident store.Identity, row store.MCPServerRow, stored *store.MCPServerRow) {
+func (a ServerAPI) recordMCPUpsert(ctx context.Context, ident store.Identity, row store.MCPServerRow, stored *store.MCPServerRow) {
 	changed := ""
 	if stored != nil && stored.URL != row.URL {
 		changed = " old_url=" + stored.URL + " host_changed=" + boolStr(urlHostChanged(stored.URL, row.URL))

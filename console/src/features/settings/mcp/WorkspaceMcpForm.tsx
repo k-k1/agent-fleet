@@ -10,12 +10,13 @@ import { ProbeView } from "./mcpServerRow.tsx";
 import { MASKED, probeOfAnswer } from "./mcpWire.ts";
 import type { ProbeResult, TenantServer } from "./mcpWire.ts";
 
-export function WorkspaceMcpForm({ slug, preset, rows, onSaved, onCancel }: {
+export function WorkspaceMcpForm({ slug, preset, rows, onSaved, onCancel, onConflict }: {
   slug: string;
   preset: WorkspaceMcpPreset;
   rows: TenantServer[];
   onSaved: () => void;
   onCancel: () => void;
+  onConflict: () => Promise<void>;
 }) {
   const tr = useT();
   const [clientId, setClientId] = useState("");
@@ -57,6 +58,7 @@ export function WorkspaceMcpForm({ slug, preset, rows, onSaved, onCancel }: {
       if (!res) throw new TypeError("empty save response");
       if (!isOk(res)) {
         setError(errText(res.error));
+        if (res.error.code === "mcp_name_taken") await onConflict();
         return;
       }
       setSecret("");

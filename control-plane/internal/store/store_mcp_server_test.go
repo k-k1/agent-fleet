@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -16,6 +17,7 @@ func TestMCPServerOAuthClientSQLite(t *testing.T) {
 	defer st.Close()
 	checkMCPServerOAuthClient(t, st)
 	t.Run("batch rollback", func(t *testing.T) { checkCreateMCPServersRollsBack(t, st) })
+	t.Run("concurrent names", func(t *testing.T) { checkMCPServerConcurrentNames(t, st) })
 }
 
 func TestMCPServerOAuthClientPostgres(t *testing.T) {
@@ -30,6 +32,7 @@ func TestMCPServerOAuthClientPostgres(t *testing.T) {
 	defer st.Close()
 	checkMCPServerOAuthClient(t, st)
 	t.Run("batch rollback", func(t *testing.T) { checkCreateMCPServersRollsBack(t, st) })
+	t.Run("concurrent names", func(t *testing.T) { checkMCPServerConcurrentNames(t, st) })
 }
 
 // checkMCPServerOAuthClient: the tenant client's four columns and the definition scopes live in
@@ -88,12 +91,80 @@ func checkCreateMCPServersRollsBack(t *testing.T, st *SQL) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := MCPServerRow{ID: "first", TenantID: tn.ID, Name: "google-gmail"}
-	conflict := MCPServerRow{ID: "other", TenantID: tn.ID, Name: first.Name}
-	if name, err := st.CreateMCPServers(ctx, []MCPServerRow{first, conflict}); err != nil || name != first.Name {
+	first := MCPServerRow{ID: "first", TenantID: tn.ID, Name: "Google-GMAIL"}
+	conflict := MCPServerRow{ID: "other", TenantID: tn.ID, Name: "google-gmail"}
+	if name, err := st.CreateMCPServers(ctx, tn.ID, []MCPServerRow{first, conflict}); err != nil || name != conflict.Name {
 		t.Fatalf("batch conflict: name=%q err=%v", name, err)
 	}
 	if rows, err := st.ListMCPServers(ctx, first.TenantID); err != nil || len(rows) != 0 {
 		t.Fatalf("partial batch: %d rows, err=%v", len(rows), err)
+	}
+}
+
+func checkMCPServerConcurrentNames(t *testing.T, st *SQL) {
+	t.Helper()
+	for _, rename := range []bool{false, true} {
+		slug := "create"
+		if rename {
+			slug = "rename"
+		}
+		t.Run(slug, func(t *testing.T) {
+			ctx := context.Background()
+			tn, err := st.CreateTenant(ctx, slug, slug)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manual := MCPServerRow{ID: NewID(), TenantID: tn.ID, Name: "wiki"}
+			if rename {
+				if err := st.CreateMCPServer(ctx, manual); err != nil {
+					t.Fatal(err)
+				}
+			}
+			manual.Name = "Google-GMAIL"
+			start := make(chan struct{})
+			manualResult := make(chan error, 1)
+			type result struct {
+				name string
+				err  error
+			}
+			batchResult := make(chan result, 1)
+			go func() {
+				<-start
+				if rename {
+					manualResult <- st.UpdateMCPServer(ctx, manual)
+				} else {
+					manualResult <- st.CreateMCPServer(ctx, manual)
+				}
+			}()
+			go func() {
+				<-start
+				name, err := st.CreateMCPServers(ctx, tn.ID, []MCPServerRow{
+					{ID: NewID(), Name: "google-drive"}, {ID: NewID(), Name: "google-gmail"},
+				})
+				batchResult <- result{name, err}
+			}()
+			close(start)
+			merr, batch := <-manualResult, <-batchResult
+			rows, err := st.ListMCPServers(ctx, tn.ID)
+			if batch.err != nil || err != nil {
+				t.Fatalf("batch: %v, list: %v", batch.err, err)
+			}
+			switch {
+			case merr == nil:
+				if batch.name != "google-gmail" || len(rows) != 1 || rows[0].Name != manual.Name {
+					t.Fatalf("manual write won but batch was not rolled back: conflict=%q, rows=%+v", batch.name, rows)
+				}
+			case errors.Is(merr, ErrMCPServerNameTaken):
+				want := 2
+				if rename {
+					want++
+				}
+				if batch.name != "" || len(rows) != want || rows[0].Name != "google-drive" || rows[1].Name != "google-gmail" || (rename && rows[2].Name != "wiki") {
+					t.Fatalf("batch won but manual write persisted: conflict=%q, rows=%+v", batch.name, rows)
+				}
+			default:
+				t.Fatalf("manual write: %v", merr)
+			}
+		})
 	}
 }

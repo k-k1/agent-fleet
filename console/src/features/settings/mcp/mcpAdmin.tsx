@@ -88,7 +88,7 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
       }
       if (!d) throw new TypeError("empty reply body");
       setRows(d.servers || []);
-      setPreset(d.google_workspace);
+      if (d.google_workspace) setPreset(d.google_workspace);
     } catch {
       if (version === loadVersion.current) setErr(tr("admin.load_error"));
     }
@@ -154,7 +154,7 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
               </select>
             </label>
           )}
-          <button type="button" className="ghost" title={tr("admin.refresh")} disabled={presetOpen} onClick={load}>
+          <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
             <Icon name="refresh" />
           </button>
         </div>
@@ -237,7 +237,7 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
           </div>
         )}
         {presetOpen && preset && (
-          <WorkspaceMcpForm slug={slug} preset={preset} rows={rows || []}
+          <WorkspaceMcpForm slug={slug} preset={preset} rows={rows || []} onConflict={load}
             onCancel={() => setPresetOpen(false)} onSaved={() => { setPresetOpen(false); void load(); }} />
         )}
       </section>

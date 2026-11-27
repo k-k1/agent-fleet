@@ -135,19 +135,6 @@ func (a ServerAPI) AdminCreateWorkspacePreset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	ctx := r.Context()
-	existing, err := a.store.ListMCPServers(ctx, tenant.ID)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	for _, row := range existing {
-		for _, def := range defs {
-			if strings.EqualFold(row.Name, def.Name) {
-				writeAPIErr(w, mcpNameConflict(def.Name))
-				return
-			}
-		}
-	}
 	var client store.MCPServerRow
 	if aerr := a.resolveOAuthClient(ctx, tenant.ID, defs[0], nil, &client); aerr != nil {
 		writeAPIErr(w, aerr)
@@ -168,7 +155,7 @@ func (a ServerAPI) AdminCreateWorkspacePreset(w http.ResponseWriter, r *http.Req
 		row.CreatedBy, row.CreatedAt, row.UpdatedAt = ident.Email, now, now
 		rows = append(rows, row)
 	}
-	name, err := a.store.CreateMCPServers(ctx, rows)
+	name, err := a.store.CreateMCPServers(ctx, tenant.ID, rows)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -178,7 +165,7 @@ func (a ServerAPI) AdminCreateWorkspacePreset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	for _, row := range rows {
-		a.auditMCPUpsert(ctx, ident, row, nil)
+		a.recordMCPUpsert(ctx, ident, row, nil)
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"created": len(rows)})
 }

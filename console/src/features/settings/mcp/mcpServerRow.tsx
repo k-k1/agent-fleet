@@ -190,7 +190,7 @@ export function ProbeView({ probe, onSignIn, hideSignInHint }: { probe?: ProbeRe
           {probe.tools && probe.tools.length > 0 && <div className="muted mono mcp-probe-muted mcp-probe-mono">{probe.tools.join(", ")}</div>}
         </div>
       </div>
-      {probe.oauth && <OAuthProbeView report={probe.oauth} onSignIn={onSignIn} hideSignInHint={hideSignInHint} publicTools />}
+      {probe.oauth && <OAuthProbeView report={probe.oauth} publicTools />}
     </>
   );
 }

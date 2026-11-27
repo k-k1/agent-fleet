@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // MCPServerRow is one tenant-distributed MCP server definition (docs/log/48 P4 +
@@ -51,10 +52,13 @@ type MCPServerStore interface {
 	ListMCPServers(ctx context.Context, tenantID string) ([]MCPServerRow, error)
 	GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerRow, bool, error)
 	CreateMCPServer(ctx context.Context, row MCPServerRow) error
-	CreateMCPServers(ctx context.Context, rows []MCPServerRow) (conflict string, err error)
+	CreateMCPServers(ctx context.Context, tenantID string, rows []MCPServerRow) (conflict string, err error)
 	UpdateMCPServer(ctx context.Context, row MCPServerRow) error
 	DeleteMCPServer(ctx context.Context, tenantID, id string) error
 }
+
+// ErrMCPServerNameTaken means another definition in the tenant uses the name, ignoring case.
+var ErrMCPServerNameTaken = errors.New("MCP server name already exists")
 
 // --- Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031) ----------------------
 //
@@ -104,28 +108,22 @@ func (s *SQL) GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerR
 }
 
 func (s *SQL) CreateMCPServer(ctx context.Context, m MCPServerRow) error {
-	res, err := insertMCPServer(ctx, s.db, m)
-	if err != nil {
-		return err
+	name, err := s.CreateMCPServers(ctx, m.TenantID, []MCPServerRow{m})
+	if name != "" {
+		return ErrMCPServerNameTaken
 	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		if err != nil {
-			return err
-		}
-		return errors.New("MCP server name already exists")
-	}
-	return nil
+	return err
 }
 
 // CreateMCPServers publishes the entire set at once so members never see a partial preset.
-func (s *SQL) CreateMCPServers(ctx context.Context, rows []MCPServerRow) (string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *SQL) CreateMCPServers(ctx context.Context, tenantID string, rows []MCPServerRow) (string, error) {
+	tx, err := s.beginMCPServerWrite(ctx, tenantID)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
 	for _, row := range rows {
-		res, err := insertMCPServer(ctx, tx, row)
+		res, err := s.insertMCPServer(ctx, tx, tenantID, row)
 		if err != nil {
 			return "", err
 		}
@@ -140,28 +138,78 @@ func (s *SQL) CreateMCPServers(ctx context.Context, rows []MCPServerRow) (string
 	return "", tx.Commit()
 }
 
-func insertMCPServer(ctx context.Context, db sqlExecQuery, m MCPServerRow) (sql.Result, error) {
-	return db.ExecContext(ctx,
+// PostgreSQL serializes the case-insensitive name check and write on the tenant row. Each
+// statement needs a fresh snapshot after waiting for that lock. SQLite obtains its writer
+// lock at the first INSERT or UPDATE, each of which contains its own name check.
+func (s *SQL) beginMCPServerWrite(ctx context.Context, tenantID string) (*sqlTx, error) {
+	if s.dialect != "postgres" {
+		return s.db.BeginTx(ctx, nil)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT id FROM tenant WHERE id=? FOR NO KEY UPDATE`, tenantID); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
+// Server names use ASCII. Keep case folding independent of the database locale.
+func (s *SQL) mcpServerNameSQL() string {
+	if s.dialect == "postgres" {
+		return `lower(name COLLATE "C")`
+	}
+	return `lower(name)`
+}
+
+func (s *SQL) insertMCPServer(ctx context.Context, tx *sqlTx, tenantID string, m MCPServerRow) (sql.Result, error) {
+	return tx.ExecContext(ctx,
 		`INSERT INTO mcp_server(id, tenant_id, name, label, transport, url, headers_enc, key_ref,
 		   targets, kinds, timeout_ms, enabled, user_secret, auth, oauth_issuer, oauth_client_id, oauth_secret_enc, oauth_key_ref, oauth_scopes,
 		   created_by, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id, name) DO NOTHING`,
-		m.ID, m.TenantID, m.Name, m.Label, m.Transport, m.URL, m.HeadersEnc, m.KeyRef,
+		 SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+		 WHERE NOT EXISTS (SELECT 1 FROM mcp_server WHERE tenant_id=? AND `+s.mcpServerNameSQL()+`=?)
+		 ON CONFLICT(tenant_id, name) DO NOTHING`,
+		m.ID, tenantID, m.Name, m.Label, m.Transport, m.URL, m.HeadersEnc, m.KeyRef,
 		m.Targets, m.Kinds, m.TimeoutMS, b2i(m.Enabled), b2i(m.UserSecret), m.Auth, m.OAuthIssuer, m.OAuthClientID, m.OAuthSecretEnc, m.OAuthKeyRef, m.OAuthScopes,
-		m.CreatedBy, m.CreatedAt, m.UpdatedAt)
+		m.CreatedBy, m.CreatedAt, m.UpdatedAt, tenantID, strings.ToLower(m.Name))
 }
 
 func (s *SQL) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.beginMCPServerWrite(ctx, m.TenantID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx,
 		`UPDATE mcp_server SET name=?, label=?, transport=?, url=?, headers_enc=?, key_ref=?,
 		   targets=?, kinds=?, timeout_ms=?, enabled=?, user_secret=?, auth=?,
 		   oauth_issuer=?, oauth_client_id=?, oauth_secret_enc=?, oauth_key_ref=?, oauth_scopes=?, updated_at=?
-		 WHERE tenant_id=? AND id=?`,
+		 WHERE tenant_id=? AND id=?
+		 AND NOT EXISTS (SELECT 1 FROM mcp_server WHERE tenant_id=? AND id<>? AND `+s.mcpServerNameSQL()+`=?)`,
 		m.Name, m.Label, m.Transport, m.URL, m.HeadersEnc, m.KeyRef,
 		m.Targets, m.Kinds, m.TimeoutMS, b2i(m.Enabled), b2i(m.UserSecret), m.Auth,
 		m.OAuthIssuer, m.OAuthClientID, m.OAuthSecretEnc, m.OAuthKeyRef, m.OAuthScopes, m.UpdatedAt,
-		m.TenantID, m.ID)
-	return err
+		m.TenantID, m.ID, m.TenantID, m.ID, strings.ToLower(m.Name))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mcp_server WHERE tenant_id=? AND id=?)`, m.TenantID, m.ID).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return ErrMCPServerNameTaken
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *SQL) DeleteMCPServer(ctx context.Context, tenantID, id string) error {

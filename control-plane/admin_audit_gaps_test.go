@@ -243,6 +243,7 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"POST /api/admin/egress/allowlist/{id}/state":                 {marker: `egress.allow.`},
 	"PUT /api/admin/egress/mode":                                  {marker: `egress.mode`},
 	"POST /api/admin/mcp-servers":                                 {marker: `mcp.upsert`},
+	"POST /api/admin/mcp-servers/google-workspace":                {marker: `mcp.upsert`},
 	"PUT /api/admin/mcp-servers/{id}":                             {marker: `mcp.upsert`},
 	"DELETE /api/admin/mcp-servers/{id}":                          {marker: `mcp.delete`},
 	"PUT /api/admin/dev-idp":                                      {marker: `dev_idp.set`},
