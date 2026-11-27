@@ -6,6 +6,7 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { t } from "../../lib/i18n/index.ts";
 
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
@@ -92,6 +93,7 @@ async function openHub(section: "space" | "repo" | "other" = "space"): Promise<v
 
 beforeEach(async () => {
   localStorage.clear();
+  useTenantStore.setState({ resolved: true, whoami: { email: "member@example.com" } });
   pasteImage.mockClear();
   stashLaunchDraft.mockClear();
   fetchMemoAttachments.mockReset();
