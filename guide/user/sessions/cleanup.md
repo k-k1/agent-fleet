@@ -45,6 +45,7 @@ The table shows where conversations are stored and what stays when you delete a 
 ## Archive and restore
 
 Clear an AI session out of the list with **"Archive (remove from the list)"** in its ⋯ menu.
+The confirmation names the session and explains that archiving stops it if it is running. Select **"Archive"** to proceed.
 
 Archived sessions are listed behind the **"Open archive (restore)"** icon in the **Repositories** heading.
 
