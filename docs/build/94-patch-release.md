@@ -8,8 +8,7 @@ source_of_truth: ".github/workflows/image-vuln-scan.yml, deploy/local/vuln-scan-
 English | [日本語](94-patch-release.ja.md)
 
 The shipped images build from floating base tags (`debian:trixie-slim`, `node:22-trixie-slim`,
-`golang:1.26-trixie`) with no `apt-get upgrade`, and a Go binary only gets a newer standard
-library when it is rebuilt. A release therefore carries what was current on its build day, and
+`golang:1.26-trixie`), and a Go binary only gets a newer standard library when it is rebuilt. A release therefore carries what was current on its build day, and
 nothing moves until the next release. Hosts are covered elsewhere (Fargate, SSM-resolved AMIs).
 This chapter covers the images: how a missing fix is **detected**, and the cheap path from the
 detection to a **patch release**. Scheduled patch releases are not adopted; the maintainer
@@ -57,7 +56,10 @@ Each row has a **Remedy**:
 
 - `rebuild`: an OS package that the Dockerfile does not pin, or the Go standard library in `af-cp` / `workspace-agent`. A rebuild
   with a refreshed base image and Go toolchain cures it, so it is a patch-release case. The control-plane
-  image runs `apt-get upgrade`, so its Debian fixes arrive on a rebuild even before the base tag is refreshed.
+  and workspace images (and so the native rootfs, built from the workspace Dockerfile) run `apt-get upgrade`,
+  so their Debian fixes arrive on a rebuild even before the base tag is refreshed, provided the rebuild
+  re-runs that layer: a release build has no layer cache, but a `dev-image.yml` build on an unchanged
+  base can reuse the cached layer and skip it.
 - `bump`: a Debian package the Dockerfile pins to an exact version (`chromium`, `chromium-common`, `chromium-sandbox` via `CHROMIUM_VERSION`: a fresh base reinstalls the same build), a Go module, an npm package, or a tool we bake in (its own pin, e.g. a Go tool built with
   an old toolchain). A rebuild does not move it. Fix it with a normal PR to `main`, which the next
   release carries; if it cannot wait, the patch release has to carry that bump too (see below).
@@ -80,7 +82,9 @@ Constraints:
 - Never re-push a tag or image. Published tags and digests are immutable; the fix is a new version.
 - The images are built without a layer cache on a clean runner (`CP_CACHE_REF` / `WS_CACHE_REF`
   are empty for releases), so the floating base tags and the golang image resolve to whatever they
-  are *now*. That is the whole refresh: no Dockerfile change is needed for it. If a fix exists
+  are *now*. That, plus the `apt-get upgrade` in the control-plane and workspace runtime stages, is
+  the whole refresh. An older tag may lack that upgrade in one or both runtime stages (v0.51.0 has
+  it in the control-plane stage only); step 2 checks and brings it over. If a fix exists
   only in a newer Go minor than `golang:1.26-trixie`, a rebuild does not carry it; bump the Dockerfile
   and the `go` directives by a normal PR instead.
 
@@ -100,6 +104,13 @@ deploy/local/apt-pin-check.sh        # exit 0 only says the pin is still SERVED
 #    workspace/Dockerfile with the issue's "Fixed in"; if the pin is older, bring the new
 #    ARG value over from main (the apt-pin-bump PR) or run deploy/local/apt-pin-bump.sh,
 #    and commit ("build(workspace): ...").
+#    Then the runtime-stage upgrade: for each image with a Debian `rebuild` row (the native
+#    rootfs counts as workspace/Dockerfile), check that the tag's runtime stage runs both
+#    `apt-get update --error-on=any` and `apt-get upgrade`; if either is missing, bring main's
+#    runtime-stage apt block over, and commit ("build(images): ..."). Without the upgrade the
+#    patch release rebuilds the same vulnerable package from the same base; without
+#    --error-on=any a failed trixie-security fetch still lets it publish without the fix.
+git grep -n -e 'apt-get update' -e 'apt-get upgrade' HEAD -- workspace/Dockerfile control-plane/Dockerfile
 
 # 3) the release notes, as for any release (deploy/release/notes/README.md): 0.40.1.md and
 #    0.40.1.ja.md, a SUMMARY.md / SUMMARY.ja.md section, a `pending` row at the end of
@@ -122,7 +133,11 @@ git tag -a v0.40.1 <build commit> -m "agent-fleet 0.40.1" && git push origin v0.
 Dispatching `publish-dist.yml` from a branch works because the workflow file exists on the default
 branch and on the ref; everything else (scripts, Dockerfiles) is read from the ref. After the run
 succeeds, `image-vuln-scan` runs by itself and closes the issue if nothing fixable is left. If it
-does not close, the remaining rows are `bump` rows or a fix the base image does not have yet.
+does not close, the remaining rows are `bump` rows or `rebuild` rows the build did not cure. For a
+Debian package, check that the Dockerfile ran `apt-get upgrade` (step 2) and that the fixed version
+is already in trixie-security or trixie-updates. For a Go `stdlib` row, compare the Go version the
+binary was built with against "Fixed in": a fix only in a newer Go minor than `golang:1.26-trixie`
+needs the toolchain bump above.
 
 For a deployment, the patch version is an ordinary new `ImageTag`; there is nothing special to
 roll out. The ordinary publish steps are in [deploy/release/notes](../../deploy/release/notes/README.md#publishing-a-version).
