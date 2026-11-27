@@ -74,6 +74,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// doesn't survive the key being flipped or dropped later, and docs/log/32 adopted agy
 	// on the condition that it stays off at all times.
 	enforceTelemetryOff()
+	defaultFeedbackSurveyOff()
 	slotSid := session.UUID(m.Dir, m.Name)
 	// A hook record of an earlier launch says nothing about this one, and the hook command
 	// embeds this binary's path, so re-assert the entry before agy reads it. A failure only
