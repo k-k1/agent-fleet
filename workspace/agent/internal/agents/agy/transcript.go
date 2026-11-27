@@ -20,6 +20,7 @@ package agy
 import (
 	"bufio"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -69,7 +70,12 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 		return td, true
 	}
 	defer f.Close()
-	td.Turns = parseTranscript(f)
+	failures := executorErrorSteps(conv, 0, math.MaxInt)
+	if failure, ok := hookExecutorFailure(m, conv); ok &&
+		(len(failures) == 0 || failures[len(failures)-1].index < failure.index) {
+		failures = append(failures, failure)
+	}
+	td.Turns = parseTranscript(f, failures)
 	// A conversation that never switched models records none, so its turns carry the model
 	// the session was launched (or last resumed) with.
 	stampModel(td.Turns, modelLabel(m.Model))
@@ -106,6 +112,7 @@ func modelLabel(id string) string {
 
 // stepLine is one transcript_full.jsonl row (fields we read).
 type stepLine struct {
+	Index   *int   `json:"step_index"`
 	Source  string `json:"source"`
 	Type    string `json:"type"`
 	Content string `json:"content"`
@@ -133,7 +140,7 @@ var commandIndentRe = regexp.MustCompile(`(?m)^\t{4}`)
 
 func stripCommandIndent(s string) string { return commandIndentRe.ReplaceAllString(s, "") }
 
-func parseTranscript(f *os.File) []transcript.Turn {
+func parseTranscript(f *os.File, failures []executorErrorStep) []transcript.Turn {
 	var turns []transcript.Turn
 	var cur *transcript.Turn // open assistant turn
 	flush := func() {
@@ -158,12 +165,25 @@ func parseTranscript(f *os.File) []transcript.Turn {
 	// the zero value stalled both (docs/log/32).
 	line := -1
 	model := "" // the model named by the latest switch note
+	addFailures := func(before int) {
+		for len(failures) > 0 && failures[0].index < before {
+			if cur != nil {
+				cur.Parts = append(cur.Parts, transcript.Part{Kind: "error", Text: failures[0].text})
+			}
+			failures = failures[1:]
+		}
+	}
 	for sc.Scan() {
 		line++
 		var s stepLine
 		if json.Unmarshal(sc.Bytes(), &s) != nil {
 			continue
 		}
+		if s.Index != nil {
+			addFailures(*s.Index)
+		}
+		persistedFailure := s.Type == "ERROR_MESSAGE" && s.Index != nil &&
+			len(failures) > 0 && failures[0].index == *s.Index
 		switch {
 		case s.Type == "USER_INPUT":
 			flush()
@@ -195,6 +215,12 @@ func parseTranscript(f *os.File) []transcript.Turn {
 				}
 				cur.Parts = append(cur.Parts, transcript.Part{Kind: "text", Text: text})
 			}
+		case persistedFailure:
+			if cur == nil {
+				cur = &transcript.Turn{Role: "assistant", Idx: line, Model: model}
+			}
+			cur.Parts = append(cur.Parts, transcript.Part{Kind: "error", Text: failures[0].text})
+			failures = failures[1:]
 		case s.Source == "MODEL", s.Type == "ERROR_MESSAGE":
 			// A tool step (type = tool name), or a surfaced SYSTEM error.
 			body := strings.TrimSpace(stepMetaLineRe.ReplaceAllString(s.Content, ""))
@@ -221,6 +247,7 @@ func parseTranscript(f *os.File) []transcript.Turn {
 			// model-facing context management, not conversation content.
 		}
 	}
+	addFailures(math.MaxInt)
 	flush()
 	return turns
 }

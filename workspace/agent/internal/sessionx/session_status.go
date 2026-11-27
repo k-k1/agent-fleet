@@ -432,6 +432,8 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		// and do not carry turn bodies.
 		switch {
 		case verdict.Silent, verdict.Routed:
+		case reason == chatx.ReportReasonTurnFailed && m.QueueDelivery != "" && m.Kind == session.KindAgy && m.DriverKind() != session.DriverManaged:
+			// The auto-run close writes the failure notification with its history row.
 		case kind == chatx.ReportKindAnswerReady:
 			key := ev.CreatedAt
 			if k, ok := status.ReadCompletionKey(sid); ok && k != "" {

@@ -52,7 +52,8 @@ const hookTimeout = 10
 // hookRecord is the latest lifecycle event of one slot, written by the hook process and read
 // by the agent's list / mirror routes.
 type hookRecord struct {
-	ConvID string `json:"conv,omitempty"`
+	ConvID  string `json:"conv,omitempty"`
+	Failure string `json:"failure,omitempty"`
 	// State is "working" or "idle"; "" for SessionStart, which only names the conversation.
 	State string `json:"state,omitempty"`
 	At    string `json:"at"` // RFC3339
@@ -95,7 +96,9 @@ var hookRecords = fstore.JSON[hookRecord](paths.AgentStateDir, "agy-hook", ".jso
 
 // hookInput is the subset of the hook's stdin the agent reads.
 type hookInput struct {
-	ConversationID string `json:"conversationId"`
+	ConversationID    string `json:"conversationId"`
+	TerminationReason string `json:"terminationReason"`
+	Error             string `json:"error"`
 	// FullyIdle is a pointer so a Stop without the key reads as "unknown" rather than busy.
 	FullyIdle *bool `json:"fullyIdle"`
 }
@@ -178,6 +181,9 @@ func recordHook(name, gen, event string, in hookInput, now time.Time) {
 		rec.StatusRev = &st.Rev
 		if idx, ok := lastStepIdx(in.ConversationID); ok {
 			rec.StepIdx = &idx
+		}
+		if state == "idle" && in.TerminationReason == "error" {
+			rec.Failure = executorErrorText(in.Error)
 		}
 	}
 	if state == "" && hadPrev {

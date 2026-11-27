@@ -141,8 +141,9 @@ var (
 // observedEnd is an end of turn a poll saw, tagged with the SessionStatus.Rev of the record
 // that was in force when it saw it. The tag is what makes it expire (ObservedTurnEnd).
 type observedEnd struct {
-	Rev string `json:"rev"`
-	At  string `json:"at"` // RFC3339
+	Rev    string `json:"rev"`
+	At     string `json:"at"` // RFC3339
+	Reason string `json:"reason,omitempty"`
 }
 
 // turnMark is a source position tagged with the SessionStatus.Rev of the working write it was
@@ -319,13 +320,30 @@ func TurnEndUnrecorded(sid string) bool {
 // The guard's other half keeps a list polled every few seconds from rewriting the file: one
 // write per turn.
 func RecordTurnEnd(sid string) {
-	st, ok := Read(sid)
-	if !ok || st.State != "working" || st.Rev == "" || ObservedTurnEnd(sid) != "" {
+	st, _ := Read(sid)
+	RecordTurnEndReason(sid, st.Rev, "")
+}
+
+// RecordTurnEndReason pins the end and its outcome to the revision the caller
+// examined before reading the CLI. A newer input must not inherit the outcome.
+func RecordTurnEndReason(sid, rev, reason string) {
+	unlock, locked := lockSid(sid)
+	defer unlock()
+	if !locked {
 		return
 	}
-	at := time.Now().Format(time.RFC3339Nano)
-	_ = observedEnds.Write(sid, observedEnd{Rev: st.Rev, At: time.Now().Format(time.RFC3339)})
-	noteObservedFirstTurnEnd(sid, at)
+	st, ok := Read(sid)
+	if !ok || st.State != "working" || rev == "" || st.Rev != rev {
+		return
+	}
+	if at, _ := observedTurnEnd(sid, rev); at != "" {
+		return
+	}
+	at := time.Now()
+	if err := observedEnds.Write(sid, observedEnd{Rev: rev, At: at.Format(time.RFC3339), Reason: reason}); err != nil {
+		return
+	}
+	noteObservedFirstTurnEnd(sid, at.Format(time.RFC3339Nano), reason)
 }
 
 // ObservedTurnEnd returns the end a poll observed for the turn the status record is CURRENTLY
@@ -351,15 +369,32 @@ func RecordTurnEnd(sid string) {
 // poll late forever — measured as a CI failure, reproduced by truncating both mtimes to the
 // second.
 func ObservedTurnEnd(sid string) string {
+	st, _ := Read(sid)
+	at, _ := observedTurnEnd(sid, st.Rev)
+	return at
+}
+
+func observedTurnEnd(sid, rev string) (at, reason string) {
 	rec, ok := observedEnds.Read(sid)
-	if !ok || rec.Rev == "" {
-		return ""
+	if !ok || rev == "" || rev != rec.Rev {
+		return "", ""
 	}
+	return rec.At, rec.Reason
+}
+
+// LatestTurnEnd reads the timestamp and outcome of the same turn revision.
+func LatestTurnEnd(sid string) (at, reason string) {
 	st, ok := Read(sid)
-	if !ok || st.Rev != rec.Rev {
-		return ""
+	if !ok {
+		return "", ""
 	}
-	return rec.At
+	if st.TurnEnd {
+		return st.TurnEndAt, st.TurnEndReason
+	}
+	if st.State != "working" {
+		return "", ""
+	}
+	return observedTurnEnd(sid, st.Rev)
 }
 
 // RecordTurnMark stores the source position mark for the turn that the working write rev opened.

@@ -292,15 +292,13 @@ func settleFirstTurn(t *FirstTurn, endedAt, reason string) {
 
 // noteObservedFirstTurnEnd is RecordTurnEnd's half: a poll saw the running turn end, for a kind
 // that has no hook to say so. The status record is untouched there, so there is no write to hang
-// the settle on.
-func noteObservedFirstTurnEnd(sid, at string) {
-	unlock, _ := lockSid(sid)
-	defer unlock()
+// the settle on. The caller holds the sid lock.
+func noteObservedFirstTurnEnd(sid, at, reason string) {
 	t, ok := firstTurns.Read(sid)
 	if !ok || t.Done || t.Void {
 		return
 	}
-	settleFirstTurn(&t, at, "")
+	settleFirstTurn(&t, at, reason)
 	_ = firstTurns.Write(sid, t)
 }
 

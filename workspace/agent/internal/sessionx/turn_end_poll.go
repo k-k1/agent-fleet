@@ -47,11 +47,14 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 		return
 	}
 	if t := liveStateTraits(m.Kind); t.TurnFailure != nil {
+		var failure string
 		if mark, ok := status.TurnMarkOf(sid); ok {
-			if failure := t.TurnFailure(m, mark); failure != "" {
-				agents.MarkTurnEndErr(sid, agents.TurnFailed, failure)
-				return
-			}
+			failure = t.TurnFailure(m, mark)
+		}
+		_, reason := status.LatestTurnEnd(sid)
+		if failure != "" || reason == status.TurnEndReasonFailed {
+			agents.MarkTurnEndErr(sid, agents.TurnFailed, failure)
+			return
 		}
 	}
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)
@@ -143,20 +146,28 @@ func turnJustStarted(sid string) bool {
 // this one's end already stamped, there is nothing to learn.
 func recordPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
-	if !status.TurnEndUnrecorded(sid) {
+	st, _ := status.Read(sid)
+	if st.State != "working" || !status.TurnEndUnrecorded(sid) {
 		return
 	}
 	// Only a PolledTurnEnd kind: WireLive already read the same source DriveState reads. Every
 	// other kind has a hook (or a managed driver) that reports its own end of turn, so an idle
 	// here is not evidence that a turn ended — for claude it is exactly the "idle we cannot
 	// explain" the TurnEnd bit exists to keep out.
-	if !liveStateTraits(m.Kind).PolledTurnEnd {
+	traits := liveStateTraits(m.Kind)
+	if !traits.PolledTurnEnd {
 		return
 	}
 	if state != "idle" || !idleEndsThisTurn(m, sid) || turnEndHeld(m) {
 		return
 	}
-	status.RecordTurnEnd(sid)
+	reason := ""
+	if traits.TurnFailure != nil {
+		if mark, ok := status.TurnMarkOf(sid); ok && traits.TurnFailure(m, mark) != "" {
+			reason = status.TurnEndReasonFailed
+		}
+	}
+	status.RecordTurnEndReason(sid, st.Rev, reason)
 }
 
 // seenInputRev remembers, per sid, the status Rev whose input was already seen in the source, so

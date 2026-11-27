@@ -133,6 +133,61 @@ func TestMemoOccupancyWatchHoldsThenCloseRetires(t *testing.T) {
 	})
 }
 
+func TestMemoOccupancyFailedWatchTurnKeepsDeliveredWorkAndSession(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d, mid := e.openDeferrable(nil)
+		now := time.Now()
+		first := now.Add(-time.Minute).Format(time.RFC3339Nano)
+		agent.setRow(d.Session, map[string]any{
+			"kind": "agy", "wakers": map[string]any{"watches": 1},
+			"queueTurn":     map[string]any{"outcome": "clean", "ms": 10000, "endedAt": first},
+			"lastTurnEndAt": first,
+		})
+		e.settleNow(now)
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != store.HeldWakers || got.TurnOutcome != "clean" {
+			t.Fatalf("first turn: %+v", got)
+		}
+
+		rec := e.deferCall(d.ID, map[string]any{"session": d.Session, "reason": "check the result later",
+			"notBefore": now.Add(time.Hour).Format(time.RFC3339)})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("defer: %d %s", rec.Code, rec.Body.String())
+		}
+		agent.setRow(d.Session, map[string]any{"state": "working", "lastTurnEndAt": "", "wakers": nil})
+		e.settleNow(now)
+		agent.setRow(d.Session, map[string]any{
+			"state": "idle", "lastTurnEndAt": now.Format(time.RFC3339Nano), "lastTurnEndReason": "turn-failed",
+		})
+		e.settleTwice()
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryFailed ||
+			got.CurrentSession() != d.Session || got.TurnOutcome != "clean" || retireRequested(got) {
+			t.Fatalf("failed turn: %+v", got)
+		}
+
+		// A successful manual continuation does not overwrite the failed run.
+		agent.setRow(d.Session, map[string]any{"lastTurnEndReason": "", "lastTurnEndAt": now.Add(time.Minute).Format(time.RFC3339Nano)})
+		e.settleTwice()
+		if got := e.delivery(d.ID); got.Outcome != store.DeliveryFailed || agent.retireCalls() != 0 {
+			t.Fatalf("after continuation: %+v, retire calls %d", got, agent.retireCalls())
+		}
+		if m := e.memoRow(mid); m.State != store.MemoStateDelivered || m.DeliveryID != d.ID {
+			t.Fatalf("memo replayed: %+v", m)
+		}
+		count := 0
+		for _, n := range e.notifications() {
+			if n.Kind == "memo-delivery-failed" {
+				count++
+				if n.TargetID != d.QueueID {
+					t.Fatalf("notification target = %q, want %q", n.TargetID, d.QueueID)
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("failure notifications = %d", count)
+		}
+	})
+}
+
 // A delivery's slot also belongs to the sessions that session started: a child that works, waits
 // for a person or holds a timer keeps the parent's delivery open, at any depth. Wakers unknown
 // holds as well, and a usage limit with a booked resume, running or stopped.

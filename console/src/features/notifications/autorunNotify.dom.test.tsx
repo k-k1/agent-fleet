@@ -1,4 +1,4 @@
-// The four auto-run notification kinds (ADR 0137, target type memo-queue) and a kind the Console does
+// Auto-run notification kinds (ADR 0137, target type memo-queue) and a kind the Console does
 // not know (#4217): their wording in both languages, their heading, their preference row and where a
 // click goes. An unknown kind must never be worded as another kind's notice.
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { openNotificationTarget, type FleetNotification } from "./store.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { setLocale, t } from "../../lib/i18n/index.ts";
 
-const KINDS = ["memo-delivery-overdue", "memo-queue-paused", "memo-queue-waiting", "memo-delivery-unconfirmed"] as const;
+const KINDS = ["memo-delivery-overdue", "memo-delivery-failed", "memo-queue-paused", "memo-queue-waiting", "memo-delivery-unconfirmed"] as const;
 const note = (kind: string, over: Partial<FleetNotification> = {}): FleetNotification => ({
   seq: 1, id: "e1", kind, target: { type: "memo-queue", id: "c1" }, displayName: "/triage",
   payload: { queue_id: "c1", label: "/triage" }, createdAt: "2026-11-15T00:00:00Z", seen: false, ...over,
@@ -37,7 +37,7 @@ describe.each(["en", "ja"] as const)("the auto-run kinds in %s", (locale) => {
   it("each kind reads differently from the others", () => {
     setLocale(locale);
     const titles = KINDS.map((k) => notificationWording(note(k)).title);
-    expect(new Set(titles).size).toBe(4);
+    expect(new Set(titles).size).toBe(KINDS.length);
   });
 });
 
@@ -71,7 +71,7 @@ describe("a kind the Console does not know (#4217)", () => {
 });
 
 describe("preferences", () => {
-  it("puts the four kinds in one auto-run row whose dot cannot be muted", () => {
+  it("puts the kinds in one auto-run row whose dot cannot be muted", () => {
     for (const k of KINDS) expect(notifyRowOf(k, false)).toBe("auto-run");
     const muted = { notifyUnread: { "auto-run": false }, notifyDevice: {}, childIdleNotify: true, usageResetNotify: true };
     expect(notifyCell(muted, "auto-run", "unread")).toBe(true);
@@ -85,6 +85,7 @@ describe("clicking an auto-run notification opens the category", () => {
     ["memo-queue-paused", false],
     ["memo-queue-waiting", true],
     ["memo-delivery-overdue", true],
+    ["memo-delivery-failed", true],
     ["memo-delivery-unconfirmed", true],
   ] as const)("%s reveals the category (history: %s)", async (kind, history) => {
     const before = useMemoStore.getState().reveal.n;

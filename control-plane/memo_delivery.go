@@ -1470,6 +1470,10 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	// spool was not readable that once, nor when it caught the session's idle just before the
 	// message landed and the spool just after.
 	moving := treeMovePending(tree)
+	root := tree[0]
+	failed := !moving && root.Kind == "agy" && root.Driver != "managed" &&
+		root.LastTurnEndAt != "" && root.LastTurnEndReason == "turn-failed" &&
+		(!root.Alive || root.State == stateIdle)
 	inTransit := why == "" && treePeerInTransit(tree, now)
 	unread := why == "" && (childAnswerUnread(tree, now) || inTransit || moving)
 	gen, numbered := v.gens[d.ID]
@@ -1496,7 +1500,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	// A hand-back is decided from reads that need the Agent (its PRs), made before the lock and
 	// only when this read may close the delivery: nothing holds it and the last one was clear.
 	var dc *memoDeferCheck
-	if d.DeferAt != "" && why == "" && !unread && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 && d.RunSession == o.RunSession && d.RunMoveKey == moveKey {
+	if !failed && d.DeferAt != "" && why == "" && !unread && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 && d.RunSession == o.RunSession && d.RunMoveKey == moveKey {
 		dc = r.deferCheck(ctx, v, d, tree)
 	}
 	// Keeping the read, counting it, and closing on it are one transaction behind the membership
@@ -1511,6 +1515,9 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		}
 		if err != nil || !kept {
 			return err // closed meanwhile, or a later read is kept: that one decides
+		}
+		if failed {
+			return memoCloseFailed(tx, d.ID)
 		}
 		if why != "" {
 			// The row as it is now, behind the lock: what an overdue retire decides on, not the
@@ -1538,6 +1545,39 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		}
 		r.retireOverdue(ctx, v, *fresh, progress, now)
 	}
+}
+
+// memoCloseFailed frees the queue slot and keeps the session and delivered memos
+// with the run. Partial tool work makes an automatic hand-back unsafe.
+func memoCloseFailed(tx store.MemoTxOps, id string) error {
+	d, ok, err := tx.GetDelivery(id)
+	if err != nil || !ok || d.State != store.DeliveryOpen {
+		return err
+	}
+	now := time.Now()
+	won, err := tx.MoveDelivery(id, store.DeliveryOpen, store.DeliveryClosed, "", store.DeliveryFailed, store.DeliveryTS(now))
+	if err != nil || !won {
+		return err
+	}
+	if d.DeferAt != "" {
+		if err := tx.SetDeliveryDeferResult(id, store.DeferDroppedUnread, ""); err != nil {
+			return err
+		}
+	}
+	label := d.QueueID
+	cat, ok, err := tx.GetCategory(d.QueueID)
+	if err != nil {
+		return err
+	}
+	if ok {
+		label = cat.Repo + "/" + cat.Name
+	}
+	payload, _ := json.Marshal(map[string]string{"queue_id": d.QueueID, "label": label})
+	return tx.InsertNotification(store.Notification{
+		EventID: "memo-failed-" + id, Kind: "memo-delivery-failed",
+		TargetType: "memo-queue", TargetID: d.QueueID, DisplayName: label,
+		Payload: string(payload), CreatedAt: now.UTC().Format(time.RFC3339),
+	})
 }
 
 // closeIfDoneKept decides while the workspace is stopped, from the report last kept. A delivery
