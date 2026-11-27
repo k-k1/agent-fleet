@@ -1045,12 +1045,14 @@ export const sessionSettings = async (
 export function pasteImage(
   session: string,
   file: File,
+  signal?: AbortSignal,
 ): Promise<{ status: number; path?: string; name?: string; error?: unknown }> {
   const fd = new FormData();
   fd.append("file", file, file.name || "pasted.png");
   return statusJSON(`api/sessions/${encodeURIComponent(session)}/paste-image`, {
     method: "POST",
     body: fd,
+    signal,
   });
 }
 

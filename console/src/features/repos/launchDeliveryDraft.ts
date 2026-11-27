@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import {
-  ATTACH_DRAFT_MAX_AGE_MS, clearAttachDraftSnapshot, hasAttachDraftSnapshot, readAttachDraftSnapshots,
-  restoreAttachDraftFile, writeAttachDraftSnapshot,
+  ATTACH_DRAFT_MAX_AGE_MS, clearAttachDraftSnapshot, readAttachDraftDelivery, readAttachDraftSnapshots,
+  restoreAttachDraftFile, setAttachDraftDelivery, settleAttachDraft, writeAttachDraftSnapshot,
 } from "../../lib/attachDraft.ts";
 import type { LaunchFile } from "./launchDelivery.ts";
 
@@ -16,12 +16,14 @@ export function launchDraftOwner({ tenant, whoami }: TenantState) {
 
 type DraftText = { session: string; kind: string; repo: string; prompt: string };
 type DraftContent = DraftText & { files: LaunchFile[] };
-export type HeldLaunchDraft = DraftContent & { key: string; owner: string; persisted: boolean };
+export type HeldLaunchDraft = DraftContent & { key: string; owner: string; persisted: boolean; deliveryPending?: boolean };
+type DraftPhase = "checking" | "uploading" | "sending";
+type DraftOperation = { phase: DraftPhase; controller: AbortController };
 
 export const useHeldLaunchDrafts = create<{
   drafts: Record<string, HeldLaunchDraft>;
-  busy: ReadonlySet<string>;
-}>(() => ({ drafts: {}, busy: new Set() }));
+  operations: Partial<Record<string, DraftOperation>>;
+}>(() => ({ drafts: {}, operations: {} }));
 
 function putDraft(draft: HeldLaunchDraft) {
   useHeldLaunchDrafts.setState(({ drafts }) => ({ drafts: { ...drafts, [draft.key]: draft } }));
@@ -43,7 +45,7 @@ export async function holdLaunchDraft(owner: string, content: DraftContent): Pro
 
 export async function editLaunchDraft(key: string, changes: Partial<Pick<DraftContent, "prompt" | "files">>): Promise<boolean> {
   const draft = useHeldLaunchDrafts.getState().drafts[key];
-  if (!draft) return false;
+  if (!draft || draft.deliveryPending) return false;
   const edited = { ...draft, ...changes };
   putDraft(edited);
   const persisted = await persistDraft(edited, changes.files !== undefined);
@@ -59,20 +61,36 @@ export async function restoreLaunchDrafts(prefix: string, current: () => boolean
   if (!current()) return;
   pruneSettled(prefix);
   const restored: Record<string, HeldLaunchDraft> = {};
-  for (const { key, data, items } of stored) {
-    if (before[key] || !isDraftText(data) || key !== prefix + data.session || !Array.isArray(items)) continue;
+  for (const entry of stored) {
+    const { key } = entry;
+    if (before[key]) continue;
+    const draft = fromSnapshot(prefix, entry);
+    if (!draft) continue;
     if (wasSettled(key)) {
       void clearLaunchDraft(key);
       continue;
     }
-    const files = items.flatMap((entry) => {
-      const file = restoreAttachDraftFile(entry);
-      return file ? [{ file, path: entry.path }] : [];
-    });
-    if (files.length !== items.length) continue;
-    restored[key] = { ...data, files, key, owner: prefix, persisted: true };
+    restored[key] = draft;
   }
   useHeldLaunchDrafts.setState(({ drafts }) => ({ drafts: { ...restored, ...drafts } }));
+}
+
+function fromSnapshot(owner: string, { key, data, items, deliveryPending }: Awaited<ReturnType<typeof readAttachDraftSnapshots>>[number]): HeldLaunchDraft | undefined {
+  if (!isDraftText(data) || key !== owner + data.session || !Array.isArray(items)) return;
+  const files = items.flatMap((entry) => {
+    const file = restoreAttachDraftFile(entry);
+    return file ? [{ file, path: entry.path }] : [];
+  });
+  if (files.length === items.length) return { ...data, files, key, owner, persisted: true, deliveryPending };
+}
+
+export async function markLaunchDraftDelivery(key: string, pending: boolean): Promise<boolean> {
+  const draft = useHeldLaunchDrafts.getState().drafts[key];
+  if (!draft || !!draft.deliveryPending === pending) return false;
+  const { session, kind, repo, prompt, files } = draft;
+  if (draft.persisted && !await setAttachDraftDelivery(key, pending ? { data: { session, kind, repo, prompt }, files } : undefined)) return false;
+  putDraft({ ...draft, deliveryPending: pending });
+  return true;
 }
 
 function isDraftText(data: unknown): data is DraftText {
@@ -121,22 +139,43 @@ export async function clearLaunchDraft(key: string): Promise<void> {
 
 // Two Console tabs can restore the same draft. Recheck it while holding the lock
 // so a second retry cannot deliver after the first has cleared it.
-export async function withLaunchDraft(draft: HeldLaunchDraft, action: () => Promise<void>): Promise<void> {
-  const { busy, drafts } = useHeldLaunchDrafts.getState();
-  if (busy.has(draft.key) || !drafts[draft.key]) return;
-  useHeldLaunchDrafts.setState({ busy: new Set(busy).add(draft.key) });
+export async function withLaunchDraft(
+  key: string,
+  action: (draft: HeldLaunchDraft, signal: AbortSignal, phase: (phase: DraftPhase) => void) => Promise<void>,
+): Promise<"locked" | "unavailable" | void> {
+  const { operations, drafts } = useHeldLaunchDrafts.getState();
+  if (operations[key] || !drafts[key]) return;
+  const controller = new AbortController();
+  const phase = (phase: DraftPhase) => useHeldLaunchDrafts.setState(({ operations }) => ({
+    operations: { ...operations, [key]: { phase, controller } },
+  }));
+  phase("checking");
   const run = async () => {
-    if (wasSettled(draft.key) || (draft.persisted && await hasAttachDraftSnapshot(draft.key) === false)) {
-      await clearLaunchDraft(draft.key);
+    await settleAttachDraft(key);
+    let draft = useHeldLaunchDrafts.getState().drafts[key];
+    if (!draft) return;
+    const stored = await readAttachDraftDelivery(key);
+    if (wasSettled(key) || (draft.persisted && stored === undefined)) {
+      await clearLaunchDraft(key);
       return;
     }
-    await action();
+    if (stored === null && draft.persisted) return "unavailable" as const;
+    if (stored && (stored.deliveryPending || draft.deliveryPending || !draft.persisted)) {
+      draft = (stored.deliveryPending ? fromSnapshot(draft.owner, stored) : undefined) ??
+        { ...draft, persisted: true, deliveryPending: stored.deliveryPending };
+      putDraft(draft);
+    }
+    await action(draft, controller.signal, phase);
   };
   try {
-    await (navigator.locks?.request(draft.key, run) ?? run());
+    return await (navigator.locks?.request(key, { ifAvailable: true }, (lock) => lock ? run() : "locked" as const) ?? run());
+  } catch {
+    return "unavailable";
   } finally {
-    const next = new Set(useHeldLaunchDrafts.getState().busy);
-    next.delete(draft.key);
-    useHeldLaunchDrafts.setState({ busy: next });
+    useHeldLaunchDrafts.setState(({ operations }) => {
+      const next = { ...operations };
+      delete next[key];
+      return { operations: next };
+    });
   }
 }
