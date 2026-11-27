@@ -321,15 +321,25 @@ func openArchiveFile(root *os.Root, name string) (*os.File, os.FileInfo, error) 
 }
 
 func readArchiveFile(root *os.Root, name string) ([]byte, error) {
-	f, _, err := openArchiveFile(root, name)
+	f, info, err := openArchiveFile(root, name)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	if info.Size() > maxCleanupEntryBytes {
+		return nil, fmt.Errorf("trash metadata %s is too large", name)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxCleanupEntryBytes+1))
+	if len(data) > maxCleanupEntryBytes {
+		return nil, fmt.Errorf("trash metadata %s is too large", name)
+	}
+	return data, err
 }
 
 func writeArchiveFile(root *os.Root, name string, data []byte) error {
+	if len(data) > maxCleanupEntryBytes {
+		return fmt.Errorf("trash metadata %s is too large", name)
+	}
 	tmp := ".archive-" + rand.Text()
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {

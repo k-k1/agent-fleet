@@ -156,6 +156,11 @@ func TestDeletedSpaceRoundTripsThroughTheTrash(t *testing.T) {
 		}
 	}
 
+	legacy, _ := session.ReadMeta("aispc02")
+	legacy.ShelfRevision = ""
+	if err := session.WriteMetaChecked(legacy); err != nil {
+		t.Fatal(err)
+	}
 	restorePath := "/cleanup/archives/" + out.Archive + "/restore"
 	var res struct{ Restored struct{ Space string } }
 	do(t, e.srv, "POST", restorePath, nil, http.StatusOK, &res)
@@ -794,6 +799,13 @@ func TestRestoreSpaceRetriesAfterCompletionWriteFails(t *testing.T) {
 	session.WriteMeta(session.Meta{Name: "aicompl", Kind: session.KindClaude, Dir: sp.Dir})
 	var out struct{ Archive string }
 	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	// Older Agents wrote no shelf revision. The initial restore must accept that empty
+	// revision, and the retry must still distinguish it from a new shelf action.
+	legacy, _ := session.ReadMeta("aicompl")
+	legacy.ShelfRevision = ""
+	if err := session.WriteMetaChecked(legacy); err != nil {
+		t.Fatal(err)
+	}
 	store := cleanupStoreDir()
 	spaceBeforeRestoreComplete = func() {
 		if err := os.Chmod(store, 0o500); err != nil {
@@ -907,28 +919,50 @@ func TestSpaceRestoreUsesTheTrashItOpened(t *testing.T) {
 	}
 }
 
-func TestRestoreAndPurgeRejectMismatchedEmbeddedManifest(t *testing.T) {
-	e := spaceDeleteSetup(t)
-	tmuxSays(t, tmuxNoServer)
-	first, second := newSpace(t, "First"), newSpace(t, "Second")
-	writeAt(t, filepath.Join(first.Dir, "f.md"), "first")
-	writeAt(t, filepath.Join(second.Dir, "f.md"), "second")
-	var a, b deleteSpaceResponse
-	do(t, e.srv, "DELETE", "/spaces/"+first.Folder, nil, http.StatusOK, &a)
-	do(t, e.srv, "DELETE", "/spaces/"+second.Folder, nil, http.StatusOK, &b)
-	otherArchive, err := os.ReadFile(filepath.Join(cleanupStoreDir(), b.Archive+".tar.gz"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cleanupStoreDir(), a.Archive+".tar.gz"), otherArchive, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	path := "/cleanup/archives/" + a.Archive
-	do(t, e.srv, "POST", path+"/restore", nil, http.StatusNotFound, nil)
-	do(t, e.srv, "DELETE", path, nil, http.StatusNotFound, nil)
-	for id, want := range map[string]string{a.Archive: "first", b.Archive: "second"} {
-		if got, err := os.ReadFile(filepath.Join(spaceTrashDir(id), "f.md")); err != nil || string(got) != want {
-			t.Errorf("%s: trashed file = %q, %v; want %q", id, got, err, want)
-		}
+func TestRestoreAndPurgeRejectMismatchedManifestIDs(t *testing.T) {
+	for kind, suffix := range map[string]string{"embedded": ".tar.gz", "sidecar": ".json"} {
+		t.Run(kind, func(t *testing.T) {
+			e := spaceDeleteSetup(t)
+			tmuxSays(t, tmuxNoServer)
+			first, second := newSpace(t, "First"), newSpace(t, "Second")
+			writeAt(t, filepath.Join(first.Dir, "f.md"), "first")
+			writeAt(t, filepath.Join(second.Dir, "f.md"), "second")
+			var a, b deleteSpaceResponse
+			do(t, e.srv, "DELETE", "/spaces/"+first.Folder, nil, http.StatusOK, &a)
+			do(t, e.srv, "DELETE", "/spaces/"+second.Folder, nil, http.StatusOK, &b)
+			otherManifest, err := os.ReadFile(filepath.Join(cleanupStoreDir(), b.Archive+suffix))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mismatched := filepath.Join(cleanupStoreDir(), a.Archive+suffix)
+			if err := os.WriteFile(mismatched, otherManifest, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path := "/cleanup/archives/" + a.Archive
+			if got := httpStatus(t, e.srv, "POST", path+"/restore", nil); got != http.StatusNotFound {
+				t.Errorf("restore with mismatched %s = %d, want 404", kind, got)
+			}
+			if got := httpStatus(t, e.srv, "DELETE", path, nil); got != http.StatusNotFound {
+				t.Errorf("purge with mismatched %s = %d, want 404", kind, got)
+			}
+			for id, want := range map[string]string{a.Archive: "first", b.Archive: "second"} {
+				if got, err := os.ReadFile(filepath.Join(spaceTrashDir(id), "f.md")); err != nil || string(got) != want {
+					t.Errorf("%s: trashed file = %q, %v; want %q", id, got, err, want)
+				}
+			}
+			for _, sp := range []spacex.Space{first, second} {
+				if _, err := os.Lstat(sp.Dir); !os.IsNotExist(err) {
+					t.Errorf("%s was recreated during a refusal: %v", sp.Folder, err)
+				}
+			}
+			if kind == "sidecar" && !t.Failed() {
+				if err := os.Remove(mismatched); err != nil {
+					t.Fatal(err)
+				}
+				// An absent sidecar is different from a readable sidecar for the wrong ID.
+				do(t, e.srv, "POST", path+"/restore", nil, http.StatusOK, nil)
+				do(t, e.srv, "DELETE", path, nil, http.StatusOK, nil)
+			}
+		})
 	}
 }

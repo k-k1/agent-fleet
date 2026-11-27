@@ -1369,3 +1369,39 @@ func moveInPath(src, folder string) error {
 	defer spaces.Close()
 	return MoveIn(trash, entry, spaces, folder, identity)
 }
+
+func TestTrashIdentityWithoutBirthTimeSurvivesRename(t *testing.T) {
+	birthTime := trashDirectoryID
+	trashDirectoryID = func(_ int, _ string, _ int) (dirID, bool) { return dirID{}, false }
+	t.Cleanup(func() { trashDirectoryID = birthTime })
+
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	makeFolder := func(name string) {
+		t.Helper()
+		if err := root.Mkdir(name, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := root.WriteFile(filepath.Join(name, MarkerFile), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	makeFolder("original")
+	want, err := ReadTrashIdentity(root, "original")
+	if err != nil || want.Inode == 0 || want.Birth != 0 || want.MarkerInode == 0 || want.MarkerChange == 0 {
+		t.Fatalf("fallback identity = %+v, %v", want, err)
+	}
+	if err := root.Rename("original", "moved"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadTrashIdentity(root, "moved"); err != nil || got != want {
+		t.Fatalf("identity after rename = %+v, %v; want %+v", got, err, want)
+	}
+	makeFolder("original")
+	if got, err := ReadTrashIdentity(root, "original"); err != nil || got == want {
+		t.Fatalf("replacement identity = %+v, %v; want a different identity", got, err)
+	}
+}

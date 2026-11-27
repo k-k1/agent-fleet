@@ -445,7 +445,7 @@ func resumeSpaceRestore(trash *os.Root, id, dir string, t spaceTombstone) error 
 			return spaceRestoreMoveError(err, t.Folder)
 		}
 		if id != record.Identity {
-			return spaceRestoreMoveError(spacex.ErrExists, t.Folder)
+			return &restoreConflict{errCodeSpaceRestoreExists, "could not confirm that ~/spaces/" + t.Folder + " is the folder moved by this restore"}
 		}
 	} else {
 		if err != nil {

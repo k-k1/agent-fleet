@@ -44,6 +44,9 @@ type TrashIdentity struct {
 	MarkerChange int64  `json:"markerChange,omitempty"`
 }
 
+// trashDirectoryID lets tests exercise the fallback on file systems with a birth time.
+var trashDirectoryID = statxID
+
 // ReadTrashIdentity requires a real directory and regular marker, using the opened parent.
 func ReadTrashIdentity(parent *os.Root, name string) (TrashIdentity, error) {
 	d, err := parent.Open(".")
@@ -76,7 +79,7 @@ func readTrashIdentity(parent *os.File, name string) (TrashIdentity, error) {
 	if marker.Mode&unix.S_IFMT != unix.S_IFREG {
 		return TrashIdentity{}, ErrNotFound
 	}
-	if id, ok := statxID(fd, "", unix.AT_EMPTY_PATH); ok {
+	if id, ok := trashDirectoryID(fd, "", unix.AT_EMPTY_PATH); ok {
 		return TrashIdentity{Inode: id.ino, Birth: id.born}, nil
 	}
 	var dir unix.Stat_t

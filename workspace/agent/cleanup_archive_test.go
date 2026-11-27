@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,4 +117,55 @@ func readCleanupArchive(id string) (cleanupManifest, map[string][]byte, error) {
 	}
 	defer f.Close()
 	return readCleanupTar(f, id)
+}
+
+func TestReadArchiveFileRequiresBoundedRegularMetadata(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := root.WriteFile("valid.json", []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Symlink("valid.json", "link.json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Mkdir("directory.json", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := root.Create("oversized.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxCleanupEntryBytes + 1); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"link.json", "directory.json", "oversized.json"} {
+		if _, err := readArchiveFile(root, name); err == nil {
+			t.Errorf("readArchiveFile accepted %s", name)
+		}
+	}
+	if data, err := readArchiveFile(root, "valid.json"); err != nil || string(data) != "{}" {
+		t.Errorf("readArchiveFile of regular metadata = %q, %v", data, err)
+	}
+}
+
+func TestRestoreRejectsAMixedSpaceArchive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	man := cleanupManifest{
+		ID:       newCleanupID(time.Now(), "mixed-space"),
+		Space:    &spaceTombstone{Folder: "space"},
+		Branches: []cleanupArchivedBranch{{Name: "branch"}},
+	}
+	if err := writeCleanupArchive(&man, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restoreCleanupArchive(man.ID); err == nil || !strings.Contains(err.Error(), "a space cannot share an archive") {
+		t.Fatalf("restore of a mixed space archive returned %v", err)
+	}
 }
