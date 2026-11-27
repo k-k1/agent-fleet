@@ -15,7 +15,7 @@ vi.mock("../../viewer/MarkdownView.tsx", () => ({
 }));
 
 import { TranscriptView } from "./TranscriptView.tsx";
-import { THINKING_FOOT_MIN_PX, thinkingPreview } from "./blocks.tsx";
+import { THINKING_FOOT_MIN_PX, ToolTrace, thinkingPreview } from "./blocks.tsx";
 import { coalesceUserActions, groupTurns } from "./model.ts";
 import { groupWithQueue } from "../parts/mirrorGroups.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
@@ -80,6 +80,32 @@ const OWNER: TranscriptCaps = {
 };
 // All a recipient gets — exactly what the shared view actually passes.
 const RECIPIENT: TranscriptCaps = { agentName: "Claude" };
+
+it("keeps raw tool output independently expandable beside the diff action", () => {
+  host = document.createElement("div");
+  root = createRoot(host);
+  const openDiff = vi.fn();
+  const part: Part = {
+    kind: "tool",
+    tool: "EDIT_FILE",
+    info: "src/app.ts",
+    edits: [{ old: "before", new: "after" }],
+    output: "Raw edit result",
+  };
+  act(() => root!.render(<ToolTrace p={part} onOpenDiff={openDiff} />));
+  const diff = host.querySelector<HTMLButtonElement>(".mt-tool-diff")!;
+  const toggle = host.querySelector<HTMLButtonElement>(".mt-tool-edit-output")!;
+  expect(diff.textContent).toContain("src/app.ts");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(host.querySelector(".mt-tool-output")).toBeNull();
+  act(() => toggle.click());
+  expect(host.querySelector(".mt-tool-output")?.textContent).toBe(part.output);
+  expect(openDiff).not.toHaveBeenCalled();
+  act(() => diff.click());
+  expect(openDiff).toHaveBeenCalledWith(part);
+  act(() => toggle.click());
+  expect(host.querySelector(".mt-tool-output")).toBeNull();
+});
 
 describe("TranscriptCaps: no capability, no control", () => {
   it("gives the owner a button to open the diff pane and a fork route", () => {

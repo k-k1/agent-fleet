@@ -779,7 +779,7 @@ export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) =
   const [open, setOpen] = useState(false);
   if (p.edits && p.edits.length) {
     if (onOpenDiff) {
-      return (
+      const diffButton = (
         <button
           type="button"
           className="mt-tool mt-tool-diff"
@@ -790,6 +790,24 @@ export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) =
           <span className="mt-tool-name">{p.tool}</span>
           {p.info && <span className="mt-tool-info">{p.info}</span>}
         </button>
+      );
+      if (!p.output) return diffButton;
+      return (
+        <div className="mt-tool-out">
+          <div className="mt-tool-edit-actions">
+            {diffButton}
+            <button
+              type="button"
+              className="mt-tool mt-tool-outhead mt-tool-edit-output"
+              onClick={() => setOpen((o) => !o)}
+              aria-expanded={open}
+            >
+              <Icon name={open ? "chevron-down" : "chevron-right"} />
+              {tr(open ? "mirror.collapse_output" : "mirror.show_output")}
+            </button>
+          </div>
+          {open && <pre className="mt-tool-output">{p.output}</pre>}
+        </div>
       );
     }
     const { added, removed } = diffStat(p.edits);
@@ -810,7 +828,12 @@ export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) =
             {removed > 0 && <span className="dv-del">−{removed}</span>}
           </span>
         </button>
-        {open && <InlineEdits edits={p.edits} />}
+        {open && (
+          <>
+            <InlineEdits edits={p.edits} />
+            {p.output && <pre className="mt-tool-output">{p.output}</pre>}
+          </>
+        )}
       </div>
     );
   }
