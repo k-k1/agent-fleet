@@ -1,12 +1,8 @@
 package status
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 )
 
 func armed(t *testing.T, sid string, noReason bool) {
@@ -113,6 +109,17 @@ func TestFirstTurnOfAKindWithoutReasonsKeepsTheOutcomeEmpty(t *testing.T) {
 		if !ok || got.Outcome != "" || got.EndedAt == "" {
 			t.Fatalf("observedFirst=%v: %+v ok=%v", observedFirst, got, ok)
 		}
+	}
+}
+
+func TestFirstTurnKeepsAFailureProvedByThePoll(t *testing.T) {
+	const sid = "ft-observed-failure"
+	armed(t, sid, true)
+	rev := PersistRev(sid, "working")
+	RecordTurnEndFailure(sid, rev, "executor failure")
+	got, ok := ReadFirstTurn(sid)
+	if !ok || got.Outcome != TurnEndReasonFailed || got.EndedAt == "" {
+		t.Fatalf("first turn = %+v ok=%v", got, ok)
 	}
 }
 
@@ -223,78 +230,5 @@ func TestSweepOrphanFirstTurnsKeepsALedgerItCannotLock(t *testing.T) {
 	}
 	if n := SweepOrphanFirstTurns(map[string]bool{}, time.Minute, time.Now().Add(time.Hour)); n != 1 {
 		t.Errorf("unlocked sweep removed %d, want 1", n)
-	}
-}
-
-// A verdict that took time to reach belongs to the record it started from: once a newer working
-// record was written, PersistTurnEndIfRev refuses, and the record stays working.
-func TestPersistTurnEndIfRevRefusesANewerRecord(t *testing.T) {
-	isolate(t)
-	sid := "ifrev-sid"
-	Persist(sid, "working")
-	old, _ := Read(sid)
-	if !PersistTurnEndIfRev(sid, "idle", "", "", old.Rev) {
-		t.Fatal("the current record was refused")
-	}
-	Persist(sid, "working") // the next turn
-	cur, _ := Read(sid)
-	if PersistTurnEndIfRev(sid, "idle", TurnEndReasonFailed, "", old.Rev) {
-		t.Fatal("an end bound to an older record was written")
-	}
-	if now, _ := Read(sid); now.State != "working" || now.Rev != cur.Rev || now.TurnEnd {
-		t.Fatalf("the newer record was changed: %+v", now)
-	}
-}
-
-// A conditional end gives way when the status lock cannot be taken, and when the record cannot be
-// written; in both cases nothing is announced: no key, no end.
-func TestPersistTurnEndIfRevGivesWayWithoutTheLockOrTheWrite(t *testing.T) {
-	isolate(t)
-	sid := "ifrev-fail"
-	defer func(d time.Duration) { lockWait = d }(lockWait)
-	lockWait = 30 * time.Millisecond
-	Persist(sid, "working")
-	cur, _ := Read(sid)
-
-	// Lock held by someone else for longer than lockWait.
-	unlock, ok := lockSid(sid)
-	if !ok {
-		t.Fatal("control: lock not taken")
-	}
-	done := make(chan bool)
-	go func() { done <- PersistTurnEndIfRev(sid, "idle", "", "", cur.Rev) }()
-	if <-done {
-		t.Fatal("an end was written without the lock")
-	}
-	unlock()
-	if st, _ := Read(sid); st.State != "working" || st.TurnEnd {
-		t.Fatalf("record changed without the lock: %+v", st)
-	}
-	if _, has := ReadCompletionKey(sid); has {
-		t.Fatal("a completion key was left without the lock")
-	}
-
-	// The record cannot be written: the staging directory is a file.
-	staging := filepath.Join(statusFiles.Dir(), fstore.StagingSubdir)
-	_ = os.RemoveAll(staging)
-	if err := os.WriteFile(staging, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if PersistTurnEndIfRev(sid, "idle", "", "", cur.Rev) {
-		t.Fatal("a failed write reported success")
-	}
-	if st, _ := Read(sid); st.State != "working" || st.TurnEnd {
-		t.Fatalf("record changed by a failed write: %+v", st)
-	}
-	if _, has := ReadCompletionKey(sid); has {
-		t.Fatal("the failed write left its completion key")
-	}
-	// A key that existed before the attempt stays.
-	_ = os.Remove(staging)
-	WriteCompletionKey(sid, "earlier")
-	_ = os.WriteFile(staging, []byte("x"), 0o600)
-	PersistTurnEndIfRev(sid, "idle", "", "", cur.Rev)
-	if k, has := ReadCompletionKey(sid); !has || k != "earlier" {
-		t.Fatalf("an earlier key was disturbed: %q %v", k, has)
 	}
 }

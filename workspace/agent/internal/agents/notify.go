@@ -29,13 +29,25 @@ import (
 // recordSessionNotification — the same function the hook route calls.
 type StateNotifier func(sid, previous, state, excerpt string)
 
+// StateNotifierWithTurnEnd carries the immutable observation time of a polled
+// failure. The session can start another turn before the notifier runs.
+type StateNotifierWithTurnEnd func(sid, previous, state, excerpt, endedAt string)
+
 // stateNotifier is registered once at startup (main) but read from driver goroutines
 // (codex readLoop / opencode pump), so it goes through atomic.
-var stateNotifier atomic.Pointer[StateNotifier]
+var stateNotifier atomic.Pointer[StateNotifierWithTurnEnd]
 
 // SetStateNotifier wires the notifier. main calls it before any driver can run
 // (reconcile / app-server start); tests use it to observe transitions.
 func SetStateNotifier(fn StateNotifier) {
+	if fn == nil {
+		SetStateNotifierWithTurnEnd(nil)
+		return
+	}
+	SetStateNotifierWithTurnEnd(func(sid, previous, state, excerpt, _ string) { fn(sid, previous, state, excerpt) })
+}
+
+func SetStateNotifierWithTurnEnd(fn StateNotifierWithTurnEnd) {
 	if fn == nil {
 		stateNotifier.Store(nil)
 		return
@@ -50,11 +62,26 @@ func SetStateNotifier(fn StateNotifier) {
 // delivery for every managed codex session. previous/state are already settled synchronously
 // by the caller, so the (previous, state) pair survives whatever order the goroutines run in.
 func notify(sid, previous, state, excerpt string) {
+	notifyWithTurnEnd(sid, previous, state, excerpt, "")
+}
+
+func notifyWithTurnEnd(sid, previous, state, excerpt, endedAt string) {
 	fn := stateNotifier.Load()
 	if fn == nil {
 		return
 	}
-	go (*fn)(sid, previous, state, excerpt)
+	go (*fn)(sid, previous, state, excerpt, endedAt)
+}
+
+// MarkObservedTurnFailed settles a failure already attributed to a polled
+// turn, using the same evidence and identity as the session list.
+func MarkObservedTurnFailed(sid, rev string) {
+	at, failure := status.SettleObservedFailure(sid, rev)
+	if at == "" {
+		return
+	}
+	recordTurnEnd(sid, time.Now(), status.TurnEndReasonFailed, runOf(sid))
+	notifyWithTurnEnd(sid, "working", StateFailed, failure, at)
 }
 
 // TurnRun names the input a turn is running, for attributing how the turn ended (#1560). Known
@@ -237,31 +264,14 @@ const StateSpendLimit = "spend_limit"
 // excerpt so the operator report can say the turn errored and the chat bridge can post
 // the reason. Drivers that don't yet distinguish failures keep calling MarkTurnEnd.
 func MarkTurnEndErr(sid string, st TurnState, failure string) {
-	markTurnEnd(sid, st, failure, "", false)
-}
-
-// MarkTurnEndIfRev is MarkTurnEndErr for a verdict that took time to reach: the end is written,
-// and notified, only while the status record is still the one named by rev
-// (status.PersistTurnEndIfRev). It reports whether it was.
-func MarkTurnEndIfRev(sid string, st TurnState, failure, rev string) bool {
-	if st != TurnCompleted && st != TurnFailed {
-		return false // the other states write or note things the Rev condition does not cover
-	}
-	return markTurnEnd(sid, st, failure, rev, true)
-}
-
-func markTurnEnd(sid string, st TurnState, failure, rev string, onlyIfRev bool) bool {
 	previous, _ := status.Read(sid)
-	if onlyIfRev && previous.Rev != rev {
-		return false
-	}
 	if st == TurnUnknown {
 		// We only lost sight of the runtime. idle is written (so nothing sticks on "in
 		// progress"), but this is not the end of a turn, so TurnEnd is not raised: if the
 		// level-based report reconciler (docs/log/51) counted this idle as evidence of
 		// completion, it would report a turn that may still be running as finished.
 		status.Persist(sid, "idle")
-		return true
+		return
 	}
 	// The reason travels in the SAME write as the fact (status.PersistTurnEndReason), not as
 	// a side channel to notify()'s goroutine below: that goroutine is deliberately async
@@ -282,21 +292,15 @@ func markTurnEnd(sid string, st TurnState, failure, rev string, onlyIfRev bool) 
 		// though the status record keeps no reason (a resume or a report would act on one).
 		status.NoteFirstTurnCancelled(sid)
 	}
-	if onlyIfRev {
-		if !status.PersistTurnEndIfRev(sid, "idle", reason, "", rev) {
-			return false
-		}
-	} else {
-		status.PersistTurnEndReason(sid, "idle", reason)
-	}
+	status.PersistTurnEndReason(sid, "idle", reason)
 	recordTurnEnd(sid, time.Now(), reason, runOf(sid))
-	switch st {
-	case TurnFailed:
+	if st == TurnFailed {
 		notify(sid, previous.State, StateFailed, failure)
-	case TurnAborted:
-		notify(sid, previous.State, StateAborted, failure)
-	default:
-		notify(sid, previous.State, "idle", "")
+		return
 	}
-	return true
+	if st == TurnAborted {
+		notify(sid, previous.State, StateAborted, failure)
+		return
+	}
+	notify(sid, previous.State, "idle", "")
 }

@@ -141,8 +141,10 @@ var (
 // observedEnd is an end of turn a poll saw, tagged with the SessionStatus.Rev of the record
 // that was in force when it saw it. The tag is what makes it expire (ObservedTurnEnd).
 type observedEnd struct {
-	Rev string `json:"rev"`
-	At  string `json:"at"` // RFC3339
+	Rev     string `json:"rev"`
+	At      string `json:"at"` // RFC3339
+	Reason  string `json:"reason,omitempty"`
+	Failure string `json:"failure,omitempty"`
 }
 
 // turnMark is a source position tagged with the SessionStatus.Rev of the working write it was
@@ -266,19 +268,6 @@ func PersistTurnEndReason(sid, state, reason string) {
 // PersistTurnEndFor is PersistTurnEndReason that also closes turn promptID in the ledger
 // (SessionStatus.PromptID). An empty promptID writes no ledger entry.
 func PersistTurnEndFor(sid, state, reason, promptID string) {
-	persistTurnEnd(sid, state, reason, promptID, "", false)
-}
-
-// PersistTurnEndIfRev is PersistTurnEndFor that writes only while the record is still the one
-// named by rev (SessionStatus.Rev), the check and the write sharing one critical section. A
-// verdict reached by reading a slow source (a pane) belongs to the record it started from: the
-// next input may have written a new working record meanwhile, and ending that one would report a
-// turn that has not finished. It reports whether the end was written.
-func PersistTurnEndIfRev(sid, state, reason, promptID, rev string) bool {
-	return persistTurnEnd(sid, state, reason, promptID, rev, true)
-}
-
-func persistTurnEnd(sid, state, reason, promptID, rev string, onlyIfRev bool) bool {
 	at := ObservedTurnEnd(sid)
 	if at == "" {
 		at = time.Now().Format(time.RFC3339)
@@ -289,37 +278,10 @@ func persistTurnEnd(sid, state, reason, promptID, rev string, onlyIfRev bool) bo
 	// nothing, and the hook then broadcasts a result the schedule routed (measured by delaying the
 	// second write). Outside the lock, a heal's "working" write would remove the key in between
 	// and the closed turn would be left without one.
-	unlock, locked := lockSid(sid)
+	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
 	defer unlock()
-	if !onlyIfRev {
-		// A lock timeout still writes: the hook's record is authoritative, only the heal
-		// (PersistIf) gives way.
-		WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
-		persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
-		return true
-	}
-	// A conditional end is only a verdict some poll reached, so it gives way like the heal: without
-	// the lock the Rev check proves nothing, and it reports whether the record was really written.
-	if !locked {
-		return false
-	}
-	if cur, ok := Read(sid); !ok || cur.Rev != rev {
-		return false
-	}
-	_, hadKey := ReadCompletionKey(sid)
-	WriteCompletionKey(sid, at)
-	end := SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID, TS: time.Now().Format(time.RFC3339), Rev: newRev()}
-	if err := statusFiles.Write(sid, end); err != nil {
-		log.Printf("session-status: write %s: %v", statusFiles.Path(sid), err)
-		if !hadKey {
-			RemoveCompletionKey(sid) // the key this attempt made must not outlive the end it announces
-		}
-		return false
-	}
-	// An idle end reads nothing of the record it replaces, so the ledgers can follow the write.
-	noteFirstTurnWrite(sid, end)
-	noteTurnStart(sid, end)
-	return true
+	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
+	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
 }
 
 // WriteCompletionKey sets the answer-ready dedup key for the current turn-end.
@@ -359,13 +321,40 @@ func TurnEndUnrecorded(sid string) bool {
 // The guard's other half keeps a list polled every few seconds from rewriting the file: one
 // write per turn.
 func RecordTurnEnd(sid string) {
-	st, ok := Read(sid)
-	if !ok || st.State != "working" || st.Rev == "" || ObservedTurnEnd(sid) != "" {
+	st, _ := Read(sid)
+	RecordTurnEndFailure(sid, st.Rev, "")
+}
+
+// RecordTurnEndFailure pins the end and its outcome to the revision the caller
+// examined before reading the CLI. A newer input must not inherit the outcome.
+func RecordTurnEndFailure(sid, rev, failure string) {
+	unlock, locked := lockSid(sid)
+	defer unlock()
+	if !locked {
 		return
 	}
-	at := time.Now().Format(time.RFC3339Nano)
-	_ = observedEnds.Write(sid, observedEnd{Rev: st.Rev, At: time.Now().Format(time.RFC3339)})
-	noteObservedFirstTurnEnd(sid, at)
+	st, ok := Read(sid)
+	if !ok || st.State != "working" || rev == "" || st.Rev != rev {
+		return
+	}
+	rec := observedTurnEnd(sid, rev)
+	if rec.At != "" && (failure == "" || rec.Reason != "") {
+		return
+	}
+	now := time.Now()
+	if rec.At == "" {
+		rec.Rev, rec.At = rev, now.Format(time.RFC3339)
+		if failure != "" {
+			rec.At = now.Format(time.RFC3339Nano)
+		}
+	}
+	if failure != "" {
+		rec.Reason, rec.Failure = TurnEndReasonFailed, failure
+	}
+	if err := observedEnds.Write(sid, rec); err != nil {
+		return
+	}
+	noteObservedFirstTurnEnd(sid, now.Format(time.RFC3339Nano), rec.Reason)
 }
 
 // ObservedTurnEnd returns the end a poll observed for the turn the status record is CURRENTLY
@@ -391,15 +380,53 @@ func RecordTurnEnd(sid string) {
 // poll late forever — measured as a CI failure, reproduced by truncating both mtimes to the
 // second.
 func ObservedTurnEnd(sid string) string {
+	st, _ := Read(sid)
+	return observedTurnEnd(sid, st.Rev).At
+}
+
+func observedTurnEnd(sid, rev string) observedEnd {
 	rec, ok := observedEnds.Read(sid)
-	if !ok || rec.Rev == "" {
-		return ""
+	if !ok || rev == "" || rev != rec.Rev {
+		return observedEnd{}
+	}
+	return rec
+}
+
+// SettleObservedFailure lets only one notifier consume a failed working
+// revision. It also keeps the evidence if rereading the CLI is unavailable.
+func SettleObservedFailure(sid, rev string) (at, failure string) {
+	unlock, locked := lockSid(sid)
+	defer unlock()
+	if !locked {
+		return "", ""
 	}
 	st, ok := Read(sid)
-	if !ok || st.Rev != rec.Rev {
-		return ""
+	if !ok || st.State != "working" || st.Rev != rev {
+		return "", ""
 	}
-	return rec.At
+	rec := observedTurnEnd(sid, rev)
+	if rec.Reason != TurnEndReasonFailed || rec.At == "" {
+		return "", ""
+	}
+	WriteCompletionKey(sid, rec.At)
+	persistLocked(sid, SessionStatus{State: "idle", TurnEnd: true, TurnEndAt: rec.At, TurnEndReason: rec.Reason})
+	return rec.At, rec.Failure
+}
+
+// LatestTurnEnd reads the timestamp and outcome of the same turn revision.
+func LatestTurnEnd(sid string) (at, reason string) {
+	st, ok := Read(sid)
+	if !ok {
+		return "", ""
+	}
+	if st.TurnEnd {
+		return st.TurnEndAt, st.TurnEndReason
+	}
+	if st.State != "working" {
+		return "", ""
+	}
+	rec := observedTurnEnd(sid, st.Rev)
+	return rec.At, rec.Reason
 }
 
 // RecordTurnMark stores the source position mark for the turn that the working write rev opened.

@@ -166,17 +166,17 @@ func forgetQuota(name string) {
 	quotaSeen.Unlock()
 }
 
-// TurnFailure is agents.LiveStateTraits.TurnFailure: the turn that just ended was refused for
+// quotaTurnFailure is the pane half of agents.LiveStateTraits.TurnFailure: the turn that just ended was refused for
 // quota when the banner is the last thing it drew. Without it the poll reports a clean
-// completion. The mark is not used: the pane carries no turn identity, and a turn without a mark
-// (a first input, one typed into the terminal) must still be judged (TurnFailureUnmarked).
+// completion. The pane carries no turn identity, so a turn without a mark (a first input, one
+// typed into the terminal) is judged too (TurnFailureUnmarked).
 //
 // One capture answers all three questions (refused, cleanly idle, not confirmable yet), and it
 // never waits. When the pane is not captured or its idle footer is not painted while the
 // conversation was written within quotaPaintGrace, a refusal may still be about to appear: it
 // returns agents.TurnFailurePending, and the poll asks again. Past the grace the end completes
 // as before, so an unreadable pane cannot hold a completion back for good.
-func TurnFailure(m session.Meta, _ string) string {
+func quotaTurnFailure(m session.Meta) string {
 	frame := capturePaneFrame(session.TmuxName(m.Name))
 	if text, ok := quotaBannerInFrame(frame); ok {
 		return text
@@ -272,4 +272,14 @@ func lastRunCompleted(conv string) bool {
 	}
 	end, state := turnEnd(db)
 	return state == turnLogRead && end >= last
+}
+
+// polledTurnFailure is agents.LiveStateTraits.TurnFailure: the conversation's own executor error
+// first (it needs the turn mark and names the turn), then the quota banner the TUI draws, which
+// no step records.
+func polledTurnFailure(m session.Meta, mark string) string {
+	if failure := turnFailure(m, mark); failure != "" {
+		return failure
+	}
+	return quotaTurnFailure(m)
 }

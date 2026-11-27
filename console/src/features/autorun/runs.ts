@@ -185,7 +185,10 @@ export function buildRuns(sessions: Session[], deliveries: Map<string, RunDelive
         categoryId: d?.categoryId ?? root.queueCategoryId ?? "",
         deliveryId: d?.id ?? "",
         // From the delivery alone: resuming the run's session changes what the row shows, not what happened.
-        failed: d?.state === "closed" && d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted",
+        failed: d?.state === "closed" && (
+          d.outcome === "failed" ||
+          (d.turnOutcome === "turn-failed" && d.outcome !== "ended" && d.outcome !== "aborted")
+        ),
         state,
         resumed,
         item: link ? { key: link.key, label: itemLabel(link.key), title: link.title ?? "" } : null,

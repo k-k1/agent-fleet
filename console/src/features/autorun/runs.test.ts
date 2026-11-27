@@ -149,6 +149,14 @@ describe("a failed run stays failed", () => {
     expect(rows[0].resumed).toBe(true);
     expect(failedRunKeys(rows)).toEqual(["da"]);
   });
+
+  it("flags a failed later turn even when the first turn completed", () => {
+    const rows = buildRuns(
+      [sess("a", { origin: "queue", alive: true })],
+      new Map([["a", dlv("c", "closed", { id: "da", outcome: "failed", turnOutcome: "clean" })]]),
+    );
+    expect(failedRunKeys(rows)).toEqual(["da"]);
+  });
 });
 
 describe("scopeRuns", () => {

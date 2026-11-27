@@ -68,7 +68,16 @@ FROM node:22-trixie-slim
 LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
       org.opencontainers.image.description="Agent Fleet per-user workspace — isolated container running the agent CLIs" \
       org.opencontainers.image.licenses="Apache-2.0"
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The upgrade takes Debian security fixes for packages the base already ships, as in
+# control-plane/Dockerfile: node:22-trixie-slim lags trixie-security, so without it the
+# vulnerable package stays until the base tag is refreshed (0.51.0 shipped libzstd1
+# 1.5.7+dfsg-1, CVE-2026-124851, that way). The native rootfs is built from this Dockerfile
+# too, so it gets the same fixes. --error-on=any fails the build when an index (e.g.
+# trixie-security) cannot be fetched: plain `apt-get update` only warns and exits 0, and the
+# upgrade would then silently skip the fixes.
+RUN apt-get update --error-on=any \
+ && apt-get upgrade -y --no-install-recommends \
+ && apt-get install -y --no-install-recommends \
       git git-lfs git-delta subversion tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
       ripgrep fd-find bat jq unzip zip \
       build-essential pkg-config \

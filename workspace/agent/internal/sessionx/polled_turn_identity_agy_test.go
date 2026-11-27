@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -117,6 +120,115 @@ func TestTurnIdentityAgyMissingNewInputDoesNotExpireIntoCompletion(t *testing.T)
 	DriveState(m, true, false)
 	if st, _ := status.Read(sid); st.State != "idle" || !st.TurnEnd {
 		t.Fatalf("the real end was not recorded: %+v", st)
+	}
+}
+
+func TestTurnIdentityAgyQueueListReportsExecutorFailureWithoutDriveState(t *testing.T) {
+	m, sid, add := agyIdentityFixture(t, "agy_ident_failure")
+	m.QueueDelivery = "delivery1"
+	session.WriteMeta(m)
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	markSessionWorkingFrom(m.Name, captureTurnMark(m.Name))
+	add([][2]int{{2, 14}, {3, 21}, {4, 17}}, 4)
+
+	dbPath := filepath.Join(paths.GeminiHome(), "antigravity-cli", "conversations", "conv-"+m.Name+".db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	message := "expected pending tool step at index 3, got status CORTEX_STEP_STATUS_CANCELED"
+	details := append(binary.AppendUvarint([]byte{0x12}, uint64(len(message))), message...)
+	payload := append(binary.AppendUvarint([]byte{0x1a}, uint64(len(details))), details...)
+	if _, err := db.Exec(`UPDATE steps SET step_payload=? WHERE idx=4`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	got := wireSession(m, true)
+	if got.LastTurnEndAt == "" || got.LastTurnEndReason != status.TurnEndReasonFailed {
+		t.Fatalf("end = %q, reason = %q", got.LastTurnEndAt, got.LastTurnEndReason)
+	}
+	if st, _ := status.Read(sid); st.State != "working" {
+		t.Fatalf("queue listing consumed the notification gate: %+v", st)
+	}
+
+	markSessionWorkingFrom(m.Name, captureTurnMark(m.Name))
+	got = wireSession(m, true)
+	if got.LastTurnEndAt != "" || got.LastTurnEndReason != "" {
+		t.Fatalf("new input reused failed turn: end = %q, reason = %q", got.LastTurnEndAt, got.LastTurnEndReason)
+	}
+	add([][2]int{{5, 14}, {6, 15}}, 6)
+	got = wireSession(m, true)
+	if got.LastTurnEndAt == "" || got.LastTurnEndReason != "" {
+		t.Fatalf("new clean turn: end = %q, reason = %q", got.LastTurnEndAt, got.LastTurnEndReason)
+	}
+}
+
+func TestAgyQueueFailureNotifiesAfterEveryFailureWithItsObservedText(t *testing.T) {
+	m, sid, add := agyIdentityFixture(t, "agy_queue_failure_notice")
+	m.QueueDelivery = "delivery1"
+	session.WriteMeta(m)
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	dbPath := filepath.Join(paths.GeminiHome(), "antigravity-cli", "conversations", "conv-"+m.Name+".db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	notified := make(chan struct{}, 2)
+	agents.SetStateNotifierWithTurnEnd(func(sid, prev, state, text, at string) {
+		RecordSessionNotificationWithTurnEnd(sid, prev, state, text, at)
+		notified <- struct{}{}
+	})
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+	const message = "expected pending tool step at index 3, got status CORTEX_STEP_STATUS_CANCELED"
+	details := append(binary.AppendUvarint([]byte{0x12}, uint64(len(message))), message...)
+	payload := append(binary.AppendUvarint([]byte{0x1a}, uint64(len(details))), details...)
+	for i, last := range []int{4, 7} {
+		markSessionWorkingFrom(m.Name, captureTurnMark(m.Name))
+		add([][2]int{{last - 2, 14}, {last - 1, 21}, {last, 17}}, last)
+		if _, err := db.Exec(`UPDATE steps SET step_payload=? WHERE idx=?`, payload, last); err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 {
+			// This manual continuation fails too. Simulate a later read that
+			// can still see the executor boundary but cannot read the error.
+			list := wireSession(m, true)
+			if list.LastTurnEndReason != status.TurnEndReasonFailed {
+				t.Fatalf("list missed failure before source changed: %+v", list)
+			}
+			if _, err := db.Exec(`UPDATE steps SET step_payload=x'' WHERE idx=?`, last); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if state := DriveState(m, true, false); state != "idle" {
+			t.Fatalf("failure left state %q", state)
+		}
+		select {
+		case <-notified:
+		case <-time.After(3 * time.Second):
+			t.Fatal("failure was not notified")
+		}
+		at, reason := status.LatestTurnEnd(sid)
+		if at == "" || reason != status.TurnEndReasonFailed {
+			t.Fatalf("end = %q, reason = %q", at, reason)
+		}
+		events := notice.List()
+		if len(events) != i+1 {
+			t.Fatalf("notifications after step %d = %+v", last, events)
+		}
+		var found bool
+		for _, event := range events {
+			if event.ID == "turn-failed:"+m.Name+":"+at {
+				found = event.Kind == "turn-failed" && event.Payload["body"] == message
+			}
+		}
+		if !found {
+			t.Fatalf("turn failure absent for %q in %+v", at, events)
+		}
 	}
 }
 

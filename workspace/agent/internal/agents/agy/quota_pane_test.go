@@ -164,7 +164,7 @@ func TestTurnFailurePendingWaitsForThePaneOnlyBriefly(t *testing.T) {
 			m, _ := staleFixture(t, "slot-pend", rows, [][]byte{executorRow(4, 1)}, tc.age)
 			capturePaneFrame = func(string) string { return strings.TrimPrefix(tc.frame, "\x00") }
 			paneSessionAlive = func(string) bool { return !strings.HasPrefix(tc.frame, "\x00") }
-			if got := TurnFailure(m, ""); got != tc.want {
+			if got := quotaTurnFailure(m); got != tc.want {
 				t.Fatalf("got %q want %q", got, tc.want)
 			}
 		})

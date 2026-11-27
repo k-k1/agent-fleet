@@ -1,4 +1,4 @@
-// The four auto-run notification kinds (ADR 0137, target type memo-queue) and a kind the Console does
+// Auto-run notification kinds (ADR 0137, target type memo-queue) and a kind the Console does
 // not know (#4217): their wording in both languages, their heading, their preference row and where a
 // click goes. An unknown kind must never be worded as another kind's notice.
 import { afterEach, describe, expect, it } from "vitest";
@@ -37,7 +37,19 @@ describe.each(["en", "ja"] as const)("the auto-run kinds in %s", (locale) => {
   it("each kind reads differently from the others", () => {
     setLocale(locale);
     const titles = KINDS.map((k) => notificationWording(note(k)).title);
-    expect(new Set(titles).size).toBe(4);
+    expect(new Set(titles).size).toBe(KINDS.length);
+  });
+
+  it("labels a failed turn and identifies its session", () => {
+    setLocale(locale);
+    const n = note("turn-failed", { target: { type: "session", id: "s1" }, displayName: "Triage" });
+    expect(notificationKindLabel(n.kind)).toBe(t("noti.kind_turn_failed"));
+    expect(notificationWording(n)).toEqual({
+      title: t("notif.turn_failed.title"),
+      body: "Triage",
+      speech: t("notif.turn_failed.speech", { name: "Triage" }),
+    });
+    expect(notifyRowOf(n.kind, false)).toBe("auto-run");
   });
 });
 
@@ -71,7 +83,7 @@ describe("a kind the Console does not know (#4217)", () => {
 });
 
 describe("preferences", () => {
-  it("puts the four kinds in one auto-run row whose dot cannot be muted", () => {
+  it("puts the kinds in one auto-run row whose dot cannot be muted", () => {
     for (const k of KINDS) expect(notifyRowOf(k, false)).toBe("auto-run");
     const muted = { notifyUnread: { "auto-run": false }, notifyDevice: {}, childIdleNotify: true, usageResetNotify: true };
     expect(notifyCell(muted, "auto-run", "unread")).toBe(true);

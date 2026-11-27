@@ -102,8 +102,9 @@ LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
 # CP wraps to self-host tenant repos over smart-HTTP (docs/reference/internal-git-provider).
 # The upgrade takes Debian security fixes for packages the base already ships: the
 # debian:trixie-slim tag is refreshed only every few weeks, so without it a rebuild keeps a
-# fixed CVE (zlib1g CVE-2026-85091 survived the 0.47.0 rebuild that way).
-RUN apt-get update \
+# fixed CVE (zlib1g CVE-2026-85091 survived the 0.47.0 rebuild that way). --error-on=any
+# fails the build when an index cannot be fetched, instead of upgrading against a partial one.
+RUN apt-get update --error-on=any \
  && apt-get upgrade -y --no-install-recommends \
  && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*

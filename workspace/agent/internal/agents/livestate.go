@@ -75,6 +75,9 @@ type LiveStateTraits struct {
 	// before the source has a position, one typed into the terminal), with mark "". Only for a
 	// kind whose TurnFailure does not need the mark.
 	TurnFailureUnmarked bool
+	// QueueTurnFailure opts Terminal sessions into closing an auto-run on the
+	// failure evidence. The delivery and the notifier share the turn identity.
+	QueueTurnFailure bool
 }
 
 // TurnFailurePending is what a kind's TurnFailure returns when the source says the turn ended but
