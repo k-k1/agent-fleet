@@ -164,6 +164,39 @@ func TestTurnIdentityAgyQueueListReportsExecutorFailureWithoutDriveState(t *test
 	}
 }
 
+// The newest turn ended on an executor error while the pane still shows an older quota banner: the
+// list keeps idle + turn-failed (what closes the queue run), never limited.
+func TestWireSessionAgyExecutorErrorWinsOverALaggingQuotaBanner(t *testing.T) {
+	m, _, add := agyIdentityFixture(t, "agy_ident_failure_banner")
+	m.QueueDelivery = "delivery1"
+	session.WriteMeta(m)
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	markSessionWorkingFrom(m.Name, captureTurnMark(m.Name))
+	add([][2]int{{2, 14}, {3, 21}, {4, 17}}, 4)
+
+	dbPath := filepath.Join(paths.GeminiHome(), "antigravity-cli", "conversations", "conv-"+m.Name+".db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	message := "expected pending tool step at index 3, got status CORTEX_STEP_STATUS_CANCELED"
+	details := append(binary.AppendUvarint([]byte{0x12}, uint64(len(message))), message...)
+	payload := append(binary.AppendUvarint([]byte{0x1a}, uint64(len(details))), details...)
+	if _, err := db.Exec(`UPDATE steps SET step_payload=? WHERE idx=4`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	agyFakePane(t, agyQuotaFrame) // the previous turn's refusal, still on screen
+	got := wireSession(m, true)
+	if got.LastTurnEndAt == "" || got.LastTurnEndReason != status.TurnEndReasonFailed {
+		t.Fatalf("end = %q, reason = %q", got.LastTurnEndAt, got.LastTurnEndReason)
+	}
+	if got.State == agents.StateLimited {
+		t.Fatalf("a stale banner turned a failed turn into limited: %q", got.State)
+	}
+}
+
 func TestAgyQueueFailureNotifiesAfterEveryFailureWithItsObservedText(t *testing.T) {
 	m, sid, add := agyIdentityFixture(t, "agy_queue_failure_notice")
 	m.QueueDelivery = "delivery1"
@@ -229,5 +262,76 @@ func TestAgyQueueFailureNotifiesAfterEveryFailureWithItsObservedText(t *testing.
 		if !found {
 			t.Fatalf("turn failure absent for %q in %+v", at, events)
 		}
+	}
+}
+
+// agyFakePane puts a tmux on PATH that answers list-panes and capture-pane with the frame, so the
+// agy pane reads see a refused turn without a terminal.
+func agyFakePane(t *testing.T, frame string) {
+	t.Helper()
+	dir := t.TempDir()
+	f := filepath.Join(dir, "frame")
+	if err := os.WriteFile(f, []byte(frame), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncase \"$1\" in\nlist-panes) echo '1 %1';;\ncapture-pane) cat " + f + ";;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+const agyQuotaFrame = "partial answer\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h39m46s.\n─────\n> \n─────\n? for shortcuts      Gemini · high\n"
+
+// A queue run whose agy turn was quota-refused reads limited in the list BEFORE the sweep opened an
+// episode, and the same session reads limited after it: the queue closes an idle run as finished
+// and waits on a limited one, so the answer must not depend on which came first. A clean turn, and
+// a session that is not a queue run, stay idle.
+func TestWireSessionAgyQueueRunQuotaRefusalReadsLimitedBeforeTheSweep(t *testing.T) {
+	for _, tc := range []struct {
+		name, frame, delivery, want string
+	}{
+		{"refused queue run", agyQuotaFrame, "d1", agents.StateLimited},
+		{"clean queue run", "done\n─────\n> \n─────\n? for shortcuts      Gemini · high\n", "d1", "idle"},
+		{"refused, not a queue run", agyQuotaFrame, "", "idle"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, sid, add := agyIdentityFixture(t, "agy_quota_list_"+strings.ReplaceAll(tc.name, " ", "_"))
+			m.QueueDelivery = tc.delivery
+			session.WriteMeta(m)
+			add([][2]int{{0, 14}, {1, 15}}, 1)
+			status.Persist(sid, "working")
+			agyFakePane(t, tc.frame)
+			if got := wireSession(m, true).State; got != tc.want {
+				t.Fatalf("state %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A quota refusal the conversation records as an error step main does not call a failure is not a
+// finished run: with the banner on screen the queue run reads limited, not idle.
+func TestWireSessionAgyQuotaErrorStepWithBannerReadsLimited(t *testing.T) {
+	m, _, add := agyIdentityFixture(t, "agy_quota_errstep")
+	m.QueueDelivery = "d1"
+	session.WriteMeta(m)
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	markSessionWorkingFrom(m.Name, captureTurnMark(m.Name))
+	add([][2]int{{2, 14}, {3, 17}}, 3)
+	dbPath := filepath.Join(paths.GeminiHome(), "antigravity-cli", "conversations", "conv-"+m.Name+".db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	message := "RESOURCE_EXHAUSTED: Individual quota reached. Resets in 1h39m46s."
+	details := append(binary.AppendUvarint([]byte{0x12}, uint64(len(message))), message...)
+	payload := append(binary.AppendUvarint([]byte{0x1a}, uint64(len(details))), details...)
+	if _, err := db.Exec(`UPDATE steps SET step_payload=? WHERE idx=3`, payload); err != nil {
+		t.Fatal(err)
+	}
+	agyFakePane(t, agyQuotaFrame)
+	if got := wireSession(m, true).State; got != agents.StateLimited {
+		t.Fatalf("state %q, want %q", got, agents.StateLimited)
 	}
 }

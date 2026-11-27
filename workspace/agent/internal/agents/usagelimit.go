@@ -64,4 +64,8 @@ type UsageLimitTraits struct {
 	// moved on by hand and a booked "the limit has reset, continue" prompt would land on
 	// unrelated work. false when it cannot tell. Nil = never cancelled for this reason.
 	RanTurnSince func(m session.Meta, at time.Time) bool
+	// ListProbe lets the session list call AtLimit for an idle queue-run session that has no
+	// episode yet, so the run reads limited (and the queue waits) before the first sweep instead
+	// of closing as a normal finish. Only for a kind whose AtLimit is one cheap pane read.
+	ListProbe bool
 }
