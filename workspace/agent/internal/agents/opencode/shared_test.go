@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -192,6 +194,52 @@ func terminalMeta(t *testing.T, name string) session.Meta {
 	t.Helper()
 	dir := t.TempDir()
 	return session.Meta{Name: name, Dir: dir, Kind: session.KindOpencode, Driver: session.DriverTUI}
+}
+
+func TestSharedMCPCallerMatchesOnlyOneSlotOnThePeerDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	daemon := newSharedDaemon(t)
+	dir := t.TempDir()
+	record := func(m session.Meta, id string, shared bool) {
+		m.Dir = dir
+		session.WriteMeta(m)
+		sid := session.UUID(m.Dir, m.Name)
+		sids.Write(sid, id)
+		if shared {
+			markSlotMode(sid, modeShared)
+		}
+	}
+	record(session.Meta{Name: "managed", Kind: session.KindOpencode, Driver: session.DriverManaged}, "ses_managed", false)
+	record(session.Meta{Name: "terminal", Kind: session.KindOpencode}, "ses_terminal", true)
+	record(session.Meta{Name: "standalone", Kind: session.KindOpencode}, "ses_standalone", false)
+	record(session.Meta{Name: "private", Kind: session.KindOpencode, Driver: session.DriverManaged, Route: &routes.Selection{Route: routes.RouteCustomAPI}}, "ses_private", false)
+	record(session.Meta{Name: "archived", Kind: session.KindOpencode, Driver: session.DriverManaged, Archived: true}, "ses_archived", false)
+	record(session.Meta{Name: "shell", Kind: session.KindShell, Driver: session.DriverManaged}, "ses_shell", false)
+	for _, name := range []string{"duplicate-one", "duplicate-two"} {
+		record(session.Meta{Name: name, Kind: session.KindOpencode, Driver: session.DriverManaged}, "ses_duplicate", false)
+	}
+
+	for _, tc := range []struct {
+		name, id, want string
+		pid            int
+	}{
+		{"managed", "ses_managed", "managed", daemon.pid},
+		{"terminal", "ses_terminal", "terminal", daemon.pid},
+		{"different peer", "ses_managed", "", daemon.pid + 1},
+		{"unmapped", "ses_unknown", "", daemon.pid},
+		{"standalone", "ses_standalone", "", daemon.pid},
+		{"private route", "ses_private", "", daemon.pid},
+		{"archived", "ses_archived", "", daemon.pid},
+		{"other kind", "ses_shell", "", daemon.pid},
+		{"ambiguous", "ses_duplicate", "", daemon.pid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SharedMCPCaller(context.Background(), tc.pid, tc.id); got != tc.want {
+				t.Fatalf("session %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 // A fresh Terminal slot: the session is created through the API with its metadata, recorded at

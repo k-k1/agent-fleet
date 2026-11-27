@@ -109,6 +109,72 @@ func TestElicitRelayLeavesACallUnattributedWithoutALookup(t *testing.T) {
 	waitCall(t, ch)
 }
 
+func TestElicitRelayAttributesOpenCodeMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name, env, meta, want string
+		lookups               int
+	}{
+		{"shared daemon", "", `"ses_first"`, "open-first", 1},
+		{"another session", "", `"ses_second"`, "open-second", 1},
+		{"unmapped", "", `"ses_unknown"`, "", 1},
+		{"non-string", "", `123`, "", 0},
+		{"missing", "", "", "", 0},
+		{"process label wins", "AF_SESSION_NAME=direct\x00", `"ses_first"`, "direct", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetElicitations(t)
+			notices := captureNotices(t)
+			up := newUpstream(t, jsonAnswer(askThenComplete))
+			e := newRelayEnv(t, up)
+			flagElicitation(t, ElicitationRelay)
+			fakeCaller(t, 77, tc.env)
+			old := SharedOpenCodeCaller
+			t.Cleanup(func() { SharedOpenCodeCaller = old })
+			var ids []string
+			SharedOpenCodeCaller = func(_ context.Context, pid int, id string) string {
+				if pid != 77 {
+					t.Errorf("lookup PID %d, want 77", pid)
+				}
+				ids = append(ids, id)
+				return map[string]string{"ses_first": "open-first", "ses_second": "open-second"}[id]
+			}
+			body := elicitCallBody
+			if tc.meta != "" {
+				body = strings.Replace(body, `"progressToken":3`, `"progressToken":3,"`+OpenCodeSessionIDMetaKey+`":`+tc.meta, 1)
+			}
+			ch := e.startCall(body, sseHeaders)
+			p := waitPending(t, 1)[0]
+			got := waitNotices(t, notices, 1)[0]
+			if p.Session != tc.want || got.ID != p.ID || got.Session != tc.want {
+				t.Errorf("pending session %q, notice %+v, want session %q", p.Session, got, tc.want)
+			}
+			answer, err := AnswerElicitation(p.ID, allowOnce)
+			if err != nil || answer.Session != tc.want {
+				t.Errorf("answer session %q, err %v, want %q", answer.Session, err, tc.want)
+			}
+			waitCall(t, ch)
+			if len(ids) != tc.lookups || (tc.lookups == 1 && strconv.Quote(ids[0]) != tc.meta) {
+				t.Errorf("looked up %q, want %d lookups of %s", ids, tc.lookups, tc.meta)
+			}
+		})
+	}
+}
+
+func TestElicitRelayPassesLegacyThreadMetadata(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	body := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"send_mail","_meta":{"threadId":"thread-test","progressToken":1}}}`
+	call := waitCall(t, e.startCall(body, sseHeaders))
+	if !strings.Contains(call.body, `"resultType":"input_required"`) || len(PendingElicitations()) != 0 {
+		t.Fatalf("legacy call got %s, pending %+v", call.body, PendingElicitations())
+	}
+	if up.count() != 1 || up.at(0).Body != body {
+		t.Fatal("legacy call changed on its way upstream")
+	}
+}
+
 // A form whose largest answer could not be sent back is refused before anyone is asked: the person
 // could only decline it. One just under the bound is put to them.
 func TestElicitFormWhoseAnswerCannotBeSentIsRefused(t *testing.T) {
