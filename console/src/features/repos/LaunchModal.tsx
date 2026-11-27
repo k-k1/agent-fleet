@@ -1088,9 +1088,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       // Only a registered full id of an agent whose row shows recents: a tier alias would push the
       // registered ones out of the three slots, and a live catalog never reads the list.
       else if (hasModel && !agentOf(kind).caps.liveModels && !isTierAlias(model)) rememberRecentModel(kind, model);
-      // A successful launch means this text and its attachments reached the new session in
-      // full, and this is the only place the draft may be discarded: coming back from a failure
-      // (a name collision, say) keeps both the typed text and the attachments.
+      // Clear this form once delivery succeeds or recovery moves to a memo or retry form.
+      // An unsuccessful launch leaves the fields here for the next attempt.
       if (!r.incomplete || r.incomplete.saved || r.incomplete.held) {
         clearPromptDraft();
         attach.clear();

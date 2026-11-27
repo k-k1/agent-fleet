@@ -4,6 +4,7 @@ import { setLaunchSeed } from "../../lib/launchSeed.ts";
 import { pushPromptHistory } from "../../lib/promptHistory.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { Modal } from "../../ui/Modal.tsx";
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { dismissToast } from "../../ui/toast.ts";
 import { deliverLaunchPrompt, uploadLaunchFiles, type LaunchFile } from "./launchDelivery.ts";
@@ -67,7 +68,7 @@ export function LaunchDeliveryRetry({ session, kind, repo, prompt: initialPrompt
           <div className="ui-modal-body">
             <label className="ui-field">
               {tr("rp.delivery_prompt")}
-              <textarea rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+              <textarea {...NO_AUTOFILL} rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
             </label>
             {files.length > 0 && <ul>
               {files.map(({ file, path }, i) => (
