@@ -20,6 +20,11 @@ function focusAfterDelivery() {
 }
 
 type DialogState = { open: boolean };
+type ActionStatus = "locked" | "unavailable";
+const actionMessage = {
+  locked: "rp.delivery_other_tab",
+  unavailable: "rp.delivery_storage_unavailable",
+} as const;
 
 export function LaunchDeliveryRecovery() {
   const owner = useTenantStore((s) => launchDraftOwner(s).prefix);
@@ -57,7 +62,7 @@ function LaunchDeliveryNotice({ draftKey }: { draftKey: string }) {
         }).then((status) => {
           if (launchDraftOwner(useTenantStore.getState()).prefix !== draft.owner) return;
           if (status) {
-            toast(t(status === "locked" ? "rp.delivery_other_tab" : "rp.delivery_storage_unavailable"), { kind: "warn", key: draftKey + ":action" });
+            toast(t(actionMessage[status]), { kind: "warn", key: draftKey + ":action" });
             return;
           }
           const focused = document.activeElement;
@@ -87,19 +92,26 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
   const toast = useToast();
   const { key, session, kind, prompt, files, deliveryPending } = draft;
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<"locked" | "unavailable" | void>();
+  const [status, setStatus] = useState<ActionStatus>();
   const operation = useHeldLaunchDrafts((s) => s.operations[key]);
   const busy = !!operation;
+  const inScope = () => {
+    const tenant = useTenantStore.getState();
+    return !tenant.notProvisioned && launchDraftOwner(tenant).prefix === draft.owner;
+  };
+  const reportStatus = (status: ActionStatus | void) => {
+    if (!status || !inScope()) return;
+    if (dialog.open) setStatus(status);
+    else toast(tr(actionMessage[status]), { kind: "warn", key: key + ":action" });
+  };
   const toggleDialog = (value: boolean) => {
     if (value && useHeldLaunchDrafts.getState().operations[key]) return;
     dialog.open = value;
     setOpen(value);
     setStatus(undefined);
-    if (value && deliveryPending) void withLaunchDraft(key, async () => {}).then(setStatus);
-  };
-  const inScope = () => {
-    const tenant = useTenantStore.getState();
-    return !tenant.notProvisioned && launchDraftOwner(tenant).prefix === draft.owner;
+    if (!value) return;
+    dismissToast(key + ":action");
+    if (deliveryPending) void withLaunchDraft(key, async () => {}).then(reportStatus);
   };
   const save = async (changes: Parameters<typeof editLaunchDraft>[1]) => {
     const saved = await editLaunchDraft(key, changes);
@@ -126,17 +138,17 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
         if (uploaded.some((entry, index) => entry !== files[index])) await save({ files: uploaded });
         if (!current() || signal.aborted || uploaded.some((entry) => !entry.path)) return;
         if (!await markLaunchDraftDelivery(key, true)) {
-          if (current()) setStatus("unavailable");
+          if (current()) reportStatus("unavailable");
           return;
         }
         if (!current() || signal.aborted) {
-          await markLaunchDraftDelivery(key, false);
+          if (!await markLaunchDraftDelivery(key, false) && current()) reportStatus("unavailable");
           return;
         }
         phase("sending");
         const result = await deliverLaunchPrompt(session, kind, prompt.trim(), uploaded, deliveryToast, signal);
         if (result.unknown) return;
-        if (!result.ok && !await markLaunchDraftDelivery(key, false) && current()) setStatus("unavailable");
+        if (!result.ok && !await markLaunchDraftDelivery(key, false) && current()) reportStatus("unavailable");
         if (!result.ok) return;
         await clearLaunchDraft(key);
         if (!current()) return;
@@ -144,7 +156,7 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
         pushPromptHistory(repo, prompt);
         if (dialog.open) focusAfterDelivery();
       });
-      if (blocked && current()) setStatus(blocked);
+      if (current()) reportStatus(blocked);
     } finally {
       unsubscribe();
     }
@@ -171,7 +183,7 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
           <div className="ui-modal-body">
             {operation && <p role="status">{tr(operation.phase === "checking" ? "ui.processing"
               : operation.phase === "uploading" ? "rp.delivery_uploading" : "rp.delivery_sending")}</p>}
-            {status ? <p role="status">{tr(status === "locked" ? "rp.delivery_other_tab" : "rp.delivery_storage_unavailable")}</p> : null}
+            {status && <p role="status">{tr(actionMessage[status])}</p>}
             {deliveryPending && !busy && <p role="status">{tr("rp.delivery_unknown", { session })}</p>}
             <label className="ui-field">
               {tr("rp.delivery_prompt")}

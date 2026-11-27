@@ -18,7 +18,8 @@ vi.mock("../../core/api/client.ts", async (orig) => {
 });
 const stash = vi.fn();
 vi.mock("../memo/launchStash.ts", () => ({ stashLaunchDraft: (...a: unknown[]) => stash(...a) }));
-vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
+const openSessionChat = vi.fn();
+vi.mock("../sessions/open.ts", () => ({ openSessionChat: (...args: unknown[]) => openSessionChat(...args), openSessionTerminal: vi.fn() }));
 
 const { useStartWork } = await import("./useStartWork.ts");
 const { LaunchDeliveryRecovery } = await import("./LaunchDeliveryRetry.tsx");
@@ -94,6 +95,7 @@ beforeEach(async () => {
   takeLaunchSeed("s1");
   apiJSON.mockReset();
   pasteImage.mockReset();
+  openSessionChat.mockClear();
   stash.mockReset();
   stash.mockResolvedValue({ ok: true });
   host = document.createElement("div");
@@ -281,7 +283,11 @@ describe("partial draft delivery", () => {
       .mockImplementationOnce((_session, _file, signal: AbortSignal) => waitForAbort(signal));
     await act(async () => submit(recoveryDialog()!));
     await act(async () => vi.waitFor(() => expect(pasteImage).toHaveBeenCalledTimes(5)));
-    await act(async () => dialogButton(t("rp.delivery_cancel_upload"))!.click());
+    await act(async () => recoveryDialog()!.querySelector<HTMLButtonElement>("header button")!.click());
+    expect(recoveryDialog()).toBeNull();
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>(".ui-toast-msg button")]
+      .find((button) => button.textContent === t("rp.delivery_cancel_upload"));
+    await act(async () => cancel!.click());
     await waitForRetry();
     expect(pasteImage.mock.lastCall?.[2].aborted).toBe(true);
     expect(apiJSON).toHaveBeenCalledTimes(1);
@@ -332,25 +338,57 @@ describe("partial draft delivery", () => {
     expect(restored.querySelector("textarea")?.value).toBe("look at these");
     expect(restored.querySelector("textarea")?.readOnly).toBe(true);
     expect(restored.textContent).toContain("a.png");
+    expect(restored.querySelector("li button, input[type=file]")).toBeNull();
     expect(dialogButton(t("rp.delivery_send"))).toBeUndefined();
-    expect(dialogButton(t("rp.delivery_open_session"))).toBeDefined();
     await submitRetry(restored);
     expect(apiJSON).toHaveBeenCalledTimes(2);
     expect(readPromptHistory("x")).toEqual([]);
+    openSessionChat.mockClear();
+    await act(async () => dialogButton(t("rp.delivery_open_session"))!.click());
+    expect(recoveryDialog()).toBeNull();
+    expect(openSessionChat).toHaveBeenCalledExactlyOnceWith("s1");
   });
 
-  it.each(["network loss", "gateway timeout", "malformed gateway error", "missing acknowledgement"])("keeps input with %s in the unknown state", async (failure) => {
+  it.each([
+    ["network loss", undefined],
+    ["gateway timeout", { error: { code: "http_504" } }],
+    ["request timeout", { error: { status: 408 } }],
+    ["proxy reporting a closed request", { error: { status: 499 } }],
+    ["malformed gateway error", { error: "connection lost" }],
+    ["missing acknowledgement", {}],
+  ])("keeps input with %s in the unknown state", async (_failure, response) => {
     apiJSON.mockImplementation((p: string) => created(p));
     pasteImage.mockResolvedValueOnce({ status: 413 }).mockResolvedValueOnce({ status: 200, path: "/p/a.png" });
     await launch([file("a.png")]);
-    if (failure === "network loss") apiJSON.mockRejectedValueOnce(new Error("connection lost"));
-    else if (failure === "gateway timeout") apiJSON.mockResolvedValueOnce({ error: { code: "http_504" } });
-    else if (failure === "malformed gateway error") apiJSON.mockResolvedValueOnce({ error: "connection lost" });
-    else apiJSON.mockResolvedValueOnce({});
+    if (response === undefined) apiJSON.mockRejectedValueOnce(new Error("connection lost"));
+    else apiJSON.mockResolvedValueOnce(response);
     await act(async () => reviewButton()!.click());
     await submitRetry(recoveryDialog()!);
     expect(recoveryDialog()!.textContent).toContain(t("rp.delivery_unknown", { session: "s1" }));
     expect(apiJSON).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports storage loss after the retry dialog closes and keeps the prompt unsent", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValueOnce({ status: 413 });
+    await launch([file("a.png")]);
+    await act(async () => reviewButton()!.click());
+    let finishUpload!: (result: { status: number; path: string }) => void;
+    pasteImage.mockImplementationOnce(() => new Promise((resolve) => { finishUpload = resolve; }));
+    await act(async () => submit(recoveryDialog()!));
+    await act(async () => vi.waitFor(() => expect(finishUpload).toBeTypeOf("function")));
+    await act(async () => recoveryDialog()!.querySelector<HTMLButtonElement>("header button")!.click());
+    expect(recoveryDialog()).toBeNull();
+
+    vi.stubGlobal("indexedDB", undefined);
+    resetAttachDraftDB();
+    await act(async () => finishUpload({ status: 200, path: "/p/a.png" }));
+    await waitForRetry();
+    expect(toasts()).toContain(t("rp.delivery_storage_unavailable"));
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(useHeldLaunchDrafts.getState().drafts[draftKey()]).toMatchObject({
+      session: "s1", prompt: "look at these", files: [{ path: "/p/a.png" }],
+    });
   });
 
   it("shows another tab's lock for send and discard without queuing either action", async () => {
@@ -462,7 +500,7 @@ describe("partial draft delivery", () => {
     const onSeed = vi.fn(() => takeLaunchSeed("s1"));
     const unsubscribe = subscribeLaunchSeed("s1", onSeed);
     try {
-      apiJSON.mockImplementation((p: string) => created(p));
+      apiJSON.mockImplementation((p: string) => created(p, { sent: "s1" }));
       await submitRetry(dialog);
       expect(apiJSON).toHaveBeenCalledTimes(3);
       expect(apiJSON.mock.lastCall?.slice(0, 3)).toEqual(refusedCall);

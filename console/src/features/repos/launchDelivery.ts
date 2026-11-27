@@ -48,7 +48,7 @@ export async function deliverLaunchPrompt(session: string, kind: string, prompt:
     // acknowledgement or an HTTP refusal settles the attempt.
     const code = del?.error?.code;
     const status = del?.error?.status ?? (typeof code === "string" && /^http_4\d\d$/.test(code) ? Number(code.slice(5)) : 0);
-    const refused = status >= 400 && status < 500 && status !== 408;
+    const refused = status >= 400 && status < 500 && status !== 408 && status !== 499;
     const accepted = !del?.error && (del?.queued === session || del?.sent === session);
     if (!refused && !accepted) return { ok: false, unknown: true, seed };
   }
