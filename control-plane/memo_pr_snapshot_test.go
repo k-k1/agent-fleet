@@ -97,6 +97,81 @@ func TestMemoPRSnapshotReadsUntilMerged(t *testing.T) {
 	})
 }
 
+func TestMemoPRSnapshotRecoversBadFirstTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name, turn string
+		ms         int64
+		held       bool
+	}{
+		{name: "auto-run after failure", turn: "turn-failed", ms: 90_000},
+		{name: "run now after reapproval of a short turn", turn: "none", ms: 5_000, held: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				ctx := context.Background()
+				now := time.Now()
+				closedAt := now.Add(-time.Minute)
+				agent, q, da, b := e.prChain("clean", closedAt)
+				e.closeDeliveryAs(da.ID, store.DeliveryClean, tc.turn, tc.ms, closedAt)
+				first := e.delivery(da.ID)
+				if first.TurnEndedAt == "" || !store.TurnBad(first) {
+					t.Fatalf("expected a recorded bad first turn: %+v", first)
+				}
+				if tc.held {
+					// Older versions cleared the release when holding a dependent for this reason.
+					row := e.memoRow(b.ID)
+					row.State, row.ReleaseHash, row.ReleasedAt, row.ReleasedBy = store.MemoStateHeld, "", "", ""
+					row.HeldReason = `{"after":"` + da.MessageIDs[0] + `","reason":"bad_first_turn"}`
+					if err := e.st.MemoTx(ctx, row.MembershipID, func(tx store.MemoTxOps) error { return tx.WriteMemo(row) }); err != nil {
+						t.Fatal(err)
+					}
+					e.notReady(q, b.ID, memoNotReadyHeld)
+					if rec := e.release(b.ID, memoContentHash(row)); rec.Code != http.StatusOK {
+						t.Fatalf("reapprove with the original prerequisite: %d %s", rec.Code, rec.Body.String())
+					}
+				}
+				var state string
+				agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) {
+					return http.StatusOK, prAnswer("merged", state)
+				})
+				r := e.runner()
+				for _, pending := range []string{"", "open"} {
+					state = pending
+					e.settleNow(now)
+					if got := e.delivery(da.ID); got.PRState != store.PRStateWaiting {
+						t.Fatalf("second PR %q: got snapshot %q, want waiting", state, got.PRState)
+					}
+					e.notReady(q, b.ID, memoNotReadyPrerequisites)
+					if ds, _ := r.dispatch(ctx, now, 1); len(ds) != 0 {
+						t.Fatalf("auto-run claimed %v with the second PR %q", ds[0].MessageIDs, state)
+					}
+					if got := e.memoRow(b.ID); got.State != store.MemoStatePending || got.HeldReason != "" {
+						t.Fatalf("dependent lost its approval: %+v", got)
+					}
+					now = now.Add(11 * time.Minute)
+				}
+				state = "merged"
+				e.settleNow(now)
+				got := e.delivery(da.ID)
+				if got.PRState != store.PRStateMerged {
+					t.Fatalf("merged PRs: got snapshot %q", got.PRState)
+				}
+				if got.TurnEndedAt != first.TurnEndedAt || got.TurnOutcome != first.TurnOutcome || got.TurnMs != first.TurnMs {
+					t.Fatalf("first turn changed: %+v", got)
+				}
+				if tc.held {
+					rec := e.fireMemo(q, b.ID)
+					if rec.Code != http.StatusAccepted || !sameIDs(decode[memoDeliveryDTO](t, rec).MessageIDs, b.ID) {
+						t.Fatalf("run this memo now: %d %s", rec.Code, rec.Body.String())
+					}
+				} else if ds, _ := r.dispatch(ctx, now, 1); len(ds) != 1 || !sameIDs(ds[0].MessageIDs, b.ID) {
+					t.Fatalf("auto-run deliveries %+v, want the dependent", ds)
+				}
+			})
+		})
+	}
+}
+
 // No answer is never "no PR": an Agent without the route is not asked, and an error, an answer of
 // another handler or one this Control Plane cannot read keeps the dependent waiting. A session the
 // Agent no longer has, before any snapshot, sends the dependent to held at once; a PR closed

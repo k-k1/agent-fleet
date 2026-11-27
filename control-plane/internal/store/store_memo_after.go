@@ -29,31 +29,25 @@ func TurnBad(d MemoDelivery) bool {
 // (progress clears retire_gen). A clean close's own retire never sets retire_gen.
 func RetiredOverdue(d MemoDelivery) bool { return d.OverdueAt != "" && d.RetireGen != 0 }
 
-// AfterDeliverySatisfies is "satisfied" for the delivery that delivered a prerequisite: it closed
-// as clean and was not retired as overdue, and then either its first turn is recorded and was not
-// bad and its PR snapshot is final with every PR merged, or with no PR and a last answer that
-// reads as done (steps 1 and 2, and issue #4876: a run without a PR that stopped part way also
-// ends clean, and only its own words tell it from one that finished), or its first turn is not
-// recorded and the snapshot names at least one PR, all merged (a merged PR is the success a first
-// turn that is never recorded cannot show). The prerequisite itself must be delivered by that
-// delivery (not sent by hand), which the caller checks.
+// AfterDeliverySatisfies requires a clean close without an overdue retire. A nonempty snapshot of
+// merged PRs can prove completion even after a failed first turn. Without PRs, a good first turn
+// and a Done answer are both needed because a run that stopped part way can also close cleanly.
+// The caller checks that the delivery delivered the prerequisite.
 func AfterDeliverySatisfies(d MemoDelivery) bool {
 	if d.State != DeliveryClosed || d.Outcome != DeliveryClean || RetiredOverdue(d) {
 		return false
 	}
-	if d.TurnEndedAt == "" {
-		return d.PRState == PRStateMerged
-	}
-	return !TurnBad(d) && (d.PRState == PRStateMerged || (d.PRState == PRStateNone && d.AnswerClass == AnswerDone))
+	return d.PRState == PRStateMerged ||
+		(d.PRState == PRStateNone && d.TurnEndedAt != "" && !TurnBad(d) && d.AnswerClass == AnswerDone)
 }
 
 // memoPrereqSatisfiedSQL is AfterDeliverySatisfies, plus "delivered by a delivery", for a
 // prerequisite row p.
 const memoPrereqSatisfiedSQL = `p.state='delivered' AND p.delivery_id<>'' AND EXISTS (SELECT 1 FROM memo_delivery d
 	  WHERE d.id=p.delivery_id AND d.state='closed' AND d.outcome='clean' AND NOT (d.overdue_at<>'' AND d.retire_gen<>0)
-	    AND ((d.turn_ended_at='' AND d.pr_state='merged')
+	    AND (d.pr_state='merged'
 	      OR (d.turn_ended_at<>'' AND d.turn_outcome NOT IN ('turn-failed','turn-aborted') AND (d.turn_outcome='clean' OR d.turn_ms>=60000)
-	        AND (d.pr_state='merged' OR (d.pr_state='none' AND d.answer_class='done')))))`
+	        AND d.pr_state='none' AND d.answer_class='done')))`
 
 // memoEligibleSQL holds for a pending row m whose prerequisites are all satisfied. after_ids is a
 // JSON array of hex ids with no duplicate (the API refuses one), so its element count is its

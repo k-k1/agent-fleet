@@ -145,11 +145,11 @@ A memo can wait for other memos of the same auto-run category: it runs only afte
 - It never runs in the same session as a memo it waits for
 - The row says what it waits for and how each stands, for example "Waits for acme/app#12: running"
 
-A memo it waits for has **ended well** when it was run by auto-run (not sent by hand), the run ended as "Done", the run's first turn finished, and the run was not stopped for being overdue. Until the first turn is known, the memo keeps waiting.
+A prerequisite must have been run by auto-run, ended as "Done", and avoided being stopped for being overdue.
 
-Then its **pull requests** are checked: the pull request of the branch the run's session worked on, and the pull requests the session opened or worked on (not those of a reviewer it started). Auto-run reads them from the workspace after the run ended, every 10 minutes while the workspace runs, until every one is merged. A run that opened none counts as done only when it said so, as below. The row says what it waits for, for example "Waits for acme/app#12: waiting for PR #57 to merge".
+Auto-run checks the **pull requests** from the run's branch and the pull requests its session opened or worked on. A review session's own pull requests are excluded. Auto-run reads the pull requests from the workspace after the run ends and checks every 10 minutes while the workspace runs. The row says what it waits for, for example "Waits for acme/app#12: waiting for PR #57 to merge".
 
-A run that opened **no pull request** counts as done only when the session's **last answer starts with `Done:`**. A run can stop part way and still end cleanly, often without a pull request, so its own words are what tells a finished run from one that gave up. After the run ended, auto-run reads the first line of the session's last answer from the workspace, while the workspace runs, for up to a day:
+A run that opened **no pull request** counts as done only when its recorded first turn meets the queue's [first-turn rule](#pause-and-resume) and the session's **last answer starts with `Done:`**. After the run ends, auto-run reads the first line of the session's last answer from the workspace, while the workspace runs, for up to a day.
 
 - `Done:` at the start of that line (the case, and bold or code marks around the word, do not matter): the memos that wait for it can run
 - Not read yet: they keep waiting. The row says "ended without a pull request: waiting for a Done: answer"
@@ -158,7 +158,7 @@ A run that opened **no pull request** counts as done only when the session's **l
 
 Write your standing instruction so that a run that finished ends with an answer starting with `Done:` ([Write the standing instruction for nobody watching](../fleet/memo-auto-run-practices.md#write-the-standing-instruction-for-nobody-watching)). The run history shows how each run's last answer read ([Read the run history](#read-the-run-history)).
 
-- Some agents never record how their first turn went. A run of such a session counts as done once it has opened at least one pull request and every one is merged, without the first turn
+- A run with at least one pull request counts as done once every pull request is verified merged, even if its first turn failed or was never recorded. The run history keeps the original first-turn result
 - While the workspace is stopped and every memo waiting to run waits only for pull requests or for a run's last answer, auto-run starts the workspace to check them at most once an hour (at most 24 times a day). Those starts are not runs, so they do not count towards "Runs per day"
 - After a day without any change in those pull requests, auto-run stops starting the workspace for them and notifies you once. The memo keeps waiting, and the check goes on whenever the workspace runs
 - An older workspace that cannot report pull requests leaves the memo waiting: restart the workspace to update it
@@ -168,7 +168,7 @@ When a memo it waits for can no longer end well, the memo goes back to "**Waits 
 | Why | What happened to the memo it waits for |
 |---|---|
 | its run was cut off, how its run ended is unknown, its run did not end cleanly | The run ended as "Stopped", "Needs a look" or "Ended by you" |
-| its run's first turn failed | The first turn failed or was stopped, or ended within a minute without finishing |
+| its run's first turn failed | The run opened no pull requests, and the first turn failed, was stopped, or ended within a minute without finishing |
 | its run went overdue and was stopped | The run was stopped for being overdue |
 | a pull request of its run was closed without merging | A pull request of the run was closed without being merged |
 | its run's session was deleted before its pull requests could be read | The session was deleted before auto-run could read its pull requests |
@@ -179,6 +179,8 @@ When a memo it waits for can no longer end well, the memo goes back to "**Waits 
 | was sent by hand | You sent it yourself, so nothing shows how it ended |
 
 Check the memo it waited for, then approve the memo again (it waits once more) or change what it waits for. A memo it waits for that is waiting for approval or waiting to run only makes it wait longer.
+
+If an older version moved a memo back to "Waits for approval" because its prerequisite's first turn failed, approve it again with the same prerequisite to let auto-run check the pull requests.
 
 - A memo that waits, or that another waits for, is kept as it is by a tidy: it is never merged, split or moved
 - A memo another waits for is kept past the 7 days after it was sent, until nothing waits for it any more
