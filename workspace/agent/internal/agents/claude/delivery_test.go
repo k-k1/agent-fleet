@@ -30,6 +30,60 @@ func appendJSONL(t *testing.T, path, line string) {
 	}
 }
 
+func TestPromptSubmittedSince(t *testing.T) {
+	const sid = "44444444-4444-4444-8444-444444444444"
+	const memo = "Short memo"
+	paste := func(text string) string {
+		return "\n\n<pasted_content id=\"a92\">\n" + text + "\n</pasted_content id=\"a92\">\n"
+	}
+	user := func(content any) map[string]any {
+		return map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}}
+	}
+	withFlag := func(flag string) map[string]any {
+		row := user(memo)
+		row[flag] = true
+		return row
+	}
+	imageMemo := "Check this image\n\nOpen the following file(s) with the Read tool: /tmp/preview.png"
+	for _, tc := range []struct {
+		name, prompt string
+		row          map[string]any
+		confirmed    bool
+	}{
+		{"first user row", memo, user(memo), true},
+		{"different prompt", memo, user(memo + " with a different ending"), false},
+		{"pasted CRLF", "First\r\nSecond\r\n", user(paste("First\nSecond")), true},
+		{"pasted image memo", ShapePrompt(imageMemo), user([]map[string]string{{"type": "text", "text": paste(ShapePrompt(imageMemo))}}), true},
+		{"sanitized input", "Short\u200b me\ufeffmo", user(memo), true},
+		{"skill command", "/scout  today", user("<command-message>scout</command-message>\n<command-name>/scout</command-name>\n<command-args>today</command-args>"), true},
+		{"different command arguments", "/scout tomorrow", user("<command-name>/scout</command-name><command-args>today</command-args>"), false},
+		{"queued only", memo, map[string]any{"type": "queue-operation", "operation": "enqueue", "content": memo}, false},
+		{"meta", memo, withFlag("isMeta"), false},
+		{"sidechain", memo, withFlag("isSidechain"), false},
+		{"summary", memo, withFlag("isCompactSummary"), false},
+		{"tool result", memo, user([]map[string]string{{"type": "tool_result", "content": memo}}), false},
+		{"task notification", "<task-notification>done</task-notification>", user("<task-notification>done</task-notification>"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+			project := filepath.Join(cfg, "projects", "-submit")
+			if err := os.MkdirAll(project, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			baseline := TranscriptSnapshot(sid)
+			row, err := json.Marshal(tc.row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeJSONL(t, filepath.Join(project, sid+".jsonl"), string(row)+"\n")
+			if got := PromptSubmittedSince(sid, baseline, tc.prompt); got != tc.confirmed {
+				t.Fatalf("PromptSubmittedSince = %v, want %v", got, tc.confirmed)
+			}
+		})
+	}
+}
+
 func TestUserTurnAppendedSince(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)

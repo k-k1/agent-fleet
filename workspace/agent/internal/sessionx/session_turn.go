@@ -64,6 +64,9 @@ type turnReq struct {
 	// ClientMessageID is an AF-assigned idempotency key (docs/log/27 §4) that lets a managed
 	// driver's ledger dedupe resends. Empty means the driver assigns one.
 	ClientMessageID string `json:"clientMessageID"`
+	// ConfirmSubmit asks Claude Terminal to verify this prompt in its transcript. The
+	// success reply echoes submit_confirmed so callers can detect an older Agent.
+	ConfirmSubmit bool `json:"confirm_submit"`
 
 	// DiscardQueue is interrupt's emergency brake (ADR 0105 decision 3): stop and discard
 	// everything still cancellable, whatever the stop episode says. Managed only.
@@ -212,7 +215,15 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt is required for start/steer")
 		return
 	}
-	if !submitPromptTUI(lease, w, name, pane, req.Prompt) {
+	if _, ok := submitPromptTUI(r.Context(), lease, w, name, pane, req.Prompt, req.ConfirmSubmit); !ok {
+		return
+	}
+	writeTurnSent(w, name, req)
+}
+
+func writeTurnSent(w http.ResponseWriter, name string, req turnReq) {
+	if req.ConfirmSubmit {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name, "op": req.Op, "submit_confirmed": true})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name, "op": req.Op})
@@ -288,7 +299,7 @@ func handleManagedTurn(lease *lifegate.Lease, w http.ResponseWriter, meta sessio
 		markSessionWorking(meta.Name)
 		cancelStopArmOnNewPrompt(meta.Name) // new work supersedes a stop-after-turn arm (docs/log/85)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name, "op": req.Op})
+	writeTurnSent(w, meta.Name, req)
 }
 
 // handleQueueEdit applies remove and dismiss_discard (ADR 0105 decisions 4-5) to the live

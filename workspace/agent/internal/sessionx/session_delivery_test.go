@@ -15,6 +15,28 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
+func TestClaudeSubmitComposerDistinguishesHintFromDraft(t *testing.T) {
+	const rule = "────────────────────────────────────────"
+	for _, tc := range []struct {
+		name, body string
+		hasDraft   bool
+	}{
+		{"faint startup hint", "\x1b[7mT\x1b[0;2mry \"fix lint errors\"\x1b[0m", false},
+		{"faint suggestion", "\x1b[2mcheck if it's still running\x1b[0m", false},
+		{"wrapped hint", "\x1b[2mcheck if it's\x1b[0m\n  \x1b[2mstill running\x1b[0m", false},
+		{"same text typed", "\x1b[7mc\x1b[0mheck if it's still running", true},
+		{"visible draft before faint text", "do it \x1b[2mwhen ready\x1b[0m", true},
+		{"visible continuation", "\x1b[2mcheck if it's\x1b[0m\n  still running", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := rule + "\n\x1b[39m❯\u00a0" + tc.body + "\n" + rule + "\n  ⏸ manual mode on · ← for agents\n"
+			if draft, ready := claudeSubmitComposer(frame); !ready || draft != tc.hasDraft {
+				t.Fatalf("draft=%t, ready=%t, want draft=%t in the main composer", draft, ready, tc.hasDraft)
+			}
+		})
+	}
+}
+
 func TestPromptDraftVisible(t *testing.T) {
 	captured := "…transcript…\n" +
 		"──────────────── [AF] 定時 ──\n" +

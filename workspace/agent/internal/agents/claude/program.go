@@ -277,6 +277,53 @@ func TranscriptSnapshot(sid string) map[string]int64 {
 	return snap
 }
 
+func observeSubmit(sid, prompt string) func() bool {
+	base, typed := TranscriptSnapshot(sid), ShapePrompt(prompt)
+	return func() bool { return PromptSubmittedSince(sid, base, typed) }
+}
+
+// PromptSubmittedSince looks for the submitted text in a new main-conversation user row.
+// A queue record only proves acceptance into Claude's in-memory queue, which can be lost.
+func PromptSubmittedSince(sid string, snap map[string]int64, prompt string) bool {
+	prompt = submittedPromptText(prompt)
+	if prompt == "" {
+		return false
+	}
+	var slash string
+	if strings.HasPrefix(prompt, "/") {
+		slash = prompt
+		if i := strings.IndexAny(prompt, " \t\n"); i >= 0 {
+			slash = prompt[:i] + " " + strings.TrimSpace(prompt[i:])
+		}
+	}
+	for _, p := range jsonlPaths(sid) {
+		for line := range bytes.SplitSeq(appendedSince(p, snap[p]), []byte("\n")) {
+			var row forkLine
+			if json.Unmarshal(line, &row) != nil || row.Type != "user" || row.Message.Role != "user" ||
+				row.IsMeta || row.IsSidechain || row.IsCompactSummary || !isUserPrompt(row.Message.Content) {
+				continue
+			}
+			raw := contentText(row.Message.Content)
+			if strings.HasPrefix(raw, "<task-notification>") {
+				continue
+			}
+			text := submittedPromptText(unwrapPasted(raw))
+			if text == prompt || slash != "" && CommandSlashForm(text) == slash {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Claude strips these zero-width characters at submit. Keep the comparison restricted
+// to text transformations the CLI makes, so a different user turn cannot confirm a send.
+var submitTextReplacer = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u200b", "", "\ufeff", "")
+
+func submittedPromptText(s string) string {
+	return strings.TrimSpace(submitTextReplacer.Replace(s))
+}
+
 // UserTurnAppendedSince reports whether a `"type":"user"` line landed in sid's log
 // AFTER snap was taken. claude persists a submitted prompt as a user line within well
 // under a second of a real submit, so this — not tmux send-keys exiting 0, which only

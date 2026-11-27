@@ -27,8 +27,11 @@ package sessionx
 // be confused with "delivery failed".
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -37,10 +40,95 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
+
+// The Terminal lock covers the baseline, the one submit, and observation so another API
+// send cannot supply the evidence. Keep this wait shorter than an interrupt's lock wait.
+var claudeSubmitWindow = 8 * time.Second
+
+func submitObservedClaudePrompt(ctx context.Context, w http.ResponseWriter, m session.Meta, pane, prompt string, observe func(string, string) func() bool) bool {
+	submitted := observe(session.UUID(m.Dir, m.Name), prompt)
+	frame, err := tmuxx.Output("capture-pane", "-p", "-e", "-t", pane)
+	draft, ready := claudeSubmitComposer(string(frame))
+	if err != nil || !ready {
+		httpx.WriteErr(w, http.StatusConflict, "composer_not_ready", "Claude's conversation composer is not ready. Check the terminal before sending again.")
+		return false
+	}
+	if draft {
+		httpx.WriteErr(w, http.StatusConflict, "composer_not_empty", "Claude's composer already holds a draft. Clear or submit it in the terminal before sending again.")
+		return false
+	}
+	if ctx.Err() != nil {
+		httpx.WriteErr(w, http.StatusRequestTimeout, "send_cancelled", "The request ended before the prompt was sent.")
+		return false
+	}
+	if err := typeLineAndSubmit(m.Name, pane, prompt); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return false
+	}
+	if !slashCmdRe.MatchString(strings.TrimSpace(prompt)) {
+		cancelStopArmOnNewPrompt(m.Name)
+	}
+	// Claude's hooks own the working state. The tmux exit status and the spinner can both
+	// precede a user turn or belong to other work, so neither settles this send.
+	if !awaitClaudeSubmit(ctx, submitted) {
+		httpx.WriteErr(w, http.StatusBadGateway, "delivery_unconfirmed", "Claude did not record the prompt as a user turn within the observation window. Check the terminal before sending again.")
+		return false
+	}
+	return true
+}
+
+// The ghost text is faint. Claude 2.1.332 renders its first cell in reverse video while
+// the cursor is at the start, then resets the cursor style and paints the rest faint.
+// An ordinary draft has visible text outside that span even if the cursor is at its start.
+var claudeComposerHint = regexp.MustCompile(`^[\x{a0} ]*(?:\x1b\[7m[^\x1b\n])?\x1b\[(?:0;)?2m[^\x1b\n]+\x1b\[(?:0|22)m *$`)
+
+func claudeSubmitComposer(styled string) (hasDraft, ready bool) {
+	rows := strings.Split(styled, "\n")
+	plain := make([]string, len(rows))
+	for i, row := range rows {
+		plain[i] = agents.AnsiRe.ReplaceAllString(row, "")
+	}
+	frame := strings.Join(plain, "\n")
+	draft, _, promptRow, hasBox := claudeBoxAt(frame)
+	if !hasBox || !tmuxx.ClaudeMainComposer(frame) {
+		return false, false
+	}
+	if strings.TrimSpace(draft) == "" {
+		return false, true
+	}
+	_, after, _ := strings.Cut(rows[promptRow], "❯")
+	if !claudeComposerHint.MatchString(after) {
+		return true, true
+	}
+	for i, end := promptRow+1, promptRow+1+strings.Count(draft, "\n"); i < end; i++ {
+		if strings.TrimSpace(plain[i]) != "" && !claudeComposerHint.MatchString(rows[i]) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+func awaitClaudeSubmit(ctx context.Context, submitted func() bool) bool {
+	ctx, cancel := context.WithTimeout(ctx, claudeSubmitWindow)
+	defer cancel()
+	poll := time.NewTicker(deliveryPoll)
+	defer poll.Stop()
+	for {
+		if submitted() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err() == context.DeadlineExceeded && submitted()
+		case <-poll.C:
+		}
+	}
+}
 
 // The evidence waits. Variables so tests shorten them.
 var (

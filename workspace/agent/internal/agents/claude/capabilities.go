@@ -73,6 +73,7 @@ func (agentImpl) TerminalTraits() agents.TerminalTraits {
 		ShapePrompt:       ShapePrompt,
 		PasteLF:           true,
 		SubmitDelay:       20 * time.Millisecond,
+		ObserveSubmit:     observeSubmit,
 		RemoteControlURL:  RemoteSessionURL,
 		HookPending:       true,
 		TranscriptLines:   true,

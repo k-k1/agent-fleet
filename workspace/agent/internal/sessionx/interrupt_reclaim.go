@@ -64,6 +64,11 @@ var reclaimSleep = time.Sleep
 // Japanese title's box unreadable, so a stop's guard never lifted and every send was refused
 // (issue #3408); the "❯" row and the indentation rule are what keep typed text out of the frame.
 func claudeBox(captured string) (draft, above string, ok bool) {
+	draft, above, _, ok = claudeBoxAt(captured)
+	return draft, above, ok
+}
+
+func claudeBoxAt(captured string) (draft, above string, promptRow int, ok bool) {
 	lines := strings.Split(strings.TrimRight(captured, "\n"), "\n")
 	bottom := -1
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -80,15 +85,15 @@ func claudeBox(captured string) (draft, above string, ok bool) {
 		}
 	}
 	if top < 0 || bottom-top < 2 || boxRule(lines[top]) && ruleWidth(lines[top]) != ruleWidth(lines[bottom]) {
-		return "", "", false
+		return "", "", 0, false
 	}
 	rows := lines[top+1 : bottom]
 	if !strings.HasPrefix(rows[0], "❯") {
-		return "", "", false
+		return "", "", 0, false
 	}
 	for _, r := range rows[1:] {
 		if r != "" && !strings.HasPrefix(r, " ") {
-			return "", "", false
+			return "", "", 0, false
 		}
 	}
 	draft = strings.TrimPrefix(strings.Join(rows, "\n"), "❯")
@@ -98,7 +103,7 @@ func claudeBox(captured string) (draft, above string, ok bool) {
 			break
 		}
 	}
-	return draft, above, true
+	return draft, above, top + 1, true
 }
 
 // boxRule reports a line that is one of claude's input box rules: "─" from column 0 to the end,
@@ -376,7 +381,7 @@ func unprovenBoxBlocks(name, pane string) bool {
 
 // strandedPrompts holds the sessions whose input box a stop left holding text it could not take
 // out: a prompt shown as a paste placeholder or scrolled, one that would not clear. The next send
-// would be typed after it and both would run as one prompt (issue #3290), so submitPromptTUIRev
+// would be typed after it and both would run as one prompt (issue #3290), so submitPromptTUI
 // refuses until the box reads empty.
 var strandedPrompts sync.Map
 

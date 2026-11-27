@@ -135,15 +135,15 @@ func TestSendMemoPromptUsesSemanticTurn(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer tok" {
 			t.Errorf("Authorization = %q", got)
 		}
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["op"] != "start" || body["prompt"] != prompt {
+		if body["op"] != "start" || body["prompt"] != prompt || body["confirm_submit"] != true {
 			t.Errorf("body = %#v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"sent":"codex_one","op":"start"}`))
+		_, _ = w.Write([]byte(`{"sent":"codex_one","op":"start","submit_confirmed":true}`))
 	}))
 	defer closeSrv()
 
@@ -175,11 +175,41 @@ func TestSendMemoPromptFallsBackForOldAgent(t *testing.T) {
 	}))
 	defer closeSrv()
 
-	if aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srvURL}, "s1", "memo"); aerr != nil {
-		t.Fatalf("sendMemoPrompt: %v", aerr)
+	if aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srvURL}, "s1", "memo"); !memoSendUnknown(aerr) || aerr.code != "delivery_unconfirmed" {
+		t.Fatalf("legacy success without confirmation: %#v", aerr)
 	}
 	if got := strings.Join(paths, ","); got != "/sessions/s1/turn,/sessions/s1/input" {
 		t.Fatalf("paths = %q", got)
+	}
+}
+
+func TestSendMemoPromptDoesNotRetryUnconfirmedTurn(t *testing.T) {
+	for _, reply := range []string{
+		`{"sent":"s1","op":"start"}`,
+		`{"sent":"other","op":"start","submit_confirmed":true}`,
+		`{"error":{"code":"delivery_unconfirmed","message":"no new user turn"}}`,
+		`{"error":{"code":"tmux_failed","message":"Enter timed out"}}`,
+	} {
+		t.Run(reply, func(t *testing.T) {
+			calls := 0
+			srvURL, closeSrv := registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if !strings.HasSuffix(r.URL.Path, "/turn") {
+					t.Errorf("unexpected fallback: %s", r.URL.Path)
+				}
+				if strings.Contains(reply, "tmux_failed") {
+					w.WriteHeader(http.StatusInternalServerError)
+				} else if strings.Contains(reply, "delivery_unconfirmed") {
+					w.WriteHeader(http.StatusBadGateway)
+				}
+				_, _ = w.Write([]byte(reply))
+			}))
+			defer closeSrv()
+			aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srvURL}, "s1", "memo")
+			if !memoSendUnknown(aerr) || calls != 1 {
+				t.Fatalf("outcome = %#v, requests = %d, want unknown after one attempt", aerr, calls)
+			}
+		})
 	}
 }
 
