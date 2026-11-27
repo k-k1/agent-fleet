@@ -12,8 +12,8 @@ import { useSessionsStore } from "./store.ts";
 import { useSessionActions } from "./useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
 
-vi.mock("../../core/api/client.ts", async (original) => ({
-  ...(await original<typeof import("../../core/api/client.ts")>()),
+vi.mock("../../core/api/client.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../core/api/client.ts")>()),
   raw: vi.fn(),
 }));
 
