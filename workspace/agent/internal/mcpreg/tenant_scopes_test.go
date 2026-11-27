@@ -46,9 +46,7 @@ func TestValidDefScopesSharedCases(t *testing.T) {
 	}
 }
 
-// The Control Plane's distribution of an OAuth definition with a tenant client and scopes is
-// accepted whole: nothing is dropped, and the scopes and the client reach the registry.
-func TestFetchTenantKeepsDistributedScopes(t *testing.T) {
+func TestFetchTenantKeepsDistributedOAuthOptions(t *testing.T) {
 	withTempHome(t)
 	raw, err := os.ReadFile("testdata/cp-tenant-distribution.json")
 	if err != nil {
@@ -73,7 +71,10 @@ func TestFetchTenantKeepsDistributedScopes(t *testing.T) {
 	if gmail.OAuthClient == nil || gmail.OAuthClient.ClientID != "corp-agent" || !gmail.OAuthClient.Confidential {
 		t.Fatalf("gmail client = %+v", gmail.OAuthClient)
 	}
-	if plain := byName["wiki"]; plain.Auth != "" || len(plain.Scopes) != 0 {
-		t.Fatalf("wiki = %+v, want a static-header definition without scopes", plain)
+	if gmail.Elicitation != ElicitationRelay {
+		t.Fatalf("gmail elicitation = %q, want %q", gmail.Elicitation, ElicitationRelay)
+	}
+	if plain := byName["wiki"]; plain.Auth != "" || len(plain.Scopes) != 0 || plain.Elicitation != "" {
+		t.Fatalf("wiki = %+v, want a static-header definition without OAuth options", plain)
 	}
 }

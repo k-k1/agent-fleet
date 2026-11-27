@@ -121,6 +121,10 @@ export const admin = {
     "任意。各メンバーのサインインが要求するスコープを、空白か改行で区切って入力します。空のままだとサーバーが求めるものを要求します。ツール一覧を公開しているサーバーでは、対応するすべてのスコープになることがあります。",
   "admin.mcp_oauth_scopes_bad":
     "スコープには引用符・バックスラッシュ・カンマを含めないでください。offline_access を足しても合計 1024 バイトに収まる長さにしてください。",
+  "admin.mcp_elicitation": "ツール呼び出しの確認",
+  "admin.mcp_elicitation_on": "Console に確認カードを表示する",
+  "admin.mcp_elicitation_hint":
+    "選択肢で答える MCP の確認フォームを使うサーバーで有効にします。メンバーは Console で呼び出しの内容を確認して回答します。",
   "admin.mcp_headers_host_moved": "URL が別のホストを指しているため、保存済みのヘッダー値を消しました。新しいホスト向けの値を入力し直してください。",
   "admin.mcp_oauth_secret_reenter": "issuer かクライアント ID を変えたので、保存したシークレットは使えません。シークレットを入力し直すか、削除して public クライアントにしてください。",
   "admin.mcp_oauth_note":
