@@ -390,6 +390,25 @@ func hasReg(srv OAuthServer, path string) bool {
 	return false
 }
 
+// storedClientForIssuer prefers an exact issuer among eligible clients, even if an older
+// entry under the equivalent root spelling comes first in the store.
+func storedClientForIssuer(clients []secrets.MCPOAuthClient, issuer string, eligible func(secrets.MCPOAuthClient) bool) *secrets.MCPOAuthClient {
+	var fallback *secrets.MCPOAuthClient
+	for i := range clients {
+		c := &clients[i]
+		if !eligible(*c) {
+			continue
+		}
+		if c.Issuer == issuer {
+			return c
+		}
+		if fallback == nil && issuerEquivalent(c.Issuer, issuer) {
+			fallback = c
+		}
+	}
+	return fallback
+}
+
 // chooseClient follows the registration order: pre-registered (the tenant's client for this
 // issuer first, then one the member entered), CIMD, DCR, then "client id needed". force pins one
 // path.
@@ -408,10 +427,11 @@ func chooseClient(ctx context.Context, d ServerDef, srv OAuthServer, req StartRe
 		if cl, ok := tenantClient(d, srv); ok {
 			return cl, nil
 		}
-		for _, c := range data.MCPOAuthClients {
-			if c.Kind == OAuthRegPreregistered && c.Issuer == srv.Issuer && c.ServerID == d.ID {
-				return clientIdentity{OAuthRegPreregistered, c.ClientID, c.ClientSecret, tokenAuthFor(c.ClientSecret, srv.ep.tokenAuthMethods)}, nil
-			}
+		c := storedClientForIssuer(data.MCPOAuthClients, srv.Issuer, func(c secrets.MCPOAuthClient) bool {
+			return c.Kind == OAuthRegPreregistered && c.ServerID == d.ID
+		})
+		if c != nil {
+			return clientIdentity{OAuthRegPreregistered, c.ClientID, c.ClientSecret, tokenAuthFor(c.ClientSecret, srv.ep.tokenAuthMethods)}, nil
 		}
 	}
 	if (force == "" || force == OAuthRegCIMD) && hasReg(srv, OAuthRegCIMD) && req.CIMDURL != "" {
@@ -434,11 +454,12 @@ func registerDCR(ctx context.Context, srv OAuthServer, req StartRequest) (client
 	defer dcrMu.Unlock()
 	now := oauthNow().Unix()
 	if data, err := secrets.Load(); err == nil {
-		for _, c := range data.MCPOAuthClients {
-			if c.Kind == OAuthRegDCR && c.Issuer == srv.Issuer && c.RedirectURI == req.RedirectURI &&
-				(c.SecretExpiresAt == 0 || c.SecretExpiresAt > now) {
-				return clientIdentity{OAuthRegDCR, c.ClientID, c.ClientSecret, tokenAuthFor(c.ClientSecret, srv.ep.tokenAuthMethods)}, nil
-			}
+		c := storedClientForIssuer(data.MCPOAuthClients, srv.Issuer, func(c secrets.MCPOAuthClient) bool {
+			return c.Kind == OAuthRegDCR && c.RedirectURI == req.RedirectURI &&
+				(c.SecretExpiresAt == 0 || c.SecretExpiresAt > now)
+		})
+		if c != nil {
+			return clientIdentity{OAuthRegDCR, c.ClientID, c.ClientSecret, tokenAuthFor(c.ClientSecret, srv.ep.tokenAuthMethods)}, nil
 		}
 	}
 	name := strings.TrimSpace(req.ClientName)

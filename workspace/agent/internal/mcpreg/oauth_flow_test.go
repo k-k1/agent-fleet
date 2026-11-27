@@ -427,6 +427,108 @@ func TestRegistrationOrder(t *testing.T) {
 	})
 }
 
+func TestStartReusesStoredClientsAcrossRootIssuerSpellings(t *testing.T) {
+	for _, kind := range []string{OAuthRegPreregistered, OAuthRegDCR} {
+		for _, spelling := range []struct {
+			name, exact, alternate string
+		}{
+			{"metadata without slash", "", "/"},
+			{"metadata with slash", "/", ""},
+		} {
+			t.Run(kind+"/"+spelling.name, func(t *testing.T) {
+				resetOAuthState(t)
+				f := newASFake(t, nil)
+				issuer := f.url(spelling.exact)
+				f.asDoc = map[string]any{"issuer": issuer}
+				id := registerServer(t, f)
+				alternate := secrets.MCPOAuthClient{
+					Kind: kind, Issuer: f.url(spelling.alternate), ClientID: "alternate-client",
+				}
+				wrongScope := alternate
+				wrongScope.ClientID = "wrong-scope"
+				if kind == OAuthRegPreregistered {
+					alternate.ServerID = id
+					wrongScope.ServerID = "another-server"
+				} else {
+					alternate.RedirectURI = testRedirect
+					wrongScope.RedirectURI = "https://other.example.com/oauth2/mcp/callback"
+				}
+				wrongIssuer := alternate
+				wrongIssuer.Issuer, wrongIssuer.ClientID = f.url("/realm"), "wrong-issuer"
+				if err := secrets.Update(func(s *secrets.Data) error {
+					s.MCPOAuthClients = append(s.MCPOAuthClients, wrongScope, wrongIssuer)
+					if kind == OAuthRegDCR {
+						expired := alternate
+						expired.ClientID, expired.SecretExpiresAt = "expired-alternate", 1
+						s.MCPOAuthClients = append(s.MCPOAuthClients, expired)
+						expired.Issuer, expired.ClientID = issuer, "expired-exact"
+						s.MCPOAuthClients = append(s.MCPOAuthClients, expired)
+					}
+					s.MCPOAuthClients = append(s.MCPOAuthClients, alternate)
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+
+				assertClient := func(want string) {
+					t.Helper()
+					res, q := mustStart(t, id, startReq(nil))
+					if got := q.Get("client_id"); got != want || res.Issuer != issuer || res.Registration != kind {
+						t.Errorf("client_id=%q, issuer=%q, registration=%q; want %q, %q, %q",
+							got, res.Issuer, res.Registration, want, issuer, kind)
+					}
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					if len(f.regs) != 0 {
+						t.Errorf("sent %d registration requests with a reusable client", len(f.regs))
+					}
+				}
+				assertClient("alternate-client")
+				exact := alternate
+				exact.Issuer, exact.ClientID = issuer, "exact-client"
+				if err := secrets.Update(func(s *secrets.Data) error {
+					s.MCPOAuthClients = append(s.MCPOAuthClients, exact)
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				assertClient("exact-client")
+			})
+		}
+	}
+}
+
+func TestRemovingPreregisteredClientClearsEquivalentRootIssuer(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, map[string]any{"registration_endpoint": nil})
+	id := registerServer(t, f)
+	for _, path := range []string{"/", "", "/realm"} {
+		if err := SetPreregisteredClient(id, f.url(path), "member-client", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other, err := Create(ServerDef{Name: "other", Transport: TransportHTTP, URL: f.url("/mcp"), Auth: AuthOAuth, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = Delete(other.ID) })
+	if err := SetPreregisteredClient(other.ID, f.url("/"), "other-client", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPreregisteredClient(id, f.url(""), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err = StartOAuth(context.Background(), id, startReq(nil))
+	wantCode(t, err, OAuthErrClientIDNeeded)
+	if got := statusOf(t, id).PreregisteredIssuers; len(got) != 1 || got[0] != f.url("/realm") {
+		t.Errorf("remaining issuers = %v, want only the realm issuer", got)
+	}
+	_, q := mustStart(t, other.ID, startReq(nil))
+	if got := q.Get("client_id"); got != "other-client" {
+		t.Errorf("other server's client_id = %q", got)
+	}
+}
+
 func TestStartRefusesWhatP1Refuses(t *testing.T) {
 	resetOAuthState(t)
 	t.Run("AS metadata issuer mismatch", func(t *testing.T) {
