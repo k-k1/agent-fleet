@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 const state = vi.hoisted(() => ({
   session: "s1" as string | undefined,
+  tenant: "a",
   gets: 0,
   fail: 0,
   held: true,
@@ -14,7 +15,7 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<typeof import("../../core/api/client.ts")>()),
-  getTenant: () => "",
+  getTenant: () => state.tenant,
   apiJSON: async (_path: string, _method: string, body: unknown) => {
     state.posts.push(body);
     await state.gate;
@@ -67,12 +68,13 @@ let host: HTMLDivElement;
 
 beforeEach(() => {
   state.session = "s1";
+  state.tenant = "a";
   state.gets = 0;
   state.fail = 0;
   state.held = true;
   state.posts = [];
   state.gate = Promise.resolve();
-  useTenantStore.setState({ resolved: true });
+  useTenantStore.setState({ resolved: true, tenant: state.tenant });
   useMcpElicitStore.setState({ items: [], answering: {} });
   useAwsConfirmStore.setState({ requests: [], answering: {}, mirrors: {} });
   host = document.createElement("div");
@@ -99,6 +101,13 @@ async function render(mirror: string | null, opts: { toasts?: boolean; host?: bo
   await act(async () => new Promise((r) => setTimeout(r, 0)));
 }
 const toastCount = () => document.querySelectorAll(".ui-toast").length;
+
+async function switchTenant(tenant: string) {
+  await act(async () => {
+    state.tenant = tenant;
+    useTenantStore.setState({ tenant });
+  });
+}
 
 describe("where a held MCP call shows", () => {
   it("is a toast when its session's mirror is not on screen", async () => {
@@ -180,6 +189,27 @@ describe("where a held MCP call shows", () => {
       { id: "e1", action: "accept", choices: { k: { f: "A" } } },
     ]);
   });
+  it.each(["send", "decline", "close"] as const)("ignores a failed %s after switching tenants", async (action) => {
+    let fail!: () => void;
+    state.gate = new Promise((_, reject) => (fail = () => reject(new Error("dropped"))));
+    await render(null);
+    if (action === "send") await act(async () => document.querySelector<HTMLInputElement>(".mcp-elicit input")!.click());
+    const button =
+      action === "close"
+        ? document.querySelector<HTMLButtonElement>(".ui-toast-x")!
+        : [...document.querySelectorAll<HTMLButtonElement>(".mcp-elicit-actions button")].find((b) => b.textContent === t(`mcpelicit.${action}`))!;
+    await act(async () => button.click());
+    expect(state.posts).toHaveLength(1);
+
+    state.held = false;
+    await switchTenant("b");
+    expect(toastCount()).toBe(0);
+    const reads = state.gets;
+    await act(async () => fail());
+
+    expect(state.gets).toBe(reads);
+    expect(toastCount()).toBe(0);
+  });
   // A switch of tenant drops the old list and reads the new one at once, not at the next poll.
   it("reads the list again as soon as the tenant changes", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
@@ -188,12 +218,11 @@ describe("where a held MCP call shows", () => {
       await render(null);
       expect(toastCount()).toBe(0);
       state.held = true;
-      await act(async () => useTenantStore.setState({ tenant: "other" }));
+      await switchTenant("b");
       await act(async () => new Promise((r) => setTimeout(r, 0)));
       expect(toastCount()).toBe(1);
     } finally {
       vi.useRealTimers();
-      useTenantStore.setState({ tenant: "" });
     }
   });
   it("takes its toasts down when it unmounts", async () => {

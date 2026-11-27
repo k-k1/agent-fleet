@@ -107,7 +107,7 @@ describe("the held-call list", () => {
     expect(useMcpElicitStore.getState().items).toEqual([]);
   });
   // A switch to another tenant and back resets what is shown, not the answer on its way.
-  it("does not answer a call again after a switch away and back", async () => {
+  it("shows the call as answering after a switch away and back", async () => {
     await shown([call]);
     const first = useMcpElicitStore.getState().answer(call, { k: {} });
     who.tenant = "b";
@@ -115,12 +115,14 @@ describe("the held-call list", () => {
     who.tenant = "a";
     useMcpElicitStore.getState().reset();
     await shown([call]);
+    const { answering } = useMcpElicitStore.getState();
     expect(await useMcpElicitStore.getState().answer(call, null)).toEqual({ code: "busy" });
     expect(who.posts.length).toBe(1);
     who.posts[0]({});
     await new Promise((r) => setTimeout(r, 0));
     pending.forEach((r) => r({ elicitations: [] }));
     await first;
+    expect(answering).toEqual({ [call.id]: true });
   });
   // A card or toast left over from another tenant answers nothing on the new one.
   it("refuses a call that is not on the list shown now", async () => {

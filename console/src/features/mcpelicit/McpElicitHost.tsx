@@ -17,7 +17,7 @@ import { useAwsConfirmStore } from "../awsconfirm/store.ts";
 import { useNotificationStore } from "../notifications/store.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { McpElicitCard, useHeld, useNow } from "./McpElicitCard.tsx";
-import { isSending, live, useMcpElicitStore } from "./store.ts";
+import { isSending, live, ownerKey, useMcpElicitStore } from "./store.ts";
 
 export const MCP_ELICITATION_NOTICE = "mcp-elicitation";
 const POLL_HELD_MS = 3000;
@@ -74,13 +74,14 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
     for (const e of toasted) {
       const key = toastKey(e.id);
       const closed = () => {
+        const who = ownerKey();
         shown.current.delete(key);
         closedIds.current.add(e.id);
         void useMcpElicitStore
           .getState()
           .answer(e, null)
           .then((err) => {
-            if (!err) return;
+            if (!err || ownerKey() !== who) return;
             // Not declined (an answer from the card was already on its way, or the decline
             // failed): the toast comes back, showing how it ends.
             closedIds.current.delete(e.id);

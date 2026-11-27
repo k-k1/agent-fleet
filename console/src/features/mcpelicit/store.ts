@@ -127,13 +127,9 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
     for (const e of items) {
       if (typeof e.expiresInMs === "number") until.set(e.id, sent + e.expiresInMs);
     }
-    const ids = new Set(items.map((e) => e.id));
-    set((s) => ({
-      items,
-      owner: who,
-      until,
-      answering: Object.fromEntries(Object.keys(s.answering).filter((id) => ids.has(id)).map((id) => [id, true as const])),
-    }));
+    // A tenant round trip clears the display state while the answer lock survives.
+    const answering = Object.fromEntries(items.filter((e) => isSending(e.id)).map((e) => [e.id, true as const]));
+    set({ items, owner: who, until, answering });
   },
   reset() {
     applied = issued;
