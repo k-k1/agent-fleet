@@ -297,6 +297,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.default_model_none": "No models available",
   "agents.default_model": "Default model",
   "agents.default_effort": "Default effort",
+  "agents.effort_unspecified": "Unspecified",
   "agents.start_mode": "Start mode",
   "agents.skip_permissions": "Tool permissions",
   "agents.skip_permissions_sub": "Ask for approval before each tool run",

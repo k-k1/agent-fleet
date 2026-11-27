@@ -295,6 +295,7 @@ export const settings = {
   "agents.default_model_none": "選べるモデルがありません",
   "agents.default_model": "既定モデル",
   "agents.default_effort": "既定の推論の強さ",
+  "agents.effort_unspecified": "未指定",
   "agents.start_mode": "開始モード",
   // 権限確認をスキップするか（docs/log/76）。保存値は skipPermissions（既定は true＝従来どおりスキップ）。
   // 画面の「権限確認」はその反対で、オン＝許可を求める。

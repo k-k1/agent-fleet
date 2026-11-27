@@ -24,29 +24,51 @@ describe("repo launch settings", () => {
   beforeEach(() => values.clear());
 
   it("falls back to each agent's global defaults", () => {
-    const { resolveEffort, resolveModel, resolveStartMode } = repoLast;
+    const { resolveEffortChoice, resolveModel, resolveStartMode } = repoLast;
     expect(resolveModel("codex", "repo", "gpt-default")).toBe("gpt-default");
-    expect(resolveEffort("claude", "repo", "high")).toBe("high");
+    expect(resolveEffortChoice("claude", "repo", "high")).toBe("high");
     expect(resolveStartMode("opencode", "repo", "plan")).toBe("plan");
   });
 
-  it("remembers explicit standard values above non-empty defaults", () => {
-    const { readRepoLast, resolveEffort, resolveModel, resolveStartMode, writeRepoLast } = repoLast;
+  it("remembers standard launch choices alongside concrete settings", () => {
+    const { readRepoLast, resolveEffortChoice, resolveModel, resolveStartMode, writeRepoLast } = repoLast;
     writeRepoLast("repo", "codex", "", "", "normal");
     expect(readRepoLast("repo").kind).toBe("codex");
     expect(resolveModel("codex", "repo", "gpt-default")).toBe("");
-    expect(resolveEffort("codex", "repo", "high")).toBe("");
+    expect(resolveEffortChoice("codex", "repo", "high")).toBe("");
     expect(resolveStartMode("codex", "repo", "plan")).toBe("normal");
   });
 
   it("keeps values isolated by agent kind", () => {
-    const { resolveEffort, resolveModel, resolveStartMode, writeRepoLast } = repoLast;
+    const { resolveEffortChoice, resolveModel, resolveStartMode, writeRepoLast } = repoLast;
     writeRepoLast("repo", "claude", "opus", "max", "plan");
     writeRepoLast("repo", "opencode", "openai/gpt", "high", "normal");
     expect(resolveModel("claude", "repo", "sonnet")).toBe("opus");
-    expect(resolveEffort("claude", "repo", "low")).toBe("max");
+    expect(resolveEffortChoice("claude", "repo", "low")).toBe("max");
     expect(resolveStartMode("claude", "repo", "normal")).toBe("plan");
     expect(resolveModel("opencode", "repo", "")).toBe("openai/gpt");
+  });
+
+  it.each([null, "", "@af:default", "default"])("follows the Codex setting for a stored choice of %s", (saved) => {
+    const { resolveEffortChoice, resolveEffortOverride } = repoLast;
+    if (saved !== null) values.set("af.repo-effort.codex.repo", saved);
+    const choice = resolveEffortChoice("codex", "repo", "high");
+    expect(choice).toBe("");
+    expect(resolveEffortOverride("codex", choice, "high")).toBe("high");
+    expect(resolveEffortOverride("codex", choice, "xhigh")).toBe("xhigh");
+    expect(resolveEffortOverride("codex", choice, "")).toBe("");
+  });
+
+  it("restores a concrete Codex choice only for its kind and repository", () => {
+    const { resolveEffortChoice, resolveEffortOverride, writeRepoLast } = repoLast;
+    writeRepoLast("repo", "codex", undefined, "low");
+    const choice = resolveEffortChoice("codex", "repo", "high");
+    expect(choice).toBe("low");
+    expect(resolveEffortOverride("codex", choice, "")).toBe("low");
+    expect(resolveEffortChoice("codex", "other", "high")).toBe("");
+    expect(resolveEffortChoice("codex", "", "high")).toBe("");
+    expect(resolveEffortChoice("claude", "repo", "high")).toBe("high");
+    expect(resolveEffortOverride("claude", "", "high")).toBe("");
   });
 
   // Adding a model to "models to exclude" must also drop it from the per-repo last-used value. If

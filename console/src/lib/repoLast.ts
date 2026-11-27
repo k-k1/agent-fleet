@@ -113,10 +113,15 @@ export function forgetHiddenRepoModels(kind: string, hidden: string[]): void {
   }
 }
 
-export function resolveEffort(kind: string, repo: string, defaultEffort = ""): string {
-  if (!repo) return defaultEffort;
-  const last = readRemembered(EFFORT_KEY(repo, kind));
+export function resolveEffortChoice(kind: string, repo: string, defaultEffort: string): string {
+  const last = repo ? readRemembered(EFFORT_KEY(repo, kind)) : { found: false, value: "" };
+  // Codex's empty choice follows Settings, including values saved by older Consoles.
+  if (kind === "codex") return last.value === "default" ? "" : last.value;
   return last.found ? last.value : defaultEffort;
+}
+
+export function resolveEffortOverride(kind: string, choice: string, defaultEffort: string): string {
+  return kind === "codex" && !choice ? defaultEffort : choice;
 }
 
 export function resolveStartMode(kind: string, repo: string, defaultMode: string): "normal" | "plan" {

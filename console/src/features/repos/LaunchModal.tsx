@@ -32,13 +32,13 @@ import { useSettingsUI } from "../settings/store.ts";
 import { OwnSettingsLine } from "../settings/credentials/MemberLines.tsx";
 import { policyRefusalKey, type PolicyRefusal } from "./launchPolicy.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
-import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
+import { readRepoLast, resolveEffortChoice, resolveEffortOverride, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { DEFAULT_MODEL, agentLaunchDefault, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
 import { refreshUIPrefsChecked } from "../../lib/settings/sync.ts";
 import { useEffectiveDefaults, useUIStateStore } from "../../core/store/uiState.ts";
 import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantModelLayers, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
-import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions, useModelCatalogSettled, useModelOptions } from "../../lib/agentModels.ts";
+import { requiresConcreteModel, useAutoConcreteModel, useModelCatalogSettled, useModelOptions } from "../../lib/agentModels.ts";
 import { EffortPicker } from "../../ui/ModelPicker.tsx";
 import { RunModelRow, RunWithStrip, isTierAlias, shortModelLabel } from "./RunWithStrip.tsx";
 import { rememberRecentModel } from "../../lib/recentModels.ts";
@@ -90,6 +90,8 @@ export interface LaunchOpts {
   driver: string;
   model: string;
   effort: string;
+  /** The Codex picker value to remember, including "" for Use setting. */
+  effortChoice?: string;
   /** Explicit model route id (ADR 0128), or "" / undefined for the kind's own default, which
    *  sends nothing. Only kinds that declare routes offer one. */
   route?: string;
@@ -397,7 +399,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     const d = agentLaunchDefault(settings, k);
     const own = dirty.current;
     if (!own.has("model")) setModel(resolveModel(k, repo, modelDefault(k, d.model)));
-    if (fresh && !own.has("effort")) setEffort(resolveEffort(k, repo, d.effort));
+    if (fresh && !own.has("effort")) setEffort(resolveEffortChoice(k, repoLess ? "" : repo, d.effort));
     if (fresh && !own.has("startMode")) setStartMode(resolveStartMode(k, repo, d.startMode));
     if (!own.has("perm")) setSkipPerm(tenantSkipPerm(uiState, k, settings));
     if (fresh && !own.has("route")) setRoute("");
@@ -432,7 +434,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
   const [model, setModel] = useState(() => resolveModel(initialKind, repo, modelDefault(initialKind, initialDefault.model)));
-  const [effort, setEffort] = useState(() => resolveEffort(initialKind, repo, initialDefault.effort));
+  const [effort, setEffort] = useState(() => resolveEffortChoice(initialKind, repoLess ? "" : repo, initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(initialKind, repo, initialDefault.startMode));
   // Permission prompts (docs/log/76). undefined = this dialog never touched the choice, in
   // which case no value is sent and the Agent's per-kind default applies (so changing the
@@ -752,8 +754,13 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     setEffort("");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-checked when the offered list or the model changes
   }, [kind, model, modelOptions, modelUnoffered, prefsReread, bedrockDefaultPending]);
-  const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
-  const effortOptions = useEffortOptions(kind, model);
+  const defaults = agentLaunchDefault(settings, kind);
+  const skipPermEffective = skipPerm ?? defaults.skipPermissions;
+  const codexEffortLabel = kind === "codex"
+    ? defaults.effort
+      ? tr("launch.effort_use_setting", { effort: defaults.effort })
+      : tr("launch.effort_use_unspecified")
+    : undefined;
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
   // catalog settles, auto-pick its first entry rather than leaving the picker on an empty
   // selection nothing can launch with.
@@ -806,7 +813,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   const advParts = [
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
     hasEffort
-      ? tr("launch.sum.effort", { v: effort ? effortOptions.find(([v]) => v === effort)?.[1] || effort : tr("launch.sum.effort_default") })
+      ? tr("launch.sum.effort", { v: effort || codexEffortLabel || tr("launch.sum.effort_default") })
       : "",
     hasStartMode ? tr(startMode === "plan" ? "launch.sum.start_plan" : "launch.sum.start_normal") : "",
     hasPermChoice ? tr(skipPermEffective ? "launch.sum.permissions_skip" : "launch.sum.permissions_on") : "",
@@ -1054,7 +1061,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       // The bedrock route runs on the one Bedrock id typed here, never on the picker's alias: Claude
       // Code would map an alias to an id of its own choosing and walk a fallback ladder on a denial.
       model: onBedrock ? bedrockModel.trim() : hasModel ? model : "",
-      effort: hasEffort ? effort : "",
+      effort: hasEffort ? resolveEffortOverride(kind, effort, defaults.effort) : "",
+      effortChoice: kind === "codex" && hasEffort ? effort : undefined,
       route: chosenRoute || undefined,
       routeConnection: chosenRoute === "bedrock" && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
       startMode: hasStartMode ? startMode : "normal",
@@ -1727,8 +1735,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             <div className="ui-field-row">
               {hasEffort && (
                 <div className="ui-field">
-                  <FieldLabel as="span" info={tr("launch.field.effort_hint")}>{tr("launch.field.effort")}</FieldLabel>
-                  <EffortPicker kind={kind} model={model} effort={effort} onChange={(v) => {
+                  <FieldLabel as="span" info={tr(kind === "codex" ? "launch.field.codex_effort_hint" : "launch.field.effort_hint")}>{tr("launch.field.effort")}</FieldLabel>
+                  <EffortPicker kind={kind} model={model} effort={effort} emptyLabel={codexEffortLabel} onChange={(v) => {
                     mark("effort");
                     setEffort(v);
                   }} />

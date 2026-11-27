@@ -486,7 +486,7 @@ const FALLBACK_EFFORTS: Record<string, string[]> = {
 // useEffortOptions returns model-aware effort choices when the live Codex catalog
 // provides them. Older Codex/OpenCode catalogs lack metadata, so a compatibility
 // list remains available rather than making the managed UI unusable.
-export function useEffortOptions(kind: string, model: string): EffortOption[] {
+export function useEffortOptions(kind: string, model: string, emptyLabel?: string): EffortOption[] {
   const [version, setVersion] = useState(0);
   useEffect(() => {
     if (!isDynamic(kind)) return;
@@ -526,7 +526,7 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
     : kind === "claude" && efforts.length
       ? t("ui.default_claude_xhigh")
       : t("ui.default");
-  return [["", defaultLabel], ...efforts.map((e): EffortOption => [e, e])];
+  return [["", emptyLabel ?? defaultLabel], ...efforts.map((e): EffortOption => [e, e])];
 }
 
 // useModelOptions returns the launch model choices for `kind` — null when the kind

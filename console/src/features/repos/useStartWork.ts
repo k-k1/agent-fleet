@@ -66,7 +66,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo, seedless = false, inboxItem = "" }, { kind, driver, model, effort, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd, space }, take) => {
+  return async ({ dir, repo, seedless = false, inboxItem = "" }, { kind, driver, model, effort, effortChoice, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd, space }, take) => {
     const hasModel = agentOf(kind).caps.model;
     // With attachments the first prompt's text cannot be fixed until the session exists,
     // because the saved paths have to be woven into it and the upload target IS that
@@ -209,7 +209,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
       return { ok: false, spaceGone: code === "space_not_found" || undefined };
     }
     if (repo) {
-      writeRepoLast(repo, kind, hasModel ? model : undefined, effort, startMode);
+      writeRepoLast(repo, kind, hasModel ? model : undefined, effortChoice ?? effort, startMode);
       writeRepoSubdir(repo, subdir || "");
     }
     // A repo-less (home) session has no group membership to inherit, so add it directly to
