@@ -33,6 +33,7 @@ import { SharedSessionView } from "./SharedSessionView.tsx";
 import { useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { MIRROR_POLL_REST } from "../mirror/pollCadence.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -69,14 +70,14 @@ afterEach(() => {
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
 });
 
-async function render() {
+async function render(sessionId = "catalog-1") {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(
       <ConfirmProvider>
-        <SharedSessionView sharedSessionId="catalog-1" />
+        <SharedSessionView sharedSessionId={sessionId} />
       </ConfirmProvider>,
     );
   });
@@ -86,6 +87,47 @@ async function render() {
   });
   return host;
 }
+
+it("updates a backfilled Antigravity error inside the shared history window", async () => {
+  vi.useFakeTimers();
+  const earlier = { role: "assistant", idx: 1, text: "Earlier reply" };
+  const nextPrompt = { role: "user", idx: 10, text: "Next prompt" };
+  const nextReply = { role: "assistant", idx: 11, text: "Next reply" };
+  const error = { kind: "error", cause: "agy_executor_failure", text: "Saved executor error" };
+  const failed = { role: "assistant", idx: 5, parts: [error] };
+  const updated = { ...failed, parts: [{ kind: "text", text: "Late partial reply" }, error] };
+  const messagesPath = "api/shared-sessions/catalog-agy-error/messages";
+  const pollPath = messagesPath + "?since=12&from=1";
+  let liveReads = 0;
+  api.mockImplementation(async (path: string) => {
+    if (path.startsWith(messagesPath + "?since=0")) {
+      return { cursor: 12, firstLine: 1, hasMore: true, messages: [earlier, nextPrompt, nextReply] };
+    }
+    if (path === pollPath) {
+      return { cursor: 12, messages: [liveReads++ === 0 ? failed : updated] };
+    }
+    return { sessions: [] };
+  });
+  try {
+    const el = await render("catalog-agy-error");
+    const indexes = () => Array.from(el.querySelectorAll<HTMLElement>(".mirror-turn"), (turn) => turn.dataset.turnIdx);
+    expect(indexes()).toEqual(["1", "10", "11"]);
+    await act(async () => vi.advanceTimersByTimeAsync(MIRROR_POLL_REST));
+    expect(api).toHaveBeenCalledWith(pollPath);
+    expect(indexes()).toEqual(["1", "5", "10", "11"]);
+    const block = el.querySelector('[data-turn-idx="5"]');
+    expect(block?.querySelector(".mirror-error-body")?.textContent).toBe(error.text);
+    await act(async () => vi.advanceTimersByTimeAsync(MIRROR_POLL_REST));
+    expect(indexes()).toEqual(["1", "5", "10", "11"]);
+    expect(el.querySelector('[data-turn-idx="5"]')).toBe(block);
+    expect(block?.textContent).toContain("Late partial reply");
+    expect(block?.querySelectorAll(".mirror-error")).toHaveLength(1);
+  } finally {
+    act(() => root?.unmount());
+    root = null;
+    vi.useRealTimers();
+  }
+});
 
 describe("SharedSessionView handoff poll guards (#4786)", () => {
   it("drops a proposal read for the previous session after a pane swaps sessions in place", async () => {

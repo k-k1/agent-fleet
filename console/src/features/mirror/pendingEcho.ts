@@ -1,5 +1,5 @@
 import { samePastedPrompt, samePromptIgnoringInvisible } from "../../lib/pastedImages.ts";
-import { stripStudioSignal } from "./transcript/model.ts";
+import { isAgyExecutorFailure, stripStudioSignal } from "./transcript/model.ts";
 
 export interface PendingEcho {
   text: string;
@@ -62,7 +62,9 @@ const CLI_WARNING_CAUSE = "cli_warning";
 // echo. A CLI warning resolves only a slash-command echo: a plain prompt sent alongside the
 // mistyped command is still on its way, and dropping its bubble would read as lost.
 function errorResolves(t: TranscriptTurn, slash: boolean): boolean {
-  return !!t.parts?.some((p) => p.kind === "error" && (slash || p.cause !== CLI_WARNING_CAUSE));
+  // Antigravity's saved executor error belongs to its own already-delivered prompt.
+  // The corresponding user turn can settle the echo when it reaches the transcript.
+  return !!t.parts?.some((p) => p.kind === "error" && !isAgyExecutorFailure(p) && (slash || p.cause !== CLI_WARNING_CAUSE));
 }
 
 // A `/`-run slash command / skill invocation is never logged as the raw "/foo …" the

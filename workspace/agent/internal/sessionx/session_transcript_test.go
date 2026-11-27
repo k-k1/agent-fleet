@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,6 +61,90 @@ func TestGenericMutableTail(t *testing.T) {
 	}
 	if got := genericMutableTail(all[:1], 1); got != nil {
 		t.Fatalf("user tail = %+v, want nil", got)
+	}
+}
+
+type stepIndexedTestAgent struct {
+	agents.Agent
+	turns []transcript.Turn
+}
+
+func (a *stepIndexedTestAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
+	return agents.TranscriptData{Turns: a.turns, StepIndexed: true}, true
+}
+
+func TestGenericMessagesKeepsStepIndexedPagesStableAcrossBackfill(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := &stepIndexedTestAgent{Agent: AgentOf(session.KindAgy), turns: []transcript.Turn{
+		{Role: "user", Idx: 0}, {Role: "assistant", Idx: 1},
+		{Role: "user", Idx: 10}, {Role: "assistant", Idx: 11},
+	}}
+	tailIndexes := []int{1, 10, 11}
+	for i := 20; i < 68; i += 2 {
+		a.turns = append(a.turns, transcript.Turn{Role: "user", Idx: i}, transcript.Turn{Role: "assistant", Idx: i + 1})
+		tailIndexes = append(tailIndexes, i, i+1)
+	}
+	t.Cleanup(agentreg.SwapForTest(session.KindAgy, a))
+	m := session.Meta{Name: "slot-step-indexed", Kind: session.KindAgy, Dir: t.TempDir(), Title: "Paging test"}
+	edit := func(path string) transcript.Part {
+		return transcript.Part{Kind: "tool", Tool: "edit", File: path, Edits: []transcript.Edit{{Old: "old", New: "new"}}}
+	}
+	a.turns[1].Cwd, a.turns[1].Parts = m.Dir, []transcript.Part{edit("first.go")}
+	type page struct {
+		Messages    []transcript.Turn
+		Files       []transcript.FileTouch
+		Cursor      int
+		FirstLine   int
+		HasMore     bool
+		Reset       bool
+		StepIndexed bool
+	}
+	read := func(query string, want ...int) page {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handleGenericMessages(rec, httptest.NewRequest("GET", "/messages?"+query, nil), m, false, "idle")
+		var p page
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatalf("decode %s: %v", query, err)
+		}
+		var idx []int
+		for _, turn := range p.Messages {
+			idx = append(idx, turn.Idx)
+		}
+		if !slices.Equal(idx, want) || !p.StepIndexed || p.Reset {
+			t.Fatalf("%s returned %+v, want indexes %v without reset", query, p, want)
+		}
+		return p
+	}
+	tail := read("tail=1&limit=51", tailIndexes...)
+	if !tail.HasMore || tail.FirstLine != 1 || tail.Cursor != 68 {
+		t.Fatalf("tail = %+v", tail)
+	}
+	failed := transcript.Turn{Role: "assistant", Idx: 5, Cwd: m.Dir, Parts: []transcript.Part{{Kind: "error", Text: "executor failed"}}}
+	a.turns = slices.Insert(a.turns, 2, failed)
+	older := read("before="+strconv.Itoa(tail.FirstLine), 0)
+	if older.HasMore || older.FirstLine != 0 {
+		t.Fatalf("older = %+v", older)
+	}
+	poll := "since=" + strconv.Itoa(tail.Cursor) + "&from=" + strconv.Itoa(older.FirstLine)
+	live := read(poll, 5, 67)
+	if live.Cursor != tail.Cursor || len(live.Messages[0].Parts) != 1 {
+		t.Fatalf("live = %+v", live)
+	}
+	a.turns[2].Parts = append([]transcript.Part{edit("late.go")}, failed.Parts...)
+	a.turns = slices.Insert(a.turns, 2, transcript.Turn{Role: "user", Idx: 4, Text: "failed prompt"})
+	read("before=5", 0, 1, 4)
+	read("since=68&from=5", 5, 67)
+	updated := read(poll, 4, 5, 67)
+	if len(updated.Messages[1].Parts) != 2 || updated.Messages[1].Parts[1].Kind != "error" {
+		t.Fatalf("updated = %+v", updated)
+	}
+	counts := make(map[string]int)
+	for _, file := range updated.Files {
+		counts[filepath.Base(file.Path)] = file.Count
+	}
+	if len(counts) != 2 || counts["first.go"] != 1 || counts["late.go"] != 1 {
+		t.Fatalf("file edit counts = %v, want one edit per file", counts)
 	}
 }
 

@@ -3,9 +3,11 @@ package sessionx
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -343,35 +345,20 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-// handleGenericMessages serves /messages for a non-claude transcript agent (codex,
-// and later opencode). The agent hands back the whole conversation as normalized
-// transcript.Turns (chronological, each carrying its absolute index); this windows them with
-// the SAME semantics claude's line path uses — an initial tail window, backward
-// ?before paging, and live since=<cursor> increments — so the Console chat is
-// unchanged. The cursor here is a TURN count (not a jsonl line count), but the client
-// treats it opaquely (reset / firstLine / hasMore drive it), so the two are compatible.
-func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.Meta, alive bool, state string) {
-	td, _ := AgentOf(meta.Kind).Transcript(meta)
-	all, path := td.Turns, td.Path
+// genericMessageWindow pages by turn count for readers whose published turns
+// stay at the same offsets. The Console treats these cursors opaquely.
+func genericMessageWindow(all []transcript.Turn, query url.Values, alive bool) (turns []transcript.Turn, cursor, firstLine int, reset, hasMore bool) {
 	total := len(all)
-	if uiprefs.AutoTitleSuggest() && meta.Title == "" && meta.SuggestedTitle == "" &&
-		!meta.SuggestedTitleDismissed && titleGenReady(meta.Name, total) {
-		// `all` is already the full parse here (unlike claude's windowed path above), so
-		// this is free — no extra transcript read.
-		maybeSuggestTitle(meta.Name, all, time.Since(jsonlMtime(path)), total)
-	}
-
 	since := 0
-	if v := r.URL.Query().Get("since"); v != "" {
+	if v := query.Get("since"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			since = n
 		}
 	}
 
-	reset := false
-	cursor := total
+	cursor = total
 	lo, hi := since, total
-	firstLine := -1
+	firstLine = -1
 	switch {
 	case total == 0 && alive && since > 0:
 		// Live but momentarily read empty (store mid-write / not yet materialized): hold
@@ -383,18 +370,18 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 		// client to reload — with a tail window (not the whole conversation), like the
 		// claude path; firstLine lets it page older history in on scroll.
 		hi = total
-		lo = max(0, hi-clampWindowLimit(r.URL.Query().Get("limit")))
+		lo = max(0, hi-clampWindowLimit(query.Get("limit")))
 		firstLine = lo
 		reset = true
 	default:
-		limit := clampWindowLimit(r.URL.Query().Get("limit"))
-		if bs := r.URL.Query().Get("before"); bs != "" {
+		limit := clampWindowLimit(query.Get("limit"))
+		if bs := query.Get("before"); bs != "" {
 			if b, err := strconv.Atoi(bs); err == nil && b > 0 {
 				hi = min(b, total)
 				lo = max(0, hi-limit)
 				firstLine = lo
 			}
-		} else if r.URL.Query().Get("tail") != "" && since == 0 {
+		} else if query.Get("tail") != "" && since == 0 {
 			lo = max(0, total-limit)
 			firstLine = lo
 		}
@@ -405,7 +392,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if hi > total {
 		hi = total
 	}
-	turns := []transcript.Turn{}
+	turns = []transcript.Turn{}
 	if lo < hi {
 		turns = capTurnsNewest(all[lo:hi])
 	}
@@ -418,6 +405,25 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if update := genericMutableTail(all, since); update != nil {
 		turns = update
 	}
+	return turns, cursor, firstLine, reset, firstLine > 0
+}
+
+// handleGenericMessages windows the normalized transcript of a non-Claude agent.
+func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.Meta, alive bool, state string) {
+	td, _ := AgentOf(meta.Kind).Transcript(meta)
+	all, path := td.Turns, td.Path
+	total := len(all)
+	if uiprefs.AutoTitleSuggest() && meta.Title == "" && meta.SuggestedTitle == "" &&
+		!meta.SuggestedTitleDismissed && titleGenReady(meta.Name, total) {
+		maybeSuggestTitle(meta.Name, all, time.Since(jsonlMtime(path)), total)
+	}
+
+	query := r.URL.Query()
+	window := genericMessageWindow
+	if td.StepIndexed {
+		window = stepIndexedMessageWindow
+	}
+	turns, cursor, firstLine, reset, hasMore := window(all, query, alive)
 	// userfile parts exist here too (codex imagegen's generated file) — map their
 	// paths browse-root-relative so the Console's shared-files panel can open them.
 	resolveUserFiles(turns)
@@ -433,7 +439,10 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	}
 	if firstLine >= 0 {
 		resp["firstLine"] = firstLine
-		resp["hasMore"] = firstLine > 0
+		resp["hasMore"] = hasMore
+	}
+	if td.StepIndexed {
+		resp["stepIndexed"] = true
 	}
 	// Current ToDo list (opencode todo table / codex update_plan), so the chat shows the
 	// same progress checklist claude gets. Whole-transcript (not windowed), like claude's.
@@ -446,7 +455,18 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// its edits — it is re-folded into a copy on every poll instead.
 	if total > 0 {
 		head := all[0].TS + "|" + all[0].AnchorID + "|" + strconv.Itoa(all[0].Idx)
-		if files := sessionFileTouches(meta.Name, meta.Dir, path, head, total, total-1,
+		stable := total - 1
+		if td.StepIndexed {
+			// A late row can add edits within a failed turn. An insertion before
+			// the previous watermark makes the existing fold restart.
+			for i := 0; i < stable; i++ {
+				if turnHasError(all[i]) {
+					stable = i
+					break
+				}
+			}
+		}
+		if files := sessionFileTouches(meta.Name, meta.Dir, path, head, total, stable,
 			func(from, to int) []transcript.FileEdit {
 				var out []transcript.FileEdit
 				for i := from; i < to; i++ {
@@ -573,6 +593,62 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 		resp["watches"] = ws
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// stepIndexedMessageWindow uses source coordinates so a backfilled turn cannot
+// shift a page boundary. Live polls also refresh failed turns already held by
+// the reader, as their native transcript can catch up after the DB error.
+func stepIndexedMessageWindow(all []transcript.Turn, query url.Values, alive bool) (turns []transcript.Turn, cursor, firstLine int, reset, hasMore bool) {
+	turns = []transcript.Turn{}
+	firstLine = -1
+	total := len(all)
+	if total > 0 {
+		cursor = all[total-1].Idx + 1
+	}
+	position := func(idx int) int {
+		return sort.Search(total, func(i int) bool { return all[i].Idx >= idx })
+	}
+	since, _ := strconv.Atoi(query.Get("since"))
+	since = max(0, since)
+	before, _ := strconv.Atoi(query.Get("before"))
+	if before <= 0 && total == 0 && alive && since > 0 {
+		return turns, since, firstLine, false, false
+	}
+	reset = before <= 0 && since > cursor
+	if before > 0 || reset || (since == 0 && query.Get("tail") != "") {
+		hi := total
+		if before > 0 {
+			hi = position(before)
+		}
+		page := capTurnsNewest(all[max(0, hi-clampWindowLimit(query.Get("limit"))):hi])
+		if len(page) > 0 && page[0].Idx > all[0].Idx {
+			return page, cursor, page[0].Idx, reset, true
+		}
+		return append(turns, page...), cursor, 0, reset, false
+	}
+
+	lo := position(since)
+	firstUpdate := max(0, lo-1)
+	if from, err := strconv.Atoi(query.Get("from")); err == nil && from >= 0 {
+		firstUpdate = position(from)
+	}
+	for i := firstUpdate; i < lo; i++ {
+		t := all[i]
+		if (t.Role == "assistant" && (i == lo-1 || turnHasError(t))) ||
+			(t.Role == "user" && i+1 < total && all[i+1].Idx == t.Idx+1 && turnHasError(all[i+1])) {
+			turns = append(turns, t)
+		}
+	}
+	return append(turns, capTurnsNewest(all[lo:])...), cursor, firstLine, false, false
+}
+
+func turnHasError(turn transcript.Turn) bool {
+	for _, p := range turn.Parts {
+		if p.Kind == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 // genericMutableTail returns the last assistant turn when a client has consumed
