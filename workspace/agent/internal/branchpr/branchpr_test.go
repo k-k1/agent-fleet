@@ -914,10 +914,14 @@ func TestABranchsOlderReadArrivingLateDoesNotRenameItsPR(t *testing.T) {
 	}
 	close(release)
 	<-done
-	if pr := c.Lookup([]Key{branch}, time.Now())[branch]; pr == nil || pr.Number != 11 {
-		t.Fatalf("branch answers %+v, want #11 kept over the older read of #10", pr)
+	// Inspect the hand-off without letting a stale entry schedule another refresh.
+	c.mu.Lock()
+	currentPR, oldPR := c.entries[branch].pr, c.entries[old].pr
+	c.mu.Unlock()
+	if currentPR == nil || currentPR.Number != 11 {
+		t.Fatalf("branch answers %+v, want #11 kept over the older read of #10", currentPR)
 	}
-	if pr := c.Lookup([]Key{old}, time.Now())[old]; pr == nil || pr.State != "merged" {
-		t.Fatalf("#10 by number answers %+v, want the branch's late read of its merge", pr)
+	if oldPR == nil || oldPR.State != "merged" {
+		t.Fatalf("#10 by number answers %+v, want the branch's late read of its merge", oldPR)
 	}
 }
