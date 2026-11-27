@@ -49,22 +49,22 @@ type Command struct {
 	Stdin, Stdout, Stderr *os.File
 }
 
-// Run observes successful data writes and descriptor-based truncation/creation in root. The
-// scope is supplied by the launcher and belongs to this invocation only. The command must
+// Run observes successful data writes, descriptor-based truncation, and exclusive creation
+// in root. The scope is supplied by the launcher and belongs to this invocation. The command must
 // exit successfully and tracing must finish before Run returns evidence. On interruption or
 // overflow, the tracer and its tracees are stopped and the invocation yields no evidence.
 func Run(ctx context.Context, scope Scope, root string, command Command) (Evidence, error) {
 	if scope.SessionID == "" || scope.TurnID == "" {
 		return Evidence{}, errors.New("shell write observation needs a session and turn")
 	}
-	paths, err := observe(ctx, root, command, maxTrace)
+	paths, err := observe(ctx, root, command, maxDuration, maxTrace)
 	if err != nil {
 		return Evidence{}, err
 	}
 	return Evidence{Scope: scope, Paths: paths}, nil
 }
 
-func observe(ctx context.Context, root string, command Command, traceLimit int64) ([]string, error) {
+func observe(ctx context.Context, root string, command Command, duration time.Duration, traceLimit int64) ([]string, error) {
 	if !filepath.IsAbs(root) || !filepath.IsAbs(command.Path) || !filepath.IsAbs(command.Dir) {
 		return nil, errors.New("shell write observation needs absolute workspace, executable, and working directory paths")
 	}
@@ -79,7 +79,7 @@ func observe(ctx context.Context, root string, command Command, traceLimit int64
 	if !workspace.IsDir() || root == string(filepath.Separator) {
 		return nil, errors.New("shell write observation needs a workspace directory below filesystem root")
 	}
-	ctx, cancel := context.WithTimeoutCause(ctx, maxDuration, ErrLimit)
+	ctx, cancel := context.WithTimeoutCause(ctx, duration, ErrLimit)
 	defer cancel()
 
 	reader, writer, err := os.Pipe()

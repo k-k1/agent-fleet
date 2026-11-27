@@ -107,22 +107,31 @@ func TestRunCancellationAndFreshObservation(t *testing.T) {
 	requireTracer(t)
 	root := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	scope := Scope{SessionID: "session-a", TurnID: "same-turn-id"}
-	command := shell(root, `printf partial > first; exec sleep 30`)
+	stdout, writer := traceeOutput(t)
+	command := shell(root, `printf partial > first; printf 'ready\n'; exec sleep 10`)
+	command.Stdout = writer
 	done := make(chan error, 1)
+	finished := make(chan struct{})
+	defer func() {
+		cancel()
+		<-finished
+	}()
 	go func() {
+		defer close(finished)
 		got, err := Run(ctx, scope, root, command)
 		if got.Scope != (Scope{}) || len(got.Paths) != 0 {
 			err = errors.New("canceled observation returned evidence")
 		}
 		done <- err
 	}()
-	waitForFile(t, filepath.Join(root, "first"))
+	assertTraceeReady(t, stdout)
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel = %v", err)
 	}
+	_ = writer.Close()
+	assertTraceeEOF(t, stdout)
 	got, err := Run(t.Context(), scope, root, shell(root, `printf fresh > second`))
 	if err != nil || got.Scope != scope || !slices.Equal(got.Paths, []string{"second"}) {
 		t.Fatalf("fresh observation = %+v, %v", got, err)
@@ -134,13 +143,41 @@ func TestRunCancellationAndFreshObservation(t *testing.T) {
 	}
 }
 
-func TestRunTraceLimit(t *testing.T) {
+func TestRunBudgetsStopTracees(t *testing.T) {
+	requireTracer(t)
+	for _, tc := range []struct {
+		name, script string
+		duration     time.Duration
+		bytes        int64
+	}{
+		{"trace bytes", `i=0; while [ "$i" -lt 512 ]; do printf x >> many; i=$((i+1)); done; exec sleep 10`, maxDuration, 16 << 10},
+		{"elapsed time", `exec sleep 10`, 2 * time.Second, maxTrace},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stdout, writer := traceeOutput(t)
+			command := shell(root, `printf 'ready\n'; `+tc.script)
+			command.Stdout = writer
+			paths, err := observe(t.Context(), root, command, tc.duration, tc.bytes)
+			_ = writer.Close()
+			if !errors.Is(err, ErrLimit) || len(paths) != 0 {
+				t.Fatalf("observe = %v, %v; want no paths and ErrLimit", paths, err)
+			}
+			assertTraceeReady(t, stdout)
+			assertTraceeEOF(t, stdout)
+		})
+	}
+}
+
+func TestRunDiscardEvidenceOnCommandFailure(t *testing.T) {
 	requireTracer(t)
 	root := t.TempDir()
-	paths, err := observe(t.Context(), root, shell(root, `while :; do printf x >> many; done`), 4096)
-	if !errors.Is(err, ErrLimit) || len(paths) != 0 {
-		t.Fatalf("overflow = %v, %v; want no paths and ErrLimit", paths, err)
+	got, err := Run(t.Context(), Scope{"s", "t"}, root, shell(root, `printf x > written; exit 3`))
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 || got.Scope != (Scope{}) || len(got.Paths) != 0 {
+		t.Fatalf("Run = %+v, %v; want exit code 3 and no evidence", got, err)
 	}
+	assertContents(t, filepath.Join(root, "written"), "x")
 }
 
 func TestRunnerCrashStopsTracees(t *testing.T) {
@@ -152,15 +189,7 @@ func TestRunnerCrashStopsTracees(t *testing.T) {
 		t.Fatalf("runner should have been killed while tracees were alive, Run returned %v", err)
 	}
 	requireTracer(t)
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	defer writer.Close()
-	if err := reader.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	stdout, writer := traceeOutput(t)
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestRunnerCrashStopsTracees$")
 	cmd.Env = append(os.Environ(), childRoot+"="+t.TempDir(), "TMPDIR="+t.TempDir())
 	cmd.Stdout = writer
@@ -170,17 +199,11 @@ func TestRunnerCrashStopsTracees(t *testing.T) {
 	defer cmd.Wait()
 	defer cmd.Process.Kill()
 	_ = writer.Close()
-	stdout := bufio.NewReader(reader)
-	if line, err := stdout.ReadString('\n'); err != nil || line != "ready\n" {
-		t.Fatalf("tracee readiness = %q, %v", line, err)
-	}
+	assertTraceeReady(t, stdout)
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	// The inherited stdout remains open until both the tracer and its tracees die.
-	if _, err := stdout.ReadByte(); err != io.EOF {
-		t.Fatalf("tracees retained stdout after runner was killed: %v", err)
-	}
+	assertTraceeEOF(t, stdout)
 }
 
 func TestRunPathsAndStreamIsolation(t *testing.T) {
@@ -202,17 +225,16 @@ func TestRunPathsAndStreamIsolation(t *testing.T) {
 		printf test > "$1"
 		printf outside > link/target
 		: > empty
-		exec 4>>read-only-open
+		exec 4>>append-open
 	`, name)
 	command.Stderr = output
 	got, err := Run(t.Context(), Scope{"s", "t"}, root, command)
 	if err != nil || !slices.Equal(got.Paths, []string{name, "empty"}) {
 		t.Fatalf("Run = %+v, %v", got, err)
 	}
-	data, err := os.ReadFile(output.Name())
-	if err != nil || string(data) != "trace-like text\n" {
-		t.Fatalf("tool stderr = %q, %v", data, err)
-	}
+	assertContents(t, output.Name(), "trace-like text\n")
+	assertContents(t, filepath.Join(outside, "target"), "outside")
+	assertContents(t, filepath.Join(root, "append-open"), "")
 }
 
 func BenchmarkShellWrites(b *testing.B) {
@@ -246,6 +268,45 @@ func writeFile(t *testing.T, path, text string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertContents(t *testing.T, path, want string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != want {
+		t.Fatalf("read %s = %q, %v; want %q", path, data, err, want)
+	}
+}
+
+func traceeOutput(t *testing.T) (*bufio.Reader, *os.File) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = writer.Close()
+		_ = reader.Close()
+	})
+	if err := reader.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	return bufio.NewReader(reader), writer
+}
+
+func assertTraceeReady(t *testing.T, stdout *bufio.Reader) {
+	t.Helper()
+	if line, err := stdout.ReadString('\n'); err != nil || line != "ready\n" {
+		t.Fatalf("tracee readiness = %q, %v", line, err)
+	}
+}
+
+func assertTraceeEOF(t *testing.T, stdout *bufio.Reader) {
+	t.Helper()
+	// The inherited stdout remains open until the tracer and its tracees have closed it.
+	if _, err := stdout.ReadByte(); err != io.EOF {
+		t.Fatalf("tracees retained stdout: %v", err)
 	}
 }
 

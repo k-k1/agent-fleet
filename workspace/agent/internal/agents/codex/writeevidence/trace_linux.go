@@ -84,8 +84,7 @@ func parseTrace(root string, trace []byte) ([]string, error) {
 			if path == "" {
 				return nil, errTrace
 			}
-			base := filepath.Base(path)
-			if p.gitAt == 0 && (base == "git" || strings.HasPrefix(base, "git-")) {
+			if p.gitAt == 0 && filepath.Base(path) == "git" {
 				p.gitAt = at
 			}
 		default:
