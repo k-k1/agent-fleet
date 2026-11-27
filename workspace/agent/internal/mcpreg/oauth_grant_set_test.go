@@ -1376,25 +1376,153 @@ func TestRefusedSetRenewalStopsRenewalsWhenItsWriteFails(t *testing.T) {
 	}
 }
 
-// A shared sign-in replacing the own grant before disconnect locks must be reported.
+// The selected own grant may be replaced or removed before disconnect takes its locks.
 func TestDisconnectOwnGrantChangedBeforeLocks(t *testing.T) {
+	for _, scenario := range []string{"shared", "own", "duplicate"} {
+		t.Run(scenario, func(t *testing.T) {
+			resetOAuthState(t)
+			f := newASFake(t, nil)
+			c := publicClient(f)
+			distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+			signInVia(t, f, "t-a")
+			shared, err := secrets.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sharedGrant := shared.MCPOAuth[0]
+			req := startReq(func(r *StartRequest) { r.Registration = OAuthRegDCR })
+			mustStart(t, "t-a", req)
+			if _, err := CompleteOAuth(context.Background(), "t-a", CompleteRequest{State: req.State, Code: "c", Iss: f.url("")}); err != nil {
+				t.Fatal(err)
+			}
+			disconnectSelected = func() {
+				disconnectSelected = nil
+				if scenario == "duplicate" {
+					if _, err := DisconnectOAuth(context.Background(), "t-a"); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				if err := secrets.Update(func(s *secrets.Data) error {
+					if scenario == "shared" {
+						s.MCPOAuth = []secrets.MCPOAuthGrant{sharedGrant}
+						return nil
+					}
+					for i := range s.MCPOAuth {
+						if s.MCPOAuth[i].Group == "" {
+							s.MCPOAuth[i].SignInID = "replacement"
+						}
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Cleanup(func() { disconnectSelected = nil })
+			res, err := DisconnectOAuth(context.Background(), "t-a")
+			if scenario == "duplicate" {
+				if err != nil || res.HadGrant {
+					t.Fatalf("duplicate disconnect: %+v, %v", res, err)
+				}
+			} else if err == nil || res.HadGrant {
+				t.Fatalf("changed grant reported success: %+v, %v", res, err)
+			}
+		})
+	}
+}
+
+// A later member's failed departure is carried to the next successful grant update.
+func TestRefusedSetLaterDepartureAndCarryOver(t *testing.T) {
 	resetOAuthState(t)
 	f := newASFake(t, nil)
 	c := publicClient(f)
-	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c), grantSetDef("t-c", f.url("/c/mcp"), c))
 	signInVia(t, f, "t-a")
-	_, _, d, err := grantLoad("t-a")
+	f.tokenReply = func(n int, form url.Values) (int, string) { return 400, `{"error":"invalid_target"}` }
+	if _, err := RefreshAccessToken(context.Background(), "t-a", "at-0"); !errors.Is(err, ErrNotSignedIn) {
+		t.Fatal(err)
+	}
+	real := updateSecrets
+	fail := true
+	updateSecrets = func(fn func(*secrets.Data) error) error {
+		if fail {
+			fail = false
+			return errors.New("disk full")
+		}
+		return real(fn)
+	}
+	if _, err := RefreshAccessToken(context.Background(), "t-b", "at-0"); !errors.Is(err, ErrNotSignedIn) {
+		t.Fatal(err)
+	}
+	_, _, b, err := grantLoad("t-b")
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := disconnectWhere(context.Background(), "t-a", "", func(g *secrets.MCPOAuthGrant) bool {
-		_, member := grantMember(g, "t-a")
-		return member && g.Group == ""
-	}, disconnectOpt{holdGroup: grantGroup(d), requireMatch: true})
-	if err == nil || res.HadGrant {
-		t.Fatalf("changed grant reported success: %+v, %v", res, err)
+	stop, err := StartRelay()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if tok, err := AccessToken(context.Background(), "t-a"); err != nil || tok != "at-0" {
-		t.Fatalf("shared grant changed: %q, %v", tok, err)
+	defer stop()
+	_, _, a, err := grantLoad("t-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, cdef, err := grantLoad("t-c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := relayDef(cdef); !ok {
+		t.Fatal("connected member missing relay")
+	}
+	if _, ok := relayDef(b); ok {
+		t.Fatal("refused member has relay")
+	}
+	if _, ok := relayDef(a); ok {
+		t.Fatal("departed member has relay")
+	}
+	if err := NoteInsufficientScope("t-c", "extra"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.MCPOAuth) != 1 || !containsString(data.MCPOAuth[0].Left, "t-b") {
+		t.Fatalf("departure not carried: %+v", data.MCPOAuth)
+	}
+}
+
+// A third member's token request retries a later departure even when SetRefused was saved earlier.
+func TestRefusedSetLaterDepartureRetriedOnFastPath(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c), grantSetDef("t-c", f.url("/c/mcp"), c))
+	signInVia(t, f, "t-a")
+	f.tokenReply = func(n int, form url.Values) (int, string) { return 400, `{"error":"invalid_target"}` }
+	if _, err := RefreshAccessToken(context.Background(), "t-a", "at-0"); !errors.Is(err, ErrNotSignedIn) {
+		t.Fatal(err)
+	}
+	real := updateSecrets
+	fail := true
+	updateSecrets = func(fn func(*secrets.Data) error) error {
+		if fail {
+			fail = false
+			return errors.New("disk full")
+		}
+		return real(fn)
+	}
+	if _, err := RefreshAccessToken(context.Background(), "t-b", "at-0"); !errors.Is(err, ErrNotSignedIn) {
+		t.Fatal(err)
+	}
+	if tok, err := AccessToken(context.Background(), "t-c"); err != nil || tok != "at-0" {
+		t.Fatalf("third member: %q %v", tok, err)
+	}
+	data, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.MCPOAuth) != 1 || !containsString(data.MCPOAuth[0].Left, "t-b") {
+		t.Fatalf("departure not retried: %+v", data.MCPOAuth)
 	}
 }

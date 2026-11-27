@@ -125,7 +125,7 @@ func serverLockKey(serverID string) string { return "server\n" + serverID }
 
 type disconnectOpt struct {
 	holdGroup    string
-	requireMatch bool
+	requireMatch func() (bool, error)
 	also         func(*secrets.Data)
 }
 
@@ -274,7 +274,7 @@ func refreshGrantOnce(ctx context.Context, serverID, rejected string) (token, re
 	}
 	// A token that is usable now is handed out without waiting for any renewal: the lock below
 	// is only for the request that spends the refresh token.
-	if res, ok := usableToken(g0, d, rejected); ok && (g0.SetRefused || !setRefusedInMemory(grantKey(g0))) {
+	if res, ok := usableToken(g0, d, rejected); ok && !hasPendingRefusal(g0) {
 		return g0.AccessToken, res, grantGeneration(g0), nil, false
 	}
 	key := grantKey(g0)
@@ -315,7 +315,7 @@ func refreshGrantOnce(ctx context.Context, serverID, rejected string) (token, re
 		delete(rotated, rk)
 		rotatedMu.Unlock()
 	}
-	if !g.SetRefused && setRefusedInMemory(key) {
+	if hasPendingRefusal(g) {
 		persistRefusedSet(g)
 	}
 	if res, ok := usableToken(g, d, rejected); ok {
@@ -399,6 +399,22 @@ func setRefusedInMemory(key string) bool {
 	return refused[key] != nil
 }
 
+// hasPendingRefusal detects departures absent from this store snapshot.
+func hasPendingRefusal(g *secrets.MCPOAuthGrant) bool {
+	refusedMu.Lock()
+	defer refusedMu.Unlock()
+	ids := refused[grantKey(g)]
+	if len(ids) > 0 && !g.SetRefused {
+		return true
+	}
+	for id := range ids {
+		if !containsString(g.Left, id) {
+			return true
+		}
+	}
+	return false
+}
+
 // refuseSet records that the AS will not renew the sign-in g for its set, and takes serverID, whose
 // bearer it could not renew, off it: one write, and a memory mark that stops renewals of g even if
 // the write fails (the next use writes it again). A grant of one server is ended instead.
@@ -414,21 +430,7 @@ func refuseSet(g *secrets.MCPOAuthGrant, serverID string) {
 		markSignInAgain(g, "")
 		return
 	}
-	err := updateGrantSecrets(func(s *secrets.Data) error {
-		for i := range s.MCPOAuth {
-			if o := &s.MCPOAuth[i]; sameSignIn(o, g) {
-				o.SetRefused = true
-				refusedMu.Lock()
-				for id := range refused[key] {
-					if !containsString(o.Left, id) {
-						o.Left = append(o.Left, id)
-					}
-				}
-				refusedMu.Unlock()
-			}
-		}
-		return nil
-	})
+	err := updateGrantSecrets(func(*secrets.Data) error { return nil })
 	if err == nil {
 		if f := OnGrantChange; f != nil {
 			go f()
@@ -463,23 +465,11 @@ func updateGrantSecrets(fn func(*secrets.Data) error) error {
 
 // persistRefusedSet retries the pending refusal without removing another member.
 func persistRefusedSet(g *secrets.MCPOAuthGrant) {
-	key := grantKey(g)
-	_ = updateGrantSecrets(func(s *secrets.Data) error {
-		refusedMu.Lock()
-		defer refusedMu.Unlock()
-		for i := range s.MCPOAuth {
-			o := &s.MCPOAuth[i]
-			if sameSignIn(o, g) {
-				o.SetRefused = true
-				for id := range refused[key] {
-					if !containsString(o.Left, id) {
-						o.Left = append(o.Left, id)
-					}
-				}
-			}
+	if err := updateGrantSecrets(func(*secrets.Data) error { return nil }); err == nil {
+		if f := OnGrantChange; f != nil {
+			go f()
 		}
-		return nil
-	})
+	}
 }
 
 func containsString(list []string, s string) bool {
@@ -494,7 +484,7 @@ func containsString(list []string, s string) bool {
 // grantRenewableFor reports whether g is live for res: it can be renewed, or its bearer was
 // issued for res (and, once the AS refused to renew the set, is still unexpired).
 func grantRenewableFor(g *secrets.MCPOAuthGrant, res string) bool {
-	if g.SetRefused {
+	if g.SetRefused || setRefusedInMemory(grantKey(g)) {
 		return tokenCovers(g, res) && fresh(g, oauthNow())
 	}
 	return g.RefreshToken != "" || tokenCovers(g, res)
@@ -697,6 +687,8 @@ type DisconnectResult struct {
 // DisconnectOAuth revokes the grants serverID uses at the authorization server when it offers
 // revocation, then deletes them locally whatever the answer. A shared grant ends for every server
 // of its group: they hold the same tokens.
+var disconnectSelected func() // test seam after selection, before taking the locks
+
 func DisconnectOAuth(ctx context.Context, serverID string) (DisconnectResult, error) {
 	data, _, d, err := grantLoad(serverID)
 	if err != nil {
@@ -709,10 +701,19 @@ func DisconnectOAuth(ctx context.Context, serverID string) (DisconnectResult, er
 		// others but no longer applies here: a disconnected server gets no bearer. Both changes are
 		// one write under the group's lock, so no reader sees the own grant gone and the group's
 		// still applying, and no shared sign-in completes in between.
+		if disconnectSelected != nil {
+			disconnectSelected()
+		}
 		return disconnectWhere(ctx, serverID, "", func(o *secrets.MCPOAuthGrant) bool {
 			_, member := grantMember(o, serverID)
 			return member && o.Group == "" && sameSignIn(o, g)
-		}, disconnectOpt{holdGroup: grantGroup(d), requireMatch: true, also: func(s *secrets.Data) {
+		}, disconnectOpt{holdGroup: grantGroup(d), requireMatch: func() (bool, error) {
+			data, _, current, err := grantLoad(serverID)
+			if err != nil {
+				return false, err
+			}
+			return findGrantFor(data, current) != nil, nil
+		}, also: func(s *secrets.Data) {
 			for i := range s.MCPOAuth {
 				if o := &s.MCPOAuth[i]; o.Group != "" && grantApplies(o, d) {
 					o.Left = append(o.Left, serverID)
@@ -749,8 +750,6 @@ func disconnectWhere(ctx context.Context, serverID, group string, match func(*se
 		defer gmu.Unlock()
 	}
 	res := DisconnectResult{ServerID: serverID}
-	countEnd(serverID, group)
-	dropPendingFor(serverID, group)
 	pick := func() []secrets.MCPOAuthGrant {
 		data, err := secrets.Load()
 		if err != nil {
@@ -765,10 +764,18 @@ func disconnectWhere(ctx context.Context, serverID, group string, match func(*se
 		return out
 	}
 	found := pick()
-	if len(found) == 0 {
-		if o.requireMatch {
+	if len(found) == 0 && o.requireMatch != nil {
+		changed, err := o.requireMatch()
+		if err != nil {
+			return res, err
+		}
+		if changed {
 			return res, errors.New("mcp oauth: the sign-in changed while disconnecting")
 		}
+	}
+	countEnd(serverID, group)
+	dropPendingFor(serverID, group)
+	if len(found) == 0 {
 		return res, nil
 	}
 	keys := make([]string, 0, len(found))
@@ -780,8 +787,14 @@ func disconnectWhere(ctx context.Context, serverID, group string, match func(*se
 	// Read again under the grants' locks: a renewal that finished meanwhile rotated the tokens.
 	found = pick()
 	if len(found) == 0 {
-		if o.requireMatch {
-			return res, errors.New("mcp oauth: the sign-in changed while disconnecting")
+		if o.requireMatch != nil {
+			changed, err := o.requireMatch()
+			if err != nil {
+				return res, err
+			}
+			if changed {
+				return res, errors.New("mcp oauth: the sign-in changed while disconnecting")
+			}
 		}
 		return res, nil
 	}
