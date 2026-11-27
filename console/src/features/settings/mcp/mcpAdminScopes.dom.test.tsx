@@ -94,6 +94,12 @@ describe("tenant form: Tool confirmations", () => {
     expect(confirmationBox()).toBeUndefined();
     await click(button("Distribute"));
     expect(bodyOfTenant(saved[1], "sales")).not.toHaveProperty("elicitation");
+
+    await click(button("OAuth"));
+    expect(confirmationBox()?.checked).toBe(false);
+    await click(button("Distribute"));
+    expect(bodyOfTenant(saved[2], "sales")).toMatchObject({ auth: "oauth" });
+    expect(bodyOfTenant(saved[2], "sales")).not.toHaveProperty("elicitation");
   });
 
   it("restores the saved setting and lets an admin turn it off", async () => {

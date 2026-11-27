@@ -77,9 +77,9 @@ If you registered a client for Agent Fleet at the server's authorization server,
 - Each scope is one word without quotes, backslashes or commas. Joined with single spaces, and with ` offline_access` added unless you listed it, they must fit in 1024 bytes
 - Members already signed in keep the scopes they granted until they sign in again. A scope you add shows "**More permission needed**" on their row, and the server keeps working with what was granted. Signing in again requests this list together with what was granted and what the server asked for
 
-Under **Tool confirmations**, select **Show confirmation cards in the Console** if the server asks
-for confirmation using MCP forms. This setting is off by default. For a supported tool call, the
-member reviews the call and sends the server their answer. See [Answer an MCP confirmation card](../user/integrations/mcp-servers.md#answer-an-mcp-confirmation-card).
+Under **Tool confirmations**, select **Show confirmation cards in the Console** if the server uses
+MCP confirmation forms with a fixed list of choices for every field. This setting is off by default.
+A form that asks for typed text ends the call with an error. See [Answer an MCP confirmation card](../user/integrations/mcp-servers.md#answer-an-mcp-confirmation-card).
 
 #### One sign-in for several servers
 

@@ -203,13 +203,14 @@ func TestAdminUpsertStoresAndDistributesOAuthOptions(t *testing.T) {
 	}
 }
 
-// A row that holds scopes but is no longer OAuth (only a direct database edit makes one) is
+// A row that holds OAuth options after a rollback to an older Control Plane is
 // distributed and listed without them: the Agent would drop the whole definition, and an admin
 // client sending the listed row back would be refused.
-func TestDistributeSendsScopesOnlyForOAuth(t *testing.T) {
+func TestDistributeSendsOAuthOptionsOnlyForOAuth(t *testing.T) {
 	a, ctx := newMCPServerAPITest(t, false)
 	row := store.MCPServerRow{ID: "s1", TenantID: "t", Name: "wiki", Transport: "http", URL: "https://wiki.example/mcp",
-		Targets: "session", Enabled: true, OAuthScopes: "openid", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}
+		Targets: "session", Enabled: true, OAuthScopes: "openid", Elicitation: mcpElicitationRelay,
+		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}
 	if err := a.store.CreateMCPServer(ctx, row); err != nil {
 		t.Fatal(err)
 	}
@@ -227,8 +228,11 @@ func TestDistributeSendsScopesOnlyForOAuth(t *testing.T) {
 	if _, ok := out.Servers[0]["scopes"]; ok {
 		t.Fatalf("a static-header row was sent with scopes: %s", rec.Body)
 	}
-	if b := rowToBody(row, nil); b.Scopes != nil {
-		t.Fatalf("a static-header row is listed with scopes %q", b.Scopes)
+	if _, ok := out.Servers[0]["elicitation"]; ok {
+		t.Fatalf("a static-header row was sent with an elicitation mode: %s", rec.Body)
+	}
+	if b := rowToBody(row, nil); b.Scopes != nil || b.Elicitation != "" {
+		t.Fatalf("a static-header row is listed with scopes %q and elicitation %q", b.Scopes, b.Elicitation)
 	}
 }
 
@@ -252,7 +256,8 @@ func TestDistributeMatchesTheAgentFixture(t *testing.T) {
 			Auth: mcpAuthOAuth, OAuthIssuer: "https://accounts.google.com", OAuthClientID: "corp-agent",
 			OAuthSecretEnc: secretEnc, OAuthScopes: "https://www.googleapis.com/auth/gmail.readonly openid", Elicitation: mcpElicitationRelay},
 		{ID: "t-wiki", TenantID: "t", Name: "wiki", Transport: "http", URL: "https://wiki.corp.example/mcp",
-			HeadersEnc: headersEnc, Targets: "session", Kinds: "claude,codex", TimeoutMS: 30000, Enabled: true},
+			HeadersEnc: headersEnc, Targets: "session", Kinds: "claude,codex", TimeoutMS: 30000, Enabled: true,
+			Elicitation: mcpElicitationRelay},
 	}
 	for _, r := range rows {
 		r.CreatedAt, r.UpdatedAt = store.NowTS(), store.NowTS()

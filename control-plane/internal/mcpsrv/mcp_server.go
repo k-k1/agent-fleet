@@ -612,7 +612,7 @@ func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody 
 		Headers: headers, Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 		TimeoutMS: row.TimeoutMS, Enabled: row.Enabled, UserSecret: row.UserSecret, Auth: row.Auth,
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-		OAuthClient: maskedOAuthClient(row), Scopes: distScopesOf(row), Elicitation: row.Elicitation,
+		OAuthClient: maskedOAuthClient(row), Scopes: distScopesOf(row), Elicitation: distElicitationOf(row),
 	}
 }
 
@@ -855,6 +855,15 @@ func distScopesOf(row store.MCPServerRow) []string {
 	return splitScopes(row.OAuthScopes)
 }
 
+// distElicitationOf hides a stale mode left behind if an older Control Plane changed
+// the row's authentication during a rollback. The Agent would reject the entire row.
+func distElicitationOf(row store.MCPServerRow) string {
+	if row.Auth != mcpAuthOAuth {
+		return ""
+	}
+	return row.Elicitation
+}
+
 // Distribute (GET /internal/mcp-servers) serves the caller's tenant's ENABLED
 // definitions to their Workspace agent, which caches them (docs/log/48 §6). The tenant comes
 // from the token's membership, never the request, so this can never read another
@@ -889,7 +898,7 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 			Transport: "http", URL: row.URL, Headers: h, Enabled: true,
 			Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 			TimeoutMS: row.TimeoutMS, UserSecret: row.UserSecret, Auth: row.Auth,
-			OAuthClient: distClientOf(row), Scopes: distScopesOf(row), Elicitation: row.Elicitation,
+			OAuthClient: distClientOf(row), Scopes: distScopesOf(row), Elicitation: distElicitationOf(row),
 		})
 	}
 	// The tenant switch for member-added watch sources rides on the same poll. A read that fails

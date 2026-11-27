@@ -109,10 +109,11 @@ A list of more than 12 scopes, here or in a connection test, is folded into "**S
 
 A tenant administrator can turn on Console confirmation cards for a distributed OAuth server.
 If that server asks for confirmation during a supported tool call, the call waits for your answer.
-This works in both Managed and Terminal (CLI) sessions.
+The card supports forms with a fixed list of choices for every field. A form that asks for typed
+text ends the call with an error. Cards work in both Managed and Terminal (CLI) sessions.
 
 1. Look for the card above the session's message box. If the session's conversation is out of view or
-   the Console cannot identify the session, the card appears in a pop-up notification.
+   the Console cannot identify the session, look for a pop-up notification in the main Console window.
 2. Check the server, the tool, and **What the server will run**. Read the server's message and choose
    an option for each required field. When options have the same label, the card also shows their
    values so you can tell them apart.

@@ -411,7 +411,10 @@ export function McpAdminForm({
           )}
           <AuthFields
             auth={form.auth}
-            onAuth={(auth) => patch(switchAuth(form, auth, form.userSecret))}
+            onAuth={(auth) => patch({
+              ...switchAuth(form, auth, form.userSecret),
+              relayElicitation: auth === "oauth" && form.relayElicitation,
+            })}
             token={form.token}
             onToken={(token) => patch({ token })}
             rows={form.headers}

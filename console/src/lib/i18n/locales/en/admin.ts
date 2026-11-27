@@ -127,7 +127,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_elicitation": "Tool confirmations",
   "admin.mcp_elicitation_on": "Show confirmation cards in the Console",
   "admin.mcp_elicitation_hint":
-    "Enable for servers that use MCP confirmation forms. Members review the tool call and answer in the Console.",
+    "Enable for servers that use MCP confirmation forms with fixed choices. Members review the tool call and answer in the Console.",
   "admin.mcp_headers_host_moved": "The URL points at a different host, so the stored header values were cleared. Enter them again for the new host.",
   "admin.mcp_oauth_secret_reenter": "The issuer or client ID changed, so the stored secret no longer applies. Enter the secret again, or remove it to make this a public client.",
   "admin.mcp_oauth_note":
