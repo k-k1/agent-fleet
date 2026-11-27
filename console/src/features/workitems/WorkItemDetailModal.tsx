@@ -96,6 +96,7 @@ import {
   type WorkItemDetail,
   type WorkItemSessionRef,
 } from "./read.ts";
+import { JiraWorkTypeIcon } from "./JiraWorkTypeIcon.tsx";
 import { WorkItemStateIcon } from "./WorkItemStateIcon.tsx";
 
 /** Sentinel for "create a new working copy (worktree)" — not a folder name, so it cannot
@@ -585,9 +586,11 @@ export function WorkItemDetailModal({
           frame. */}
       <div className="ui-modal-body">
         <div className="wi-dhead">
-          <span className={`wi-dot tone-${titleTone}`} title={stateText || undefined}>
-            <WorkItemStateIcon name={kindKnown ? workItemIcon(view) : "link"} />
-          </span>
+          {view.provider === "jira" ? <JiraWorkTypeIcon type={issueType} /> : (
+            <span className={`wi-dot tone-${titleTone}`} title={stateText || undefined}>
+              <WorkItemStateIcon name={kindKnown ? workItemIcon(view) : "link"} />
+            </span>
+          )}
           {/* Never ellipsised here: this is the panel people open to read what the rail row cut
               to one line, so it wraps and shows the title in full. */}
           <h3 className="wi-dtitle">{view.title || item.key}</h3>

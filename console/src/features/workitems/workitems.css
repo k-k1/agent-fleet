@@ -119,8 +119,9 @@
 .wi-row:hover {
   background: var(--hover, rgba(127, 127, 127, 0.08));
 }
-/* Done rows are dimmed, not dropped (never silently hide a row the query asked for). */
-.wi-row.wi-row--done {
+/* Keep completed Jira glyphs at full contrast so they still identify the type. */
+.wi-row--done:not(.wi-row--jira),
+.wi-row--done.wi-row--jira .wi-title {
   opacity: 0.55;
 }
 
@@ -142,6 +143,51 @@
 /* A merged pull request is finished work, not a muted "closed". */
 .wi-dot.tone-merged {
   color: var(--merged, #a371f7);
+}
+
+.wi-jira-type {
+  inline-size: 16px;
+  justify-content: center;
+  align-items: center;
+}
+.wi-jira-task {
+  color: var(--accent);
+}
+.wi-jira-type.wi-jira-task .codicon {
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font-size: 11px;
+}
+.wi-jira-bug {
+  color: var(--err);
+}
+.wi-jira-story {
+  color: var(--ok);
+}
+.wi-jira-epic {
+  color: var(--pr-merged);
+}
+.wi-jira-subtask {
+  color: var(--warn);
+}
+.wi-jira-unknown {
+  color: var(--muted);
+}
+.wi-jira-state {
+  align-self: center;
+  flex: 0 0 8px;
+  block-size: 8px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.wi-jira-state--in_progress {
+  color: var(--accent);
+  background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+}
+.wi-jira-state--done {
+  color: var(--ok);
+  background: currentColor;
 }
 
 .wi-issue-progress {
