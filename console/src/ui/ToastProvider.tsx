@@ -11,7 +11,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
-import { useT } from "../lib/i18n/index.ts";
+import { useT, type MsgKey } from "../lib/i18n/index.ts";
 import { useIsMobile } from "../lib/device.ts";
 import { pushToastLog } from "../lib/toastLog.ts";
 import { registerToastSink } from "./toast.ts";
@@ -28,8 +28,8 @@ export interface ToastOptions {
   key?: string;
   // onClose runs when the member closes the toast with its X, not when it is withdrawn.
   onClose?: () => void;
-  // closeLabel names what the X does when closing is more than hiding (it declines something).
-  closeLabel?: string;
+  // closeLabelKey names the action when closing also declines or discards something.
+  closeLabelKey?: MsgKey;
   // canClose is asked before the X closes the toast; false leaves it as it is.
   canClose?: () => boolean;
 }
@@ -40,7 +40,7 @@ interface ToastItem {
   kind: ToastKind;
   key?: string;
   onClose?: () => void;
-  closeLabel?: string;
+  closeLabelKey?: MsgKey;
   canClose?: () => boolean;
   // A sticky toast carries an action (update now, finish a login) and closes only by its X.
   sticky: boolean;
@@ -104,7 +104,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         kind,
         key: opts?.key,
         onClose: opts?.onClose,
-        closeLabel: opts?.closeLabel,
+        closeLabelKey: opts?.closeLabelKey,
         canClose: opts?.canClose,
         sticky: duration <= 0,
       };
@@ -221,30 +221,33 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           className={"ui-toasts" + (phone ? " ui-toasts-phone" : "")}
           style={phone && top != null ? { top: top + 8 } : undefined}
         >
-          {items.map((t) => (
-            <div
-              key={t.id}
-              className={"ui-toast ui-toast-" + t.kind}
-              role={t.kind === "error" ? "alert" : "status"}
-              aria-live={t.kind === "error" ? "assertive" : "polite"}
-            >
-              <Icon name={TOAST_ICONS[t.kind]} />
-              <span className="ui-toast-msg">{t.message}</span>
-              <button
-                type="button"
-                className="ui-toast-x"
-                title={t.closeLabel ?? tr("ui.close")}
-                aria-label={t.closeLabel}
-                onClick={() => {
-                  if (t.canClose && !t.canClose()) return;
-                  remove(t.id);
-                  t.onClose?.();
-                }}
+          {items.map((t) => {
+            const closeLabel = tr(t.closeLabelKey ?? "ui.close");
+            return (
+              <div
+                key={t.id}
+                className={"ui-toast ui-toast-" + t.kind}
+                role={t.kind === "error" ? "alert" : "status"}
+                aria-live={t.kind === "error" ? "assertive" : "polite"}
               >
-                <Icon name="close" />
-              </button>
-            </div>
-          ))}
+                <Icon name={TOAST_ICONS[t.kind]} />
+                <span className="ui-toast-msg">{t.message}</span>
+                <button
+                  type="button"
+                  className="ui-toast-x"
+                  title={closeLabel}
+                  aria-label={closeLabel}
+                  onClick={() => {
+                    if (t.canClose && !t.canClose()) return;
+                    remove(t.id);
+                    t.onClose?.();
+                  }}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </ToastCtx.Provider>
