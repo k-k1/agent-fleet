@@ -18,7 +18,8 @@ function connect(onCards: (ids: ReadonlySet<string>) => void) {
   const sender = crypto.getRandomValues(new Uint32Array(4)).join("-");
   const mirrors = new Map<string, { ids: string[]; expires: number }>();
   let local: readonly string[] = [];
-  let active = true;
+  let pageActive = true;
+  let visible = !document.hidden;
   let expiry: ReturnType<typeof setTimeout> | undefined;
 
   const collect = () => {
@@ -40,10 +41,10 @@ function connect(onCards: (ids: ReadonlySet<string>) => void) {
   // The identifiers are random per call. The receiver can only match a card to a call it
   // independently read for its current tenant and member, without broadcasting either identity.
   const announce = (ids: readonly string[]) => channel.postMessage({ sender, ids });
-  const request = () => { if (active) channel.postMessage(REQUEST); };
+  const request = () => { if (pageActive) channel.postMessage(REQUEST); };
   channel.onmessage = ({ data }) => {
     if (data === REQUEST) {
-      if (active && local.length) announce(local);
+      if (visible && local.length) announce(local);
       return;
     }
     if (typeof data?.sender !== "string" || !Array.isArray(data.ids) || !data.ids.every((id: unknown) => typeof id === "string")) return;
@@ -52,16 +53,20 @@ function connect(onCards: (ids: ReadonlySet<string>) => void) {
     collect();
   };
 
-  const pagehide = () => {
-    if (active && local.length) announce([]);
-    active = false;
+  // A mirror stays laid out in a background tab, but its card is out of view.
+  const syncVisibility = () => {
+    const next = pageActive && !document.hidden;
+    if (next === visible) return;
+    visible = next;
+    if (local.length) announce(visible ? local : []);
+    if (visible) {
+      collect();
+      request();
+    }
   };
-  const pageshow = () => {
-    active = true;
-    if (local.length) announce(local);
-    collect();
-    request();
-  };
+  const pagehide = () => { pageActive = false; syncVisibility(); };
+  const pageshow = () => { pageActive = true; syncVisibility(); };
+  document.addEventListener("visibilitychange", syncVisibility);
   window.addEventListener("pagehide", pagehide);
   window.addEventListener("pageshow", pageshow);
 
@@ -70,10 +75,11 @@ function connect(onCards: (ids: ReadonlySet<string>) => void) {
     setCards(ids: readonly string[]) {
       if (local.length === ids.length && local.every((id, i) => id === ids[i])) return;
       local = ids;
-      if (active) announce(ids);
+      if (visible) announce(ids);
     },
     close() {
       pagehide();
+      document.removeEventListener("visibilitychange", syncVisibility);
       window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("pageshow", pageshow);
       clearTimeout(expiry);

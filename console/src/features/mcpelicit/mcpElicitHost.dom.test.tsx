@@ -99,6 +99,7 @@ afterEach(() => {
   act(() => root?.unmount());
   TestBroadcastChannel.endpoints.clear();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   setLocale("ja");
   host.remove();
 });
@@ -115,7 +116,6 @@ async function render(mirror: string | null, opts: { toasts?: boolean; host?: bo
       </ToastProvider>,
     ),
   );
-  await act(async () => new Promise((r) => setTimeout(r, 0)));
 }
 const toastCount = () => document.querySelectorAll(".ui-toast").length;
 
@@ -179,6 +179,36 @@ describe("where a held MCP call shows", () => {
       vi.useRealTimers();
     }
   });
+  it("renews the remote card's lease with check-ins while a call is held", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance"] });
+    const remote = new BroadcastChannel(cardChannel);
+    const request = vi.fn(() => remote.postMessage({ sender: "pop-out", ids: ["e1"] }));
+    remote.onmessage = ({ data }) => { if (data === "request") request(); };
+    try {
+      await render(null);
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(toastCount()).toBe(0);
+      for (let i = 0; i < 4; i++) {
+        await act(async () => vi.advanceTimersByTime(3000));
+        expect(request).toHaveBeenCalledTimes(i + 2);
+        expect(toastCount()).toBe(0);
+      }
+      remote.onmessage = null;
+      await act(async () => vi.advanceTimersByTime(9000));
+      expect(toastCount()).toBe(1);
+
+      state.held = false;
+      await act(async () => useMcpElicitStore.getState().refresh());
+      remote.onmessage = ({ data }) => { if (data === "request") request(); };
+      await act(async () => vi.advanceTimersByTime(3000));
+      expect(request).toHaveBeenCalledTimes(5);
+    } finally {
+      remote.close();
+      act(() => root?.unmount());
+      root = null;
+      vi.useRealTimers();
+    }
+  });
   it("announces the pop-out's card to a window that opened later and withdraws it on hide", async () => {
     await render("s1", { toasts: false });
     const remote = new BroadcastChannel(cardChannel);
@@ -197,6 +227,30 @@ describe("where a held MCP call shows", () => {
     expect(received).toHaveBeenCalledWith(expect.objectContaining({ ids: ["e1"] }));
     await render(null, { toasts: false });
     expect(received).toHaveBeenLastCalledWith(expect.objectContaining({ ids: [] }));
+    remote.close();
+  });
+  it("withdraws a background tab's card and announces it again when visible", async () => {
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const remote = new BroadcastChannel(cardChannel);
+    const received = vi.fn();
+    remote.onmessage = ({ data }) => { if (data !== "request") received(data); };
+    await render("s1", { toasts: false });
+    remote.postMessage("request");
+    expect(received).not.toHaveBeenCalled();
+
+    const setHidden = (value: boolean) => {
+      hidden.mockReturnValue(value);
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+    };
+    setHidden(false);
+    expect(received).toHaveBeenLastCalledWith(expect.objectContaining({ ids: ["e1"] }));
+    setHidden(true);
+    expect(received).toHaveBeenLastCalledWith(expect.objectContaining({ ids: [] }));
+    received.mockClear();
+    remote.postMessage("request");
+    expect(received).not.toHaveBeenCalled();
+    setHidden(false);
+    expect(received).toHaveBeenLastCalledWith(expect.objectContaining({ ids: ["e1"] }));
     remote.close();
   });
   it("translates the active toast's close button without replacing the button", async () => {
