@@ -1,6 +1,7 @@
 package agy
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,10 +64,69 @@ func TestTranscriptParsesBrainJSONL(t *testing.T) {
 	if got := a.Parts[0].Output; got != "File Path: file:///tmp/x/marker.txt\nmarker-value-7291" {
 		t.Fatalf("tool output meta lines not stripped: %q", got)
 	}
+	if got := a.Parts[0].Info; got != "/tmp/x/marker.txt" {
+		t.Fatalf("legacy read target = %q", got)
+	}
 	// Second exchange: ERROR_MESSAGE surfaces as a tool part on the assistant turn.
 	b := td.Turns[3]
 	if b.Role != "assistant" || len(b.Parts) != 2 || b.Parts[0].Tool != "ERROR_MESSAGE" || b.Text != "done" {
 		t.Fatalf("error surfacing wrong: %+v", b)
+	}
+}
+
+func TestTranscriptClassifiesRecognizableToolResults(t *testing.T) {
+	const path = "/home/dev/probe-agy/probe.txt"
+	const check = "Task: task-42\nStatus: RUNNING\nLog output:\nstarting"
+	rows := []struct {
+		body string
+		tool string
+		info string
+	}{
+		{"The command completed successfully.\n\t\t\t\tOutput:\n\t\t\t\tdone", "RUN_COMMAND", "completed successfully"},
+		{"The command exited with code 7.\nOutput:\nCreated At: printed by the command\n" + check, "RUN_COMMAND", "exit code 7"},
+		{"Command exited with code 0.\n\ndone", "RUN_COMMAND", "exit code 0"},
+		{"Background command ID: task-42\nOutput snapshot:\nstarting", "RUN_COMMAND", "task-42 · started in background"},
+		{"Tool is running as a background task with task id: task-42", "Background task", "task-42 · started in background"},
+		{check, "Check task status", "task-42 · running when checked"},
+		{agyReadStep, "VIEW_FILE", path},
+		{agyCreateStep, "WRITE_FILE", path},
+		{agyEditStep, "EDIT_FILE", path},
+		{"Task: task-42\nStatus: DONE", "Check task status", "task-42 · done when checked"},
+		{"Task: task-42\nStatus: looks fine", "GENERIC", ""},
+		{"Tool is running as a background task with task id: ", "GENERIC", ""},
+		{"Unrecognized result\n" + agyReadStep, "GENERIC", ""},
+		{"", "GENERIC", ""},
+	}
+	f, err := os.CreateTemp(t.TempDir(), "history-*.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, row := range rows {
+		const timestamps = "Created At: first\nCompleted At: last\n"
+		if err := enc.Encode(stepLine{Source: "MODEL", Type: "GENERIC", Content: timestamps + timestamps + row.body}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	turns := parseTranscript(f, nil)
+	if len(turns) != 1 || len(turns[0].Parts) != len(rows) {
+		t.Fatalf("unexpected parsed turns: %+v", turns)
+	}
+	for i, row := range rows {
+		p := turns[0].Parts[i]
+		if p.Tool != row.tool || p.Info != row.info || p.Command != "" || p.Output != strings.TrimSpace(row.body) {
+			t.Errorf("row %d = %+v, want %q, %q, raw output and no command arguments", i, p, row.tool, row.info)
+		}
+		if p.Tool == "VIEW_FILE" && p.File != "" {
+			t.Errorf("read tool registered a write to %q", p.File)
+		}
+		if p.Tool == "EDIT_FILE" && (p.File != path || len(p.Edits) != 1) {
+			t.Errorf("edit tool lost its file or diff: %+v", p)
+		}
 	}
 }
 

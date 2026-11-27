@@ -73,6 +73,17 @@ button.mt-tool-outhead {
 .mt-tool-command {
   border-left: 2px solid color-mix(in srgb, var(--fg) 25%, transparent);
 }
+.mt-tool-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+.mt-tool-edit-actions > button {
+  min-width: 0;
+}
+button.mt-tool-edit-output {
+  width: auto;
+  flex: none;
+}
 /* An edit expanded in place, for views with no diff pane to open (the shared-session
    view — the DTO keeps the diff body but drops the path, docs/log/59 §3). Sits in the same
    slot as .mt-tool-output and borrows the diff pane's dv-* row styling (viewer.css). */

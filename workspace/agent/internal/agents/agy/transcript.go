@@ -12,8 +12,8 @@ package agy
 //	 PLANNER_RESPONSE|<TOOL_NAME>|…","status":"DONE","created_at":…,"content":…}
 //
 // The mapping: USER_INPUT → a user turn (only the inside of <USER_REQUEST> is extracted);
-// MODEL/PLANNER_RESPONSE → assistant text; MODEL/anything else → a tool part (the type IS
-// the tool name: RUN_COMMAND / VIEW_FILE / LIST_DIRECTORY / …); SYSTEM/ERROR_MESSAGE →
+// MODEL/PLANNER_RESPONSE → assistant text; MODEL/anything else → a tool part named from
+// its type or recognizable GENERIC result; SYSTEM/ERROR_MESSAGE →
 // surfaced as a tool part. The remaining SYSTEM lines (CONVERSATION_HISTORY / CHECKPOINT /
 // SYSTEM_MESSAGE, context aids meant for the model) are not displayed.
 
@@ -123,9 +123,9 @@ type stepLine struct {
 // <USER_SETTINGS_CHANGE> blocks meant for the model, not the user.
 var userRequestRe = regexp.MustCompile(`(?s)<USER_REQUEST>\n?(.*?)\n?</USER_REQUEST>`)
 
-// stepMetaLineRe strips the "Created At:/Completed At:" bookkeeping lines agy
-// prefixes to tool-step content.
-var stepMetaLineRe = regexp.MustCompile(`(?m)^(Created At|Completed At): [^\n]*\n?`)
+// Both the tool result and its serializer can add timestamps. Strip the whole
+// prefix while keeping matching lines inside the result body.
+var stepMetaLineRe = regexp.MustCompile(`^(?:(?:Created At|Completed At): [^\n]*\n?)+`)
 
 // toolOutputMax bounds a tool part's output shown in the mirror (the terminal
 // remains the raw view; the mirror wants the gist).
@@ -222,26 +222,10 @@ func parseTranscript(f *os.File, failures []executorErrorStep) []transcript.Turn
 			cur.Parts = append(cur.Parts, transcript.Part{Kind: "error", Text: failures[0].text})
 			failures = failures[1:]
 		case s.Source == "MODEL", s.Type == "ERROR_MESSAGE":
-			// A tool step (type = tool name), or a surfaced SYSTEM error.
-			body := strings.TrimSpace(stepMetaLineRe.ReplaceAllString(s.Content, ""))
-			out := body
-			if s.Type == "RUN_COMMAND" {
-				out = stripCommandIndent(out)
-			}
-			if len(out) > toolOutputMax {
-				out = out[:toolOutputMax] + "…"
-			}
 			if cur == nil {
 				cur = &transcript.Turn{Role: "assistant", Idx: line, Model: model}
 			}
-			p := transcript.Part{Kind: "tool", Tool: s.Type, Output: out}
-			// A step that wrote a file says so in its own prose, which is the only
-			// coordinate agy records (fileedits.go). Read from the untruncated body: the
-			// diff it carries can sit past toolOutputMax.
-			if f, verb, es := stepEdit(body); f != "" {
-				p.File, p.Verb, p.Edits = f, verb, es
-			}
-			cur.Parts = append(cur.Parts, p)
+			cur.Parts = append(cur.Parts, toolStep(s.Type, s.Content))
 		default:
 			// SYSTEM bookkeeping (CONVERSATION_HISTORY / CHECKPOINT / SYSTEM_MESSAGE):
 			// model-facing context management, not conversation content.
