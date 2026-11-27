@@ -53,7 +53,9 @@ issue をそのままにする。
 
 - `rebuild`: Dockerfile でピンしていない OS パッケージ、または `af-cp` / `workspace-agent` 内の Go 標準ライブラリ。ベースイメージと
   Go toolchain を新しくして再ビルドすれば直るので、パッチリリースの対象。control-plane と workspace のイメージ（と、workspace の Dockerfile から作るネイティブ rootfs）は
-  `apt-get upgrade` を走らせるので、ベースのタグが更新される前でも再ビルドで Debian の修正が入る。
+  `apt-get upgrade` を走らせるので、ベースのタグが更新される前でも再ビルドで Debian の修正が入る。ただし
+  そのレイヤが実際に再実行されるビルドに限る。リリースのビルドはレイヤキャッシュを使わないが、`dev-image.yml`
+  のビルドはベースが変わっていなければキャッシュ済みのレイヤを使い回し、upgrade を飛ばすことがある。
 - `bump`: Dockerfile が版を固定している Debian パッケージ（`CHROMIUM_VERSION` の `chromium`・`chromium-common`・`chromium-sandbox`。新しいベースでも同じビルドが入り直る）、Go モジュール、npm パッケージ、焼き込んだツール（古い toolchain でビルドされたツール自身のピン）。
   再ビルドでは動かない。通常の PR で `main` に入れ、次のリリースに載せる。待てない場合はパッチリリースにも
   その bump を載せる（下記）。
@@ -74,7 +76,11 @@ issue に `rebuild` の行があり、通常のリリースがすぐには出な
 - タグやイメージの再 push はしない。公開済みのタグとダイジェストは不変で、修正は新しい版で出す。
 - リリースのイメージはクリーンなランナーでレイヤキャッシュなしにビルドされる（リリースでは
   `CP_CACHE_REF` / `WS_CACHE_REF` は空）ので、浮動ベースタグと golang イメージは*ビルド時点*のものに
-  解決される。これが更新のすべてで、そのための Dockerfile 変更は要らない。修正が `golang:1.26-trixie` より
+  解決される。これと、control-plane・workspace のランタイム段の `apt-get upgrade` が更新のすべてである。
+  0.51.0 までのタグでは upgrade は control-plane の Dockerfile にしかない
+  （`git grep -n 'apt-get upgrade' <tag> -- workspace/Dockerfile control-plane/Dockerfile` で確かめる）。
+  そのタグから workspace イメージやネイティブ rootfs の Debian の行を直すには、`workspace/Dockerfile` に
+  upgrade を足したコミットをリリースブランチに cherry-pick する（手順 2）。修正が `golang:1.26-trixie` より
   新しい Go マイナーにしかない場合は、再ビルドでは入らない。通常の PR で Dockerfile と `go` ディレクティブを上げる。
 
 手順（自分のシェルで。例は `0.40.0` → `0.40.1`）:
@@ -113,7 +119,9 @@ git tag -a v0.40.1 <build commit> -m "agent-fleet 0.40.1" && git push origin v0.
 ブランチからの `publish-dist.yml` 実行が通るのは、ワークフローのファイルが default branch と対象 ref の
 両方にあるから。それ以外（スクリプト・Dockerfile）は ref から読まれる。実行が成功すると
 `image-vuln-scan` が自動で走り、直せるものが残っていなければ issue を close する。close されないなら、
-残りは `bump` の行か、ベースイメージにまだ修正が来ていないものである。
+残りは `bump` の行か、ビルドが取り込めなかった Debian の修正である。後者なら、タグの Dockerfile が
+`apt-get upgrade` を走らせているか（上記）と、修正版がすでに trixie-security か trixie-updates に
+出ているかを確かめる。
 
 デプロイ側にとってパッチ版は普通の新しい `ImageTag` で、特別な展開手順はない。通常の publish 手順は
 [deploy/release/notes](../../deploy/release/notes/README.md#publishing-a-version) にある。
