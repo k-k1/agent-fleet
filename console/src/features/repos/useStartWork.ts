@@ -4,12 +4,13 @@
 // start hub (StartModal / LaunchHost, launch flow Ph2) share one implementation.
 // `dir: ""` launches in the home directory (repo-less session) — worktree options
 // and repo-scoped bookkeeping (repoLast / prompt history) are skipped there.
-import { apiJSON, errDetail, errText, pasteImage } from "../../core/api/client.ts";
+import { apiJSON, errDetail } from "../../core/api/client.ts";
 import { routeSelectionBody } from "./bedrockProfiles.ts";
 import { policyRefusalKey, policyRefusalOf } from "./launchPolicy.ts";
-import { AUTH_EXPIRED_CODE, toastSendFailure } from "../../lib/authExpiredToast.tsx";
+import { createElement } from "react";
 import { t } from "../../lib/i18n/index.ts";
-import { buildImagePrompt } from "../../lib/pastedImages.ts";
+import { LaunchDeliveryRetry, launchDeliveryKey } from "./LaunchDeliveryRetry.tsx";
+import { deliverLaunchPrompt, uploadLaunchFiles } from "./launchDelivery.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { writeRepoLast, writeRepoSubdir } from "../../lib/repoLast.ts";
@@ -219,41 +220,18 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // Now that the session exists, upload any staged attachments to it and fold their
     // saved paths into the first prompt (claude opens them with its Read tool).
     let seed = prompt;
-    // What of the draft did not reach the session that now exists (#5077): the names of the
-    // files whose upload failed, and whether the first prompt's delivery was refused. Without
-    // this the caller finishes the seed (deletes the memo, clears the draft) and both are lost.
-    const lostFiles: string[] = [];
     let promptLost = false;
+    let retryFiles: Awaited<ReturnType<typeof uploadLaunchFiles>> = [];
     if (withImages) {
-      const paths: string[] = [];
-      // A failed file is dropped with the rest of the draft, so its toast names it: that is
-      // the user's only way to know what to resend. No client-side size check — the per-file
-      // cap is the Agent's AF_UPLOAD_MAX (413 paste_too_large), which the Console never sees.
-      for (const f of images ?? []) {
-        try {
-          const up = await pasteImage(res.name, f);
-          if (up.status < 300 && up.path) paths.push(up.path);
-          else {
-            lostFiles.push(f.name);
-            toast(t("rp.image_upload_failed", { name: f.name, err: up.error ? errText(up.error) : "" }));
-          }
-        } catch {
-          lostFiles.push(f.name);
-          toast(t("rp.image_upload_failed_network", { name: f.name }));
-        }
-      }
-      seed = buildImagePrompt(prompt, paths, kind);
-      // Hand what could not ride on the create request to the same delivery path (wait for
-      // readiness + second Enter + delivery check). Do not swallow a rejection — losing it
-      // silently reads as "I sent it and nothing started".
-      const del = await apiJSON(`api/sessions/${encodeURIComponent(res.name)}/input`, "POST", {
-        prompt: seed,
-        when_ready: true,
-      }).catch(() => ({ error: { message: t("err.network") } }));
-      if (del?.error) {
-        promptLost = true;
-        if (del.error.code === AUTH_EXPIRED_CODE) toastSendFailure(toast, { code: del.error.code }, "", kind);
-        else toast(t("rp.first_prompt_failed", { err: errText(del.error) }));
+      const uploaded = await uploadLaunchFiles(res.name, (images ?? []).map((file) => ({ file, path: "" })), toast);
+      if (uploaded.some((entry) => !entry.path)) {
+        // Releasing part of the first prompt would make the member repeat it when retrying.
+        seed = "";
+        retryFiles = uploaded;
+      } else {
+        const result = await deliverLaunchPrompt(res.name, kind, prompt, uploaded, toast);
+        promptLost = !result.ok;
+        seed = result.seed;
       }
     }
     if (seed) {
@@ -275,12 +253,22 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // tell the owner WHICH session took it. Callers may look at ok alone.
     // The session exists, so this is still ok; the draft's missing part is reported apart so
     // that no caller deletes the memo or clears the draft the person would resend from.
-    if (lostFiles.length || promptLost) {
-      // The form closes on ok and a hub or space dialog keeps no draft of its own, so what the
-      // person typed or attached would be gone. Save the whole draft as a new memo (the restored
-      // memo, if any, stays too) and say whether that worked.
-      // A file the Agent refuses (too large) is refused by the memo store too, so when the whole
-      // draft cannot be saved the text alone is, and the files are the part that is lost.
+    if (retryFiles.length) {
+      const dialog = { open: false };
+      toast(createElement(LaunchDeliveryRetry, { session: res.name, kind, prompt, files: retryFiles, dialog }), {
+        kind: "warn",
+        key: launchDeliveryKey(res.name),
+        duration: 0,
+        closeLabel: t("rp.delivery_discard"),
+        canClose: () => !dialog.open,
+      });
+      return {
+        ok: true,
+        name: res.name,
+        incomplete: { files: retryFiles.filter((entry) => !entry.path).map((entry) => entry.file.name), prompt: true, saved: false },
+      };
+    }
+    if (promptLost) {
       let stash = await stashLaunchDraft(repo, prompt, images ?? []);
       let textOnly = false;
       if (!stash.ok && prompt.trim() && images?.length) {
@@ -288,7 +276,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
         textOnly = stash.ok;
       }
       toast(t(!stash.ok ? "rp.draft_kept" : textOnly ? "rp.draft_saved_text" : "rp.draft_saved"));
-      return { ok: true, name: res.name, incomplete: { files: lostFiles, prompt: promptLost, saved: stash.ok } };
+      return { ok: true, name: res.name, incomplete: { files: [], prompt: true, saved: stash.ok } };
     }
     return { ok: true, name: res.name };
   };
