@@ -130,8 +130,9 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ptyCloseSessionStopped))
 			return
 		}
-		// new-session -A attaches (the session exists per the check above).
-		cmd = tmuxx.Cmd("new-session", "-A", "-s", session.TmuxName(name))
+		// If the last pane exits after HasSession, -N keeps attach-session from
+		// starting a tmux server and running its startup config.
+		cmd = tmuxx.Cmd("-N", "attach-session", "-t", session.ExactTarget(session.TmuxName(name)))
 	} else {
 		cmd = exec.Command(envOr("AGENT_SHELL", "bash"), "-l")
 	}
