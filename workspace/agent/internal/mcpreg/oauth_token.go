@@ -658,9 +658,12 @@ func SetPreregisteredClient(serverID, issuer, clientID, clientSecret string) err
 	return updateGrantSecrets(func(s *secrets.Data) error {
 		kept := s.MCPOAuthClients[:0]
 		for _, c := range s.MCPOAuthClients {
-			if !(c.Kind == OAuthRegPreregistered && c.ServerID == serverID && c.Issuer == issuer) {
-				kept = append(kept, c)
+			// Removing one spelling must not let sign-in pick up the other as a fallback.
+			if c.Kind == OAuthRegPreregistered && c.ServerID == serverID &&
+				(c.Issuer == issuer || (clientID == "" && issuerEquivalent(c.Issuer, issuer))) {
+				continue
 			}
+			kept = append(kept, c)
 		}
 		s.MCPOAuthClients = kept
 		if clientID != "" {

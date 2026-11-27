@@ -498,6 +498,37 @@ func TestStartReusesStoredClientsAcrossRootIssuerSpellings(t *testing.T) {
 	}
 }
 
+func TestRemovingPreregisteredClientClearsEquivalentRootIssuer(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, map[string]any{"registration_endpoint": nil})
+	id := registerServer(t, f)
+	for _, path := range []string{"/", "", "/realm"} {
+		if err := SetPreregisteredClient(id, f.url(path), "member-client", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other, err := Create(ServerDef{Name: "other", Transport: TransportHTTP, URL: f.url("/mcp"), Auth: AuthOAuth, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = Delete(other.ID) })
+	if err := SetPreregisteredClient(other.ID, f.url("/"), "other-client", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPreregisteredClient(id, f.url(""), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err = StartOAuth(context.Background(), id, startReq(nil))
+	wantCode(t, err, OAuthErrClientIDNeeded)
+	if got := statusOf(t, id).PreregisteredIssuers; len(got) != 1 || got[0] != f.url("/realm") {
+		t.Errorf("remaining issuers = %v, want only the realm issuer", got)
+	}
+	_, q := mustStart(t, other.ID, startReq(nil))
+	if got := q.Get("client_id"); got != "other-client" {
+		t.Errorf("other server's client_id = %q", got)
+	}
+}
+
 func TestStartRefusesWhatP1Refuses(t *testing.T) {
 	resetOAuthState(t)
 	t.Run("AS metadata issuer mismatch", func(t *testing.T) {
