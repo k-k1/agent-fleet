@@ -121,6 +121,107 @@ func TestRestoreKeepsALiveTerminalHistory(t *testing.T) {
 	}
 }
 
+func TestSSMHistoryRoundTripsAndRetentionOffAtRestoreRestoresOnlyTheSession(t *testing.T) {
+	home := historyEnv(t, "7")
+	mod := time.Now().Add(-time.Hour).Truncate(time.Second)
+	ssm := session.Meta{Name: "hist005", Dir: home, Kind: session.KindSSM}
+	session.WriteMeta(ssm)
+	writeHistory(t, ssm.Name, "ssm screen", mod)
+	arch, _, err := trashSession(ssm, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restoreCleanupArchive(arch); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(terminalHistoryPath(ssm.Name))
+	if err != nil || !st.ModTime().Equal(mod) || mustRead(t, terminalHistoryPath(ssm.Name)) != "ssm screen" {
+		t.Fatalf("ssm history did not round-trip: %v %v", st, err)
+	}
+
+	sh := shellSession(t, home, "hist006")
+	writeHistory(t, sh.Name, "kept", time.Now())
+	arch, _, err = trashSession(sh, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AF_TERMINAL_HISTORY_RETENTION_DAYS", "")
+	if _, err := restoreCleanupArchive(arch); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := session.ReadMeta(sh.Name); !ok {
+		t.Fatal("the shell must come back with retention off")
+	}
+	if _, err := os.Stat(terminalHistoryPath(sh.Name)); err == nil {
+		t.Fatal("history restored with retention off")
+	}
+}
+
+func TestTrashDoesNotArchiveWhatAHistorySymlinkPointsAt(t *testing.T) {
+	home := historyEnv(t, "7")
+	m := shellSession(t, home, "hist007")
+	secret := filepath.Join(home, "secret.txt")
+	if err := os.WriteFile(secret, []byte("not a history"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(terminalHistoryPath(m.Name)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, terminalHistoryPath(m.Name)); err != nil {
+		t.Fatal(err)
+	}
+	arch, _, err := trashSession(m, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range listCleanupArchives() {
+		if a.ID == arch && a.Sessions[0].History != "" {
+			t.Fatal("a symlinked history was archived")
+		}
+	}
+}
+
+func TestRestoreIgnoresAHistoryRecordNamedForAnotherSession(t *testing.T) {
+	home := historyEnv(t, "7")
+	m := shellSession(t, home, "hist008")
+	writeHistory(t, m.Name, "mine", time.Now())
+	arch, _, err := trashSession(m, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(cleanupStoreDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	f, _, err := openArchiveFile(root, arch+".tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	man, payloads, err := readCleanupTar(f, arch)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	man.Sessions[0].Name = "other01"
+	// Rewrite the archive under the same id so the restore sees the forged record.
+	if err := root.Remove(arch + ".tar.gz"); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Remove(arch + ".json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCleanupBundleIn(root, &man, payloads, false); err != nil || man.ID != arch {
+		t.Fatalf("cannot rewrite the fixture archive: %v (id %s)", err, man.ID)
+	}
+	if _, err := restoreCleanupArchive(arch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(terminalHistoryPath("other01")); err == nil {
+		t.Fatal("history was written under a name the restore never locked")
+	}
+}
+
 func TestListFlagsASpaceSizeThatRanOutOfBudget(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	store := cleanupStoreDir()

@@ -618,9 +618,12 @@ func placeNoReplace(tmp, dest string) (created bool, err error) {
 // is, best effort: the shell is already back, and a screen history is not worth failing a restore
 // over. It is skipped when retention is off or the history has outlived it, and the placed file
 // keeps its original modification time so the janitor ages it from when it was written.
-func restoreTerminalHistory(s cleanupArchivedSession, payloads map[string][]byte) {
+func restoreTerminalHistory(s cleanupArchivedSession, meta session.Meta, payloads map[string][]byte) {
 	data, ok := payloads[s.History]
-	if s.History == "" || !ok || !session.ValidName(s.Name) {
+	// The destination comes from the restored meta, whose name lock this restore holds, and only
+	// for a shell: the outer record's name is not what was locked.
+	if s.History == "" || !ok || s.Name != meta.Name || !session.ValidName(meta.Name) ||
+		(meta.Kind != session.KindShell && meta.Kind != session.KindSSM) {
 		return
 	}
 	retention := terminalHistoryRetention()
@@ -628,19 +631,24 @@ func restoreTerminalHistory(s cleanupArchivedSession, payloads map[string][]byte
 	if retention <= 0 || err != nil || time.Since(mod) >= retention {
 		return
 	}
-	dest := terminalHistoryPath(s.Name)
+	dest := terminalHistoryPath(meta.Name)
 	if _, err := os.Lstat(dest); err == nil {
 		return // a history written since is the live one
 	}
 	tmp, err := stageNextTo(dest, data)
 	if err != nil {
-		log.Printf("restore %s: terminal history not restored: %v", s.Name, err)
+		log.Printf("restore %s: terminal history not restored: %v", meta.Name, err)
 		return
 	}
 	defer os.Remove(tmp)
-	_ = os.Chtimes(tmp, mod, mod)
+	// Without the original time the janitor would age the file from the restore, stretching the
+	// retention: leave it out instead.
+	if err := os.Chtimes(tmp, mod, mod); err != nil {
+		log.Printf("restore %s: terminal history not restored: %v", meta.Name, err)
+		return
+	}
 	if _, err := placeNoReplace(tmp, dest); err != nil {
-		log.Printf("restore %s: terminal history not restored: %v", s.Name, err)
+		log.Printf("restore %s: terminal history not restored: %v", meta.Name, err)
 	}
 }
 
@@ -824,7 +832,7 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 		return nil, handErr
 	}
 	for _, entry := range entries {
-		restoreTerminalHistory(entry.record, payloads)
+		restoreTerminalHistory(entry.record, entry.meta, payloads)
 	}
 	for _, b := range m.Branches {
 		dir, ok := gitx.ResolveRepoDir(b.Repo)

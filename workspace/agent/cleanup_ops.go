@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -578,16 +579,23 @@ func addTerminalHistoryPayload(m session.Meta, as *cleanupArchivedSession, paylo
 	if retention <= 0 {
 		return
 	}
-	src := terminalHistoryPath(m.Name)
-	fi, err := os.Stat(src)
-	if err != nil || !fi.Mode().IsRegular() || time.Since(fi.ModTime()) >= retention {
-		return
-	}
-	b, err := readHandoverBounded(src)
+	// One descriptor decides everything: no symlink is followed (a link would archive some other
+	// file for good) and a raced-in FIFO cannot block the delete while the name lock is held.
+	f, err := os.OpenFile(terminalHistoryPath(m.Name), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Printf("trash %s: terminal history not archived: %v", m.Name, err)
 		}
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() || time.Since(fi.ModTime()) >= retention {
+		return
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxCleanupEntryBytes+1))
+	if err != nil || len(b) > maxCleanupEntryBytes {
+		log.Printf("trash %s: terminal history not archived (read error or too large): %v", m.Name, err)
 		return
 	}
 	if len(b) == 0 {
