@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 const (
@@ -295,7 +296,7 @@ func TestQuotaResetAtIsNotBookedFromARejectedFrame(t *testing.T) {
 }
 
 // The conversation's own executor error for the newest turn wins over a banner a lagging pane
-// still shows from the turn before; a quota refusal recorded as an error step still counts.
+// still shows from the turn before.
 func TestAtQuotaLimitDefersToANewerExecutorError(t *testing.T) {
 	old := capturePaneFrame
 	defer func() { capturePaneFrame = old }()
@@ -314,5 +315,33 @@ func TestLastRunCompletedReadsOneRow(t *testing.T) {
 	m, _ := staleFixture(t, "slot-onerow", rows, [][]byte{executorRow(4, 1), executorRow(2, 1)}, time.Minute)
 	if lastRunCompleted(sids.Read(session.UUID(m.Dir, m.Name))) {
 		t.Fatal("an older success was mixed with a newer interrupted run")
+	}
+}
+
+// The same for a failure only the Stop hook reports (no error step in the conversation).
+func TestAtQuotaLimitDefersToAStopHookFailure(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	capturePaneFrame = func(string) string { return quotaLine + idleChrome }
+	m, sid := hookFixture(t, "quota-hook-failure")
+	defer forgetQuota(m.Name)
+	conv := "conv-quota-hook"
+	sids.Write(sid, conv)
+	mkConvDBWithTurns(t, conv, [][3]any{
+		{stepTypeUser, stepStatusDone, []byte("first")},
+		{15, stepStatusDone, []byte("answer")},
+		{stepTypeUser, stepStatusDone, []byte("next")},
+		{21, stepStatusDone, []byte("tool succeeded")},
+	}, [][]byte{executorRow(4, 3)})
+	status.Persist(sid, "working")
+	if _, at := atQuotaLimit(m); !at {
+		t.Fatal("control: an ended turn with the banner was not read")
+	}
+	recordGen(m.Name, "Stop", hookInput{ConversationID: conv, FullyIdle: ptr(true), TerminationReason: "error", Error: canceledStepFailure}, time.Now())
+	if _, at := atQuotaLimit(m); at {
+		t.Fatal("a Stop-hook failure of the newest turn was overridden by an older banner")
+	}
+	if _, _, ok := quotaResetAt(m, false, time.Time{}); ok {
+		t.Fatal("a reset was booked from it")
 	}
 }

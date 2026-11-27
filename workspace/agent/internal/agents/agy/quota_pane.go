@@ -162,14 +162,22 @@ func forgetQuota(name string) {
 
 // atQuotaLimit is agents.UsageLimitTraits.AtLimit: the quota is a window that waiting clears.
 // newestTurnEnded says the screen may be read as the newest turn's outcome: the state source
-// agrees that turn has ended, and it did not end on an executor error that is not a quota refusal
-// (the conversation's own failure of the current turn wins over a banner a lagging pane still
-// shows from the turn before).
+// agrees that turn has ended, and the conversation does not already name that turn's own failure
+// (an executor error step, or the Stop hook's error). A turn that ended in an error is a failed
+// turn whatever a lagging pane still shows from the turn before, and main's queue closes it as
+// such; a quota refusal that is itself recorded that way is reported by that path too.
 func newestTurnEnded(m session.Meta) bool {
 	if LiveState(m) != "idle" {
 		return false
 	}
-	if r, ok := lastStep(m); ok && r.stepType == stepTypeError && !quotaReachedRe.MatchString(executorErrorPayload(r.payload)) {
+	r, ok := lastStep(m)
+	if !ok {
+		return true
+	}
+	if r.stepType == stepTypeError {
+		return false
+	}
+	if f, ok := hookExecutorFailure(m, r.conv); ok && f.index == r.idx {
 		return false
 	}
 	return true
