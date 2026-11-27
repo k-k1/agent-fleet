@@ -145,7 +145,7 @@ A memo can wait for other memos of the same auto-run category: it runs only afte
 - It never runs in the same session as a memo it waits for
 - The row says what it waits for and how each stands, for example "Waits for acme/app#12: running"
 
-A prerequisite must have been run by auto-run, ended as "Done", and avoided being stopped for being overdue.
+For auto-run to verify a prerequisite, it must have been delivered by the queue, ended as "Done", and avoided being stopped for being overdue.
 
 Auto-run checks the **pull requests** from the run's branch and the pull requests its session opened or worked on. A review session's own pull requests are excluded. Auto-run reads the pull requests from the workspace after the run ends and checks every 10 minutes while the workspace runs. The row says what it waits for, for example "Waits for acme/app#12: waiting for PR #57 to merge".
 
@@ -181,6 +181,8 @@ When a memo it waits for can no longer end well, the memo goes back to "**Waits 
 Check the memo it waited for, then approve the memo again (it waits once more) or change what it waits for. A memo it waits for that is waiting for approval or waiting to run only makes it wait longer.
 
 If an older version moved a memo back to "Waits for approval" because its prerequisite's first turn failed, approve it again with the same prerequisite to let auto-run check the pull requests.
+
+If you verified that a prerequisite's work is complete and auto-run still cannot establish it, choose **Confirm completion** beside that prerequisite on the waiting memo's row. The option applies to a memo delivered by a finished run. It satisfies that prerequisite for every memo waiting for it, keeping the links and the original run history. If a memo went back to **Waits for approval**, approve it again. The confirmation applies to that run, so if you return the prerequisite to the queue and run it again, the new run needs its own evidence.
 
 - A memo that waits, or that another waits for, is kept as it is by a tidy: it is never merged, split or moved
 - A memo another waits for is kept past the 7 days after it was sent, until nothing waits for it any more
