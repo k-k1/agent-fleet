@@ -11,10 +11,10 @@ package agy
 //	 PLANNER_RESPONSE|<TOOL_NAME>|…","status":"DONE","created_at":…,"content":…}
 //
 // The mapping: USER_INPUT → a user turn (only the inside of <USER_REQUEST> is extracted);
-// MODEL/PLANNER_RESPONSE → assistant text; MODEL/anything else → a tool part (the type IS
-// the tool name: RUN_COMMAND / VIEW_FILE / LIST_DIRECTORY / …); SYSTEM/ERROR_MESSAGE →
-// an error part when matched to the DB, otherwise a tool part. Other SYSTEM
-// lines (such as checkpoints) are context aids meant for the model.
+// MODEL/PLANNER_RESPONSE yields assistant text. Other MODEL rows become tool
+// parts, named by their type or a recognizable GENERIC result. An ERROR_MESSAGE
+// becomes an error part when matched to the DB. Other errors remain tool parts.
+// System bookkeeping such as checkpoints is model-facing.
 
 import (
 	"bufio"
@@ -124,9 +124,9 @@ type stepLine struct {
 // <USER_SETTINGS_CHANGE> blocks meant for the model, not the user.
 var userRequestRe = regexp.MustCompile(`(?s)<USER_REQUEST>\n?(.*?)\n?</USER_REQUEST>`)
 
-// stepMetaLineRe strips the "Created At:/Completed At:" bookkeeping lines agy
-// prefixes to tool-step content.
-var stepMetaLineRe = regexp.MustCompile(`(?m)^(Created At|Completed At): [^\n]*\n?`)
+// Both the tool result and its serializer can add timestamps. Strip the whole
+// prefix while keeping matching lines inside the result body.
+var stepMetaLineRe = regexp.MustCompile(`^(?:(?:Created At|Completed At): [^\n]*\n?)+`)
 
 // toolOutputMax bounds a tool part's output shown in the mirror (the terminal
 // remains the raw view; the mirror wants the gist).
@@ -185,7 +185,7 @@ func readMirrorSteps(log io.Reader, failures []executorErrorStep) []mirrorStep {
 		case s.Type == "ERROR_MESSAGE" && s.Index != nil && knownErrors[step.index]:
 			continue // The DB supplies the sanitized error at this step, even if this line arrived late.
 		case s.Source == "MODEL", s.Type == "ERROR_MESSAGE":
-			step.part = toolPart(s)
+			step.part = toolStep(s.Type, s.Content)
 		default:
 			continue // System bookkeeping is model-facing context management.
 		}
@@ -195,24 +195,6 @@ func readMirrorSteps(log io.Reader, failures []executorErrorStep) []mirrorStep {
 	// memory so sorting never retains the full, potentially large tool payloads.
 	sort.SliceStable(steps, func(i, j int) bool { return steps[i].index < steps[j].index })
 	return steps
-}
-
-func toolPart(s stepLine) transcript.Part {
-	body := strings.TrimSpace(stepMetaLineRe.ReplaceAllString(s.Content, ""))
-	out := body
-	if s.Type == "RUN_COMMAND" {
-		out = stripCommandIndent(out)
-	}
-	if len(out) > toolOutputMax {
-		out = out[:toolOutputMax] + "…"
-	}
-	p := transcript.Part{Kind: "tool", Tool: s.Type, Output: out}
-	// A step that wrote a file records its path in its prose. A diff in the
-	// same body may sit past toolOutputMax.
-	if f, verb, es := stepEdit(body); f != "" {
-		p.File, p.Verb, p.Edits = f, verb, es
-	}
-	return p
 }
 
 func parseTranscript(log io.Reader, users []int, failures []executorErrorStep) []transcript.Turn {
