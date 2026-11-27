@@ -1,6 +1,5 @@
 // Package writeevidence prototypes process-scoped write attribution for Codex shell tools.
-// It has no runtime callers. A caller must own the command launch and supply the session and
-// turn identities at that boundary.
+// It has no runtime callers. The launcher must supply identities from the Managed runtime.
 package writeevidence
 
 import (
@@ -29,6 +28,7 @@ var ErrLimit = errors.New("shell write observation exceeded its budget")
 // Scope is the identity of the turn that launched the observed command.
 type Scope struct {
 	SessionID string
+	ThreadID  string
 	TurnID    string
 }
 
@@ -36,6 +36,7 @@ type Scope struct {
 // Paths are syscall evidence. They can include intermediates that no longer exist.
 type Evidence struct {
 	Scope Scope
+	Root  string
 	Paths []string
 }
 
@@ -54,23 +55,23 @@ type Command struct {
 // exit successfully and tracing must finish before Run returns evidence. On interruption or
 // overflow, the tracer and its tracees are stopped and the invocation yields no evidence.
 func Run(ctx context.Context, scope Scope, root string, command Command) (Evidence, error) {
-	if scope.SessionID == "" || scope.TurnID == "" {
-		return Evidence{}, errors.New("shell write observation needs a session and turn")
+	if !validScope(scope) {
+		return Evidence{}, errors.New("shell write observation needs a session, thread, and turn")
+	}
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return Evidence{}, fmt.Errorf("resolve observation workspace: %w", err)
 	}
 	paths, err := observe(ctx, root, command, maxDuration, maxTrace)
 	if err != nil {
 		return Evidence{}, err
 	}
-	return Evidence{Scope: scope, Paths: paths}, nil
+	return Evidence{Scope: scope, Root: root, Paths: paths}, nil
 }
 
 func observe(ctx context.Context, root string, command Command, duration time.Duration, traceLimit int64) ([]string, error) {
 	if !filepath.IsAbs(root) || !filepath.IsAbs(command.Path) || !filepath.IsAbs(command.Dir) {
 		return nil, errors.New("shell write observation needs absolute workspace, executable, and working directory paths")
-	}
-	root, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return nil, fmt.Errorf("resolve observation workspace: %w", err)
 	}
 	workspace, err := os.Stat(root)
 	if err != nil {

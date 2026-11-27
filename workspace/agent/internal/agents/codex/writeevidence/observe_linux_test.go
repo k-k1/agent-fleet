@@ -36,6 +36,7 @@ func requireTracer(t testing.TB) {
 
 func TestRunCommittedWriteAndUnrelatedChanges(t *testing.T) {
 	requireTracer(t)
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_AUTHOR_NAME", "Write Evidence Test")
@@ -65,7 +66,7 @@ func TestRunCommittedWriteAndUnrelatedChanges(t *testing.T) {
 	writeFile(t, filepath.Join(root, "preexisting.txt"), "outside the command\n")
 
 	coord := t.TempDir()
-	scope := Scope{SessionID: "session-a", TurnID: "turn-a"}
+	scope := Scope{SessionID: "session-a", ThreadID: "thread-a", TurnID: "turn-a"}
 	command := shell(root, `
 		git merge --ff-only -q incoming
 		sh -ec 'printf "edited\n" > edited.txt'
@@ -92,6 +93,12 @@ func TestRunCommittedWriteAndUnrelatedChanges(t *testing.T) {
 	if got.err != nil || got.evidence.Scope != scope || !slices.Equal(got.evidence.Paths, []string{"edited.txt"}) {
 		t.Fatalf("Run = %+v, %v; want only edited.txt in %+v", got.evidence, got.err, scope)
 	}
+	if err := Save(got.evidence); err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := load(scope); err != nil || !slices.Equal(stored.Paths, []string{"edited.txt"}) {
+		t.Fatalf("stored after commit = %+v, %v", stored, err)
+	}
 	if content := git("show", "HEAD:edited.txt"); content != "edited" {
 		t.Fatalf("committed content = %q", content)
 	}
@@ -107,7 +114,7 @@ func TestRunCancellationAndFreshObservation(t *testing.T) {
 	requireTracer(t)
 	root := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
-	scope := Scope{SessionID: "session-a", TurnID: "same-turn-id"}
+	scope := Scope{SessionID: "session-a", ThreadID: "thread-a", TurnID: "same-turn-id"}
 	stdout, writer := traceeOutput(t)
 	command := shell(root, `printf partial > first; printf 'ready\n'; exec sleep 10`)
 	command.Stdout = writer
@@ -136,7 +143,7 @@ func TestRunCancellationAndFreshObservation(t *testing.T) {
 	if err != nil || got.Scope != scope || !slices.Equal(got.Paths, []string{"second"}) {
 		t.Fatalf("fresh observation = %+v, %v", got, err)
 	}
-	other := Scope{SessionID: "session-b", TurnID: scope.TurnID}
+	other := Scope{SessionID: "session-b", ThreadID: "thread-b", TurnID: scope.TurnID}
 	got, err = Run(t.Context(), other, root, shell(root, `printf separate > third`))
 	if err != nil || got.Scope != other || !slices.Equal(got.Paths, []string{"third"}) {
 		t.Fatalf("separate session = %+v, %v", got, err)
@@ -172,7 +179,7 @@ func TestRunBudgetsStopTracees(t *testing.T) {
 func TestRunDiscardEvidenceOnCommandFailure(t *testing.T) {
 	requireTracer(t)
 	root := t.TempDir()
-	got, err := Run(t.Context(), Scope{"s", "t"}, root, shell(root, `printf x > written; exit 3`))
+	got, err := Run(t.Context(), Scope{SessionID: "s", ThreadID: "native", TurnID: "t"}, root, shell(root, `printf x > written; exit 3`))
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 3 || got.Scope != (Scope{}) || len(got.Paths) != 0 {
 		t.Fatalf("Run = %+v, %v; want exit code 3 and no evidence", got, err)
@@ -185,7 +192,7 @@ func TestRunnerCrashStopsTracees(t *testing.T) {
 	if root := os.Getenv(childRoot); root != "" {
 		command := shell(root, `sh -ec 'printf "ready\n"; exec sleep 10' & wait`)
 		command.Stdout = os.Stdout
-		_, err := Run(t.Context(), Scope{"s", "t"}, root, command)
+		_, err := Run(t.Context(), Scope{SessionID: "s", ThreadID: "native", TurnID: "t"}, root, command)
 		t.Fatalf("runner should have been killed while tracees were alive, Run returned %v", err)
 	}
 	requireTracer(t)
@@ -228,7 +235,7 @@ func TestRunPathsAndStreamIsolation(t *testing.T) {
 		exec 4>>append-open
 	`, name)
 	command.Stderr = output
-	got, err := Run(t.Context(), Scope{"s", "t"}, root, command)
+	got, err := Run(t.Context(), Scope{SessionID: "s", ThreadID: "native", TurnID: "t"}, root, command)
 	if err != nil || !slices.Equal(got.Paths, []string{name, "empty"}) {
 		t.Fatalf("Run = %+v, %v", got, err)
 	}
@@ -252,7 +259,7 @@ func BenchmarkShellWrites(b *testing.B) {
 	})
 	b.Run("observed", func(b *testing.B) {
 		for b.Loop() {
-			got, err := Run(b.Context(), Scope{"s", "t"}, root, command)
+			got, err := Run(b.Context(), Scope{SessionID: "s", ThreadID: "native", TurnID: "t"}, root, command)
 			if err != nil || !slices.Equal(got.Paths, []string{"output"}) {
 				b.Fatalf("Run = %+v, %v", got, err)
 			}

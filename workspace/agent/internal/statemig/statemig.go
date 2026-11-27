@@ -145,6 +145,8 @@ var Entries = []string{
 	// (claude.BuildLaunch). Introduced directly under AgentStateDir.
 	"claude-pointfork",
 	"codex-sid",
+	// Scoped shell write observations. Introduced directly under AgentStateDir.
+	"codex-write-evidence",
 	// An open PreCompact on a Terminal codex session (codex.MarkCompacting). Introduced
 	// directly under AgentStateDir; it never existed under .config.
 	"codex-compacting",
