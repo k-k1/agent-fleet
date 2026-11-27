@@ -3,6 +3,10 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.51.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.51.0) — 2026-11-27
+
+スペースで作業を始めたり引き継いだりできる場面が増え、スペース全体で 1 つのエージェントメモリのプロジェクトを共有します。配布された MCP サーバーはサインインを共有でき、稼働中のビューには最近停止したセッションが出ます。自動実行は、別のエージェントに移したセッションも追い続けます。
+
 ## [0.50.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.50.0) — 2026-11-25
 
 リポジトリに属さない作業に専用のフォルダを持たせるスペースが加わり、作り直した「はじめる」画面から

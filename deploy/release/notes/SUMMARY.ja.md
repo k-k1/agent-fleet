@@ -12,6 +12,34 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.51.0](0.51.0.ja.md) — 2026-11-27
+
+**CLI ピン** — OpenCode 2.4.2 / Copilot 1.0.116 / Antigravity 1.5.18
+
+**New / Improved**
+
+- **[スペース]** 受信箱・画像スタジオ・メモの自動実行・引き継ぎ・プランレビュー・子セッションでスペースに対応 ([#5220](https://github.com/k-k1/agent-fleet/issues/5220), [#5222](https://github.com/k-k1/agent-fleet/issues/5222), [#5223](https://github.com/k-k1/agent-fleet/issues/5223), [#5232](https://github.com/k-k1/agent-fleet/issues/5232))
+- **[メモリ]** 自分のスペースでエージェントメモリのプロジェクトを共有 ([#5221](https://github.com/k-k1/agent-fleet/issues/5221))
+- **[MCP]** 配布する HTTPS サーバーのスコープ指定とサインイン共有、Google Workspace の OAuth 互換性 ([#5173](https://github.com/k-k1/agent-fleet/issues/5173), [#5175](https://github.com/k-k1/agent-fleet/issues/5175))
+- **[Bedrock]** 従来のデプロイ設定なしで AWS プロファイルを Claude Code・OpenCode の Bedrock 経路に利用可能 ([#3282](https://github.com/k-k1/agent-fleet/issues/3282))
+- **[セッション]** 24 時間以内に停止したセッションをカードに表示し、古い停止や時刻不明の停止は件数で表示 ([#5155](https://github.com/k-k1/agent-fleet/issues/5155))
+- **[スケジュール]** スケジュールの詳細から再利用セッションを開く ([#5298](https://github.com/k-k1/agent-fleet/issues/5298))
+- **[ウォッチ]** GitHub と Atlassian のクラウドサービスの復旧をウォッチ ([#5204](https://github.com/k-k1/agent-fleet/issues/5204))
+- **[ミラー]** セッションのウォッチに表示名とブランチ、タイマーの予定時刻をブラウザのタイムゾーンで表示 ([#5305](https://github.com/k-k1/agent-fleet/issues/5305), [#5324](https://github.com/k-k1/agent-fleet/issues/5324))
+- **[ガイド]** 日英ガイドの検索キーワードと Console の説明を更新 ([#5064](https://github.com/k-k1/agent-fleet/issues/5064), [#5321](https://github.com/k-k1/agent-fleet/issues/5321))
+- **[ワークスペース]** 同梱ツールを更新。上記のエージェント CLI に加え AWS CLI 2.42.4、GitHub CLI 2.106.0、bkt 0.41.1 ([#5211](https://github.com/k-k1/agent-fleet/issues/5211))
+
+**Fixed**
+
+- **[メモ]** 利用上限後の自動再開が動き、停止中でもエージェントを移せる。移動後も実行枠を維持 ([#5212](https://github.com/k-k1/agent-fleet/issues/5212), [#5292](https://github.com/k-k1/agent-fleet/issues/5292), [#5293](https://github.com/k-k1/agent-fleet/issues/5293))
+- **[メモ]** セッション間メッセージの配送を待ち、起動後に送信が失敗してもメモを保持 ([#5270](https://github.com/k-k1/agent-fleet/issues/5270), [#5077](https://github.com/k-k1/agent-fleet/issues/5077))
+- **[スペース]** 使用中のスペースで起動を確認し、スペースと作業コピーの削除を保護 ([#5230](https://github.com/k-k1/agent-fleet/issues/5230), [#5122](https://github.com/k-k1/agent-fleet/issues/5122))
+- **[スペース]** スペースのフォルダと目印を保護し、セッションを正しい見出しに表示 ([#5231](https://github.com/k-k1/agent-fleet/issues/5231), [#5219](https://github.com/k-k1/agent-fleet/issues/5219), [#5278](https://github.com/k-k1/agent-fleet/issues/5278))
+- **[引き継ぎ]** 受け取ったスペースの引き継ぎは新しいスペースで開始し、日本語の引き継ぎでは要約の境界を指定 ([#5233](https://github.com/k-k1/agent-fleet/issues/5233), [#5291](https://github.com/k-k1/agent-fleet/issues/5291))
+- **[プルリクエスト]** Bitbucket でマージを妨げる理由を表示し、詳細が取れない場合の確認先を案内 ([#5306](https://github.com/k-k1/agent-fleet/issues/5306))
+- **[ミラー]** ウォッチ通知をメンバーのメッセージと分け、Codex の AWS プロファイルのバッジを正しい呼び出しに表示 ([#5299](https://github.com/k-k1/agent-fleet/issues/5299), [#5295](https://github.com/k-k1/agent-fleet/issues/5295))
+- **[Docker]** Docker ワークスペースの起動操作で古い Agent のアドレスを修復 ([#5257](https://github.com/k-k1/agent-fleet/issues/5257))
+
 ## [0.50.0](0.50.0.ja.md) — 2026-11-25
 
 **CLI ピン** — Claude Code 2.1.332 / OpenCode 2.4.1 / Codex 0.172.0 / Copilot 1.0.115 / Antigravity 1.5.17

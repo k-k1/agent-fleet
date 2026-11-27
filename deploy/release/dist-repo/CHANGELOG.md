@@ -3,6 +3,10 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.51.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.51.0) — 2026-11-27
+
+Spaces now support more ways to start and hand off work, and share one Agent memory project. Distributed MCP servers can share a sign-in, the Active view shows recent stops, and Auto-run keeps tracking a session when you move it to another agent.
+
 ## [0.50.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.50.0) — 2026-11-25
 
 Spaces give work that belongs to no repository a folder of its own, started from a reorganised
