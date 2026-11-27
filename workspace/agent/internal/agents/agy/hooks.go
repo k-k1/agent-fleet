@@ -2,7 +2,7 @@ package agy
 
 // agy's lifecycle hooks as the primary signal for a slot's conversation UUID and its
 // working / idle state (#2156). agy runs the commands in ~/.gemini/config/hooks.json at
-// SessionStart / PreInvocation / PreToolUse / Stop with a camelCase JSON object on stdin and
+// SessionStart / PreInvocation / PreToolUse / PostToolUse / Stop with a camelCase JSON object on stdin and
 // the launching pane's environment (measured on 1.3.5: AF_SESSION_NAME arrives, so the slot is
 // named by the env af set at launch, never guessed from a cwd or a conversation id).
 //
@@ -99,6 +99,11 @@ type hookInput struct {
 	ConversationID    string `json:"conversationId"`
 	TerminationReason string `json:"terminationReason"`
 	Error             string `json:"error"`
+	StepIdx           *int   `json:"stepIdx"`
+	ToolCall          struct {
+		Name string          `json:"name"`
+		Args json.RawMessage `json:"args"`
+	} `json:"toolCall"`
 	// FullyIdle is a pointer so a Stop without the key reads as "unknown" rather than busy.
 	FullyIdle *bool `json:"fullyIdle"`
 }
@@ -161,15 +166,24 @@ func recordHook(name, gen, event string, in hookInput, now time.Time) {
 	if want := launchGens.Read(slotSid); want == "" || gen != want {
 		return
 	}
-	if conv := sids.Read(slotSid); conv != "" && conv != in.ConversationID {
-		return
-	}
-	state := hookStateFor(event, in)
-	if state == "" && event != "SessionStart" {
+	conv := sids.Read(slotSid)
+	if conv != "" && conv != in.ConversationID {
 		return
 	}
 	prev, hadPrev := currentRecord(slotSid)
 	if hadPrev && prev.ConvID != "" && prev.ConvID != in.ConversationID {
+		return
+	}
+	if event == "PostToolUse" {
+		// A background command can complete after Stop. Its result must never reopen the turn
+		// or claim a conversation that SessionStart and the slot have yet to identify.
+		if conv != "" || prev.ConvID == in.ConversationID {
+			recordCommandStep(in)
+		}
+		return
+	}
+	state := hookStateFor(event, in)
+	if state == "" && event != "SessionStart" {
 		return
 	}
 	if event == "PreInvocation" {
@@ -314,6 +328,7 @@ func hookEntry(exe string) map[string]any {
 		"SessionStart":  []any{handler("SessionStart")},
 		"PreInvocation": []any{handler("PreInvocation")},
 		"PreToolUse":    []any{map[string]any{"matcher": "*", "hooks": []any{handler("PreToolUse")}}},
+		"PostToolUse":   []any{map[string]any{"matcher": "run_command", "hooks": []any{handler("PostToolUse")}}},
 		"Stop":          []any{handler("Stop")},
 	}
 }

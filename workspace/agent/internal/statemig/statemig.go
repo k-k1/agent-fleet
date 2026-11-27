@@ -164,6 +164,7 @@ var Entries = []string{
 	"agy-sid",
 	"agy-prelaunch",
 	"agy-brain-prelaunch",
+	"agy-command-steps",
 	"agy-hook",
 	"agy-launch",
 	"agy-hooks.lock",

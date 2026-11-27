@@ -76,7 +76,7 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 		(len(failures) == 0 || failures[len(failures)-1].index < failure.index) {
 		failures = append(failures, failure)
 	}
-	td.Turns = parseTranscript(log, users, failures)
+	td.Turns = parseTranscript(log, users, failures, readCommandStep(conv))
 	// A conversation that never switched models records none, so its turns carry the model
 	// the session was launched (or last resumed) with.
 	stampModel(td.Turns, modelLabel(m.Model))
@@ -148,7 +148,7 @@ type mirrorStep struct {
 	part     transcript.Part
 }
 
-func readMirrorSteps(log io.Reader, failures []executorErrorStep) []mirrorStep {
+func readMirrorSteps(log io.Reader, failures []executorErrorStep, commandAt func(int) string) []mirrorStep {
 	knownErrors := make(map[int]bool, len(failures))
 	for _, failure := range failures {
 		knownErrors[failure.index] = true
@@ -185,7 +185,7 @@ func readMirrorSteps(log io.Reader, failures []executorErrorStep) []mirrorStep {
 		case s.Type == "ERROR_MESSAGE" && s.Index != nil && knownErrors[step.index]:
 			continue // The DB supplies the sanitized error at this step, even if this line arrived late.
 		case s.Source == "MODEL", s.Type == "ERROR_MESSAGE":
-			step.part = toolStep(s.Type, s.Content)
+			step.part = withCommand(toolStep(s.Type, s.Content), s, commandAt)
 		default:
 			continue // System bookkeeping is model-facing context management.
 		}
@@ -197,7 +197,7 @@ func readMirrorSteps(log io.Reader, failures []executorErrorStep) []mirrorStep {
 	return steps
 }
 
-func parseTranscript(log io.Reader, users []int, failures []executorErrorStep) []transcript.Turn {
+func parseTranscript(log io.Reader, users []int, failures []executorErrorStep, commandAt func(int) string) []transcript.Turn {
 	var turns []transcript.Turn
 	var cur *transcript.Turn // open assistant turn
 	flush := func() {
@@ -251,7 +251,7 @@ func parseTranscript(log io.Reader, users []int, failures []executorErrorStep) [
 			addFailure()
 		}
 	}
-	steps := readMirrorSteps(log, failures)
+	steps := readMirrorSteps(log, failures, commandAt)
 	for i, step := range steps {
 		if i+1 < len(steps) && steps[i+1].index == step.index {
 			continue // The last write for this step supersedes earlier copies.
