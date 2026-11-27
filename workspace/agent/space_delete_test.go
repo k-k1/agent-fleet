@@ -325,7 +325,7 @@ func TestDeleteSpaceWithoutATrashDirectoryChangesNothing(t *testing.T) {
 }
 
 func TestDeleteSpaceRollsBackShellsOnPartialFailure(t *testing.T) {
-	for _, failure := range []string{"second archive", "manifest", "move"} {
+	for _, failure := range []string{"second archive", "second stage", "manifest", "move"} {
 		t.Run(failure, func(t *testing.T) {
 			e := spaceDeleteSetup(t)
 			tmuxSays(t, tmuxNoServer)
@@ -337,7 +337,9 @@ func TestDeleteSpaceRollsBackShellsOnPartialFailure(t *testing.T) {
 				writeAt(t, terminalHistoryPath(name), "terminal "+name)
 			}
 			oldClock, oldShell, oldSpace := nowUTC, trashAfterArchive, spaceAfterManifest
+			oldStage := stageShellMetaRemoval
 			t.Cleanup(func() { nowUTC, trashAfterArchive, spaceAfterManifest = oldClock, oldShell, oldSpace })
+			t.Cleanup(func() { stageShellMetaRemoval = oldStage })
 			nowUTC = func() time.Time { return time.Date(2026, 1, 1, 1, 1, 1, 0, time.UTC) }
 			wantCode := errCodeSpaceTrashFailed
 			switch failure {
@@ -348,6 +350,17 @@ func TestDeleteSpaceRollsBackShellsOnPartialFailure(t *testing.T) {
 						conflict := filepath.Join(cleanupStoreDir(), newCleanupID(nowUTC(), names[1])+".json")
 						_ = os.Mkdir(conflict, 0o700)
 					}
+				}
+			case "second stage":
+				wantCode = errCodeSpaceSessionsTrashFailed
+				stageShellMetaRemoval = func(name string) (session.StagedMeta, error) {
+					if name == names[1] {
+						if _, st := session.ReadMetaState(names[0]); st != session.MetaAbsent {
+							t.Error("the first meta was never staged")
+						}
+						return session.StagedMeta{}, os.ErrPermission
+					}
+					return oldStage(name)
 				}
 			case "manifest":
 				spaceAfterManifest = func(id string) { _ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json")) }
@@ -372,6 +385,7 @@ func TestDeleteSpaceRollsBackShellsOnPartialFailure(t *testing.T) {
 				}
 			}
 			trashAfterArchive, spaceAfterManifest = nil, nil
+			stageShellMetaRemoval = oldStage
 			if failure == "second archive" {
 				if err := os.Remove(filepath.Join(cleanupStoreDir(), newCleanupID(nowUTC(), names[1])+".json")); err != nil {
 					t.Fatal(err)

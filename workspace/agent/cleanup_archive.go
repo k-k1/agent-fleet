@@ -26,6 +26,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -99,7 +100,7 @@ func writeCleanupArchive(m *cleanupManifest, payloads map[string][]byte) error {
 // their name. Keep the sidecar on disk so an interrupted Agent still leaves a recoverable row.
 var pendingTrash sync.Map
 
-var errTrashPending = errors.New("this entry is still being moved to the trash; try again in a moment")
+var errTrashPending = errors.New("a trash or restore operation for this entry is still in progress. Try again in a moment")
 
 func trashPending(id string) bool {
 	_, ok := pendingTrash.Load(filepath.Join(cleanupStoreDir(), id))
@@ -503,7 +504,38 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	}
 	restored := map[string]any{"sessions": []string{}, "branches": []string{}}
 	var sessions, branches []string
-	var metas []session.Meta
+	type archivedMeta struct {
+		record cleanupArchivedSession
+		meta   session.Meta
+	}
+	var entries []archivedMeta
+	var names []string
+	for _, s := range m.Sessions {
+		var meta session.Meta
+		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
+			continue
+		}
+		entries = append(entries, archivedMeta{record: s, meta: meta})
+		names = append(names, meta.Name)
+		sessions = append(sessions, s.Name)
+	}
+	// Take the same name locks as trash before staging anything. Checking only at the
+	// metadata write would let an old archive put files back after the delete removed
+	// them, so those files would win over the newer archive's payload on restore.
+	slices.Sort(names)
+	var locks []*sync.Mutex
+	defer func() {
+		for _, lock := range locks {
+			lock.Unlock()
+		}
+	}()
+	for _, name := range slices.Compact(names) {
+		lock := sessionTrashLock(name)
+		if !lock.TryLock() {
+			return nil, errTrashPending
+		}
+		locks = append(locks, lock)
+	}
 	// Transcripts are staged next to their destination and only placed under the cleanup lock,
 	// together with the metas. A restore never removes or replaces anything it did not create
 	// in this call, and it never reports a session as back unless its meta was written. When a
@@ -519,11 +551,8 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			_ = os.Remove(f.tmp)
 		}
 	}
-	for _, s := range m.Sessions {
-		var meta session.Meta
-		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
-			continue
-		}
+	for _, entry := range entries {
+		s := entry.record
 		for i, name := range s.JSONLNames {
 			if i >= len(s.JSONLPaths) {
 				break
@@ -546,8 +575,6 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			}
 			staged = append(staged, stagedFile{tmp: tmp, dest: dest})
 		}
-		metas = append(metas, meta)
-		sessions = append(sessions, s.Name)
 	}
 	if restoreAfterStage != nil {
 		restoreAfterStage()
@@ -595,12 +622,13 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			}
 			changed = changed || created
 		}
-		for i, meta := range metas {
+		for i, entry := range entries {
+			meta := entry.meta
 			// An existing meta is newer than the archived snapshot — a session already
 			// restored and then locked, renamed or run — and is kept as it is.
 			created, err := session.CreateMetaIfAbsent(meta)
 			if err != nil {
-				stop(fmt.Errorf("restored %d of %d sessions, then could not write %s: %w", i, len(metas), meta.Name, err))
+				stop(fmt.Errorf("restored %d of %d sessions, then could not write %s: %w", i, len(entries), meta.Name, err))
 				return
 			}
 			changed = changed || created

@@ -896,6 +896,11 @@ func (c *createRun) recordCreator() {
 	if c.createdWorktree == "" {
 		return
 	}
+	// The name can have moved to the trash since publication.
+	if _, err := os.Stat(session.MetaPath(c.name)); os.IsNotExist(err) {
+		log.Printf("not recording %s as creator of %s: its meta is not on disk", c.name, c.createdWorktree)
+		return
+	}
 	if err := gitx.WriteWorktreeCreator(c.createdWorktree, c.name); err != nil {
 		log.Printf("recording %s as creator of %s: %v", c.name, c.createdWorktree, err)
 	}

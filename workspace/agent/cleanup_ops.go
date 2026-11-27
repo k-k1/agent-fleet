@@ -258,6 +258,7 @@ func removeWithShellTrash(shells []session.Meta, belongs func(session.Meta) bool
 			} else if !committed {
 				if rollbackErr := p.staged.Rollback(); rollbackErr != nil {
 					err = errors.Join(err, fmt.Errorf("could not put session %s back; restore archive %s: %w", p.meta.Name, p.id, rollbackErr))
+					invalidateCleanupUsage()
 				} else {
 					discardPreparedTrash(p.id)
 				}
@@ -325,7 +326,7 @@ func removeWithShellTrash(shells []session.Meta, belongs func(session.Meta) bool
 					continue
 				}
 				var staged session.StagedMeta
-				staged, err = session.StageMetaRemoval(cur.Name)
+				staged, err = stageShellMetaRemoval(cur.Name)
 				if err == nil {
 					p.staged = &staged
 				}
@@ -348,22 +349,30 @@ func removeWithShellTrash(shells []session.Meta, belongs func(session.Meta) bool
 // where a resume or a lock can land. Nil in production.
 var trashAfterArchive func(m session.Meta)
 
-// trashNameLocks serialises trashSession per session name.
+// stageShellMetaRemoval lets a test fail one rename after earlier metas have been staged.
+var stageShellMetaRemoval = session.StageMetaRemoval
+
+// trashNameLocks serialises trash and archive restore per session name.
 var trashNameLocks = struct {
 	mu sync.Mutex
 	m  map[string]*sync.Mutex
 }{m: map[string]*sync.Mutex{}}
 
 func lockTrashName(name string) func() {
+	l := sessionTrashLock(name)
+	l.Lock()
+	return l.Unlock
+}
+
+func sessionTrashLock(name string) *sync.Mutex {
 	trashNameLocks.mu.Lock()
+	defer trashNameLocks.mu.Unlock()
 	l, ok := trashNameLocks.m[name]
 	if !ok {
 		l = &sync.Mutex{}
 		trashNameLocks.m[name] = l
 	}
-	trashNameLocks.mu.Unlock()
-	l.Lock()
-	return l.Unlock
+	return l
 }
 
 // keepsLocalTranscript reports whether the session's kind holds its conversation in files the

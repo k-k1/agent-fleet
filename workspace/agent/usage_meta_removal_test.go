@@ -65,6 +65,9 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 						finalizes = true
 					}
 				case *ast.Ident:
+					if fn.Name == "stageShellMetaRemoval" {
+						removes = true
+					}
 					if fn.Name == "FinalizeSessionUsage" {
 						finalizes = true
 					}

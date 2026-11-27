@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -81,6 +84,186 @@ func TestCreateStopsAnUnpublishedLaunchBeforeReleasingItsFolder(t *testing.T) {
 	}
 	if launched == "" || stopped != launched || gitx.LaunchingUnder(p.repo) {
 		t.Fatalf("launch %q, stop %q, folder reserved %v", launched, stopped, gitx.LaunchingUnder(p.repo))
+	}
+}
+
+func TestTerminalPublishFailureTracksAPaneThatCouldNotBeStopped(t *testing.T) {
+	p := newCreateProbe(t)
+	logPath, _ := failableTmux(t)
+	bin := filepath.Join(filepath.Dir(logPath), "tmux")
+	name := "inflight-fail"
+	pane := filepath.Join(filepath.Dir(logPath), "pane")
+	t.Setenv("AF_TEST_PANE_FILE", pane)
+	t.Setenv("AF_TEST_PANE_NAME", session.TmuxName(name))
+	err := os.WriteFile(bin, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  kill-session) exit 1 ;;
+  list-sessions) if [ -e "$AF_TEST_PANE_FILE" ]; then printf '%s\n' "$AF_TEST_PANE_NAME"; fi ;;
+esac
+`), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: name, Dir: p.repo, Kind: session.KindShell}
+	if err := os.WriteFile(pane, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release, ref := reserveLaunch(m, nil)
+	if ref != nil {
+		t.Fatal(ref)
+	}
+	defer release()
+	if err := persistLaunchedMeta(m, func(session.Meta) error { return os.ErrPermission }); err == nil || !strings.Contains(err.Error(), "could not stop") {
+		t.Fatalf("publish error = %v, want stop error", err)
+	}
+	release()
+	s, err := gitx.ReadDirSessions(p.repo)
+	if err != nil || len(s.Running()) != 1 {
+		t.Fatalf("delete guard missed unpublished pane: %v, %v", s.Running(), err)
+	}
+	log, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(log), "kill-session -t "+session.ExactTarget(session.TmuxName(name))) {
+		t.Fatalf("tmux did not try to stop the unpublished pane: %s", log)
+	}
+	if err := os.Remove(pane); err != nil {
+		t.Fatal(err)
+	}
+	s, err = gitx.ReadDirSessions(p.repo)
+	if err != nil || len(s.Running()) != 0 {
+		t.Fatalf("delete guard kept the exited pane: %v, %v", s.Running(), err)
+	}
+}
+
+func TestManagedCreateStopsTheHandleBeforeSendingTheFirstPrompt(t *testing.T) {
+	p := newCreateProbe(t)
+	kind := session.KindCodex
+	rt := &fakeRuntimeAgent{Agent: AgentOf(kind)}
+	t.Cleanup(agentreg.SwapForTest(kind, rt))
+	prevDriver, prevBind := managedDrivers[kind], imagegen.BindStudioSession
+	t.Cleanup(func() { managedDrivers[kind], imagegen.BindStudioSession = prevDriver, prevBind })
+	var events []string
+	imagegen.BindStudioSession = func(_ string, name string, _ string) (string, error) {
+		if name != "" {
+			rt.name = name
+			events = append(events, "bind")
+		} else {
+			events = append(events, "unbind")
+		}
+		return "", nil
+	}
+	managedDrivers[kind] = eventDriver{log: func(event string) {
+		events = append(events, event)
+		if event == "launch" {
+			if rt.name == "" || !gitx.LaunchingUnder(p.repo) {
+				t.Fatal("managed launch lacked the studio binding or folder reservation")
+			}
+			if err := os.Mkdir(session.MetaPath(rt.name), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}}
+	rec := p.post(map[string]any{"kind": kind, "dir": p.repo, "driver": "managed", "studio": probeStudio, "initial_prompt": "tell me"}, "")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), errCodeMetaWriteFailed) {
+		t.Fatalf("create = %d %s, want meta_write_failed", rec.Code, rec.Body)
+	}
+	if got := strings.Join(events, ","); got != "bind,launch,unbind" || !strings.Contains(strings.Join(rt.calls, ","), "drop "+rt.name) {
+		t.Fatalf("failed publication did not stop and unbind the handle before input: events %v, runtime %v", events, rt.calls)
+	}
+}
+
+type failingForkMetaAgent struct{ agents.Agent }
+
+func (failingForkMetaAgent) ForkSource(session.Meta) (string, error) { return "source-conv", nil }
+
+func (failingForkMetaAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
+	return agents.LaunchPlan{Cwd: m.Dir, Program: "true"}, os.Mkdir(session.MetaPath(m.Name), 0o700)
+}
+
+func tmuxWithoutExistingSessions(t *testing.T) string {
+	t.Helper()
+	logPath, _ := failableTmux(t)
+	bin := filepath.Join(filepath.Dir(logPath), "tmux")
+	if err := os.WriteFile(bin, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return logPath
+}
+
+func TestForkStopsAProcessWhoseMetaCannotBePublished(t *testing.T) {
+	p := newCreateProbe(t)
+	logPath := tmuxWithoutExistingSessions(t)
+	kind := session.KindClaude
+	t.Cleanup(agentreg.SwapForTest(kind, failingForkMetaAgent{Agent: AgentOf(kind)}))
+	src := session.Meta{Name: "fork-disk", Dir: p.repo, Kind: kind}
+	session.WriteMeta(src)
+	rec := forkReq(t, src.Name, "{}")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), errCodeMetaWriteFailed) {
+		t.Fatalf("fork = %d %s, want meta_write_failed", rec.Code, rec.Body)
+	}
+	log, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(log), "new-session ") || !strings.Contains(string(log), "kill-session -t ") {
+		t.Fatalf("the fork must start and stop the unpublished process: %s", log)
+	}
+	if got := session.ListMetas(); len(got) != 1 || got[0].Name != src.Name {
+		t.Fatalf("fork publication failure changed the listed sessions: %v", got)
+	}
+}
+
+func TestRecreateDoesNotKeepAnUnpublishedSuccessor(t *testing.T) {
+	for _, failsAt := range []string{"old shelf", "new publication"} {
+		t.Run(failsAt, func(t *testing.T) {
+			if failsAt == "old shelf" && os.Geteuid() == 0 {
+				t.Skip("a read-only directory does not stop root")
+			}
+			p := newCreateProbe(t)
+			logPath := tmuxWithoutExistingSessions(t)
+			old := session.Meta{Name: "recreate-disk", Dir: p.repo, Kind: session.KindCodex, Studio: probeStudio}
+			session.WriteMeta(old)
+			prev := imagegen.BindStudioSession
+			t.Cleanup(func() { imagegen.BindStudioSession = prev })
+			var bindings []string
+			imagegen.BindStudioSession = func(_ string, name string, _ string) (string, error) {
+				bindings = append(bindings, name)
+				return "", nil
+			}
+			if failsAt == "old shelf" {
+				if err := os.Chmod(session.MetaDir(), 0o500); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(session.MetaDir(), 0o700) })
+			}
+			launched := ""
+			launchTmuxFn = func(m session.Meta, _ bool) error {
+				launched = m.Name
+				return os.Mkdir(session.MetaPath(m.Name), 0o700)
+			}
+			rec := callHandler(HandleRecreateSession, http.MethodPost, old.Name, "")
+			if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), errCodeMetaWriteFailed) {
+				t.Fatalf("recreate = %d %s, want meta_write_failed", rec.Code, rec.Body)
+			}
+			if m, ok := session.ReadMeta(old.Name); !ok || m.Archived || m.Studio != old.Studio {
+				t.Fatalf("old session lost its active slot or studio: %+v", m)
+			}
+			if failsAt == "old shelf" {
+				if launched != "" || len(bindings) != 0 {
+					t.Fatalf("failed shelf started a successor or rebound the studio: %q, %v", launched, bindings)
+				}
+			} else {
+				log, _ := os.ReadFile(logPath)
+				if launched == "" || !strings.Contains(string(log), "kill-session -t "+session.ExactTarget(session.TmuxName(launched))) {
+					t.Fatalf("unpublished successor was not stopped: %s", log)
+				}
+				if len(bindings) != 2 || bindings[0] != launched || bindings[1] != old.Name {
+					t.Fatalf("studio binding transitions = %v, want successor then old", bindings)
+				}
+			}
+		})
 	}
 }
 

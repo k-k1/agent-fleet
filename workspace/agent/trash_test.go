@@ -348,6 +348,31 @@ func TestWorktreeDeleteRollsBackShellsWhenGitRefusesRemoval(t *testing.T) {
 	}
 }
 
+func TestRepoDeleteReportsShelfWriteFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	e := tombstoneSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	name := "aiced01"
+	session.WriteMeta(session.Meta{Name: name, Kind: session.KindClaude, Dir: e.wt})
+	t.Cleanup(func() { _ = os.Chmod(session.MetaDir(), 0o700) })
+	t.Cleanup(gitx.SetDeleteStepHook(func(step, dir string) {
+		if step == "shelve" && dir == e.wt {
+			if err := os.Chmod(session.MetaDir(), 0o500); err != nil {
+				t.Error(err)
+			}
+		}
+	}))
+	path := "/repos/" + filepath.Base(e.wt) + "?force=1"
+	if code := errCodeOf(t, e.srv, "DELETE", path, http.StatusInternalServerError); code != "delete_failed" {
+		t.Fatalf("delete code = %q, want delete_failed", code)
+	}
+	if m, ok := session.ReadMeta(name); !ok || m.Archived || session.DirExists(e.wt) {
+		t.Fatalf("failed shelf should leave the session active and the worktree in the trash: %+v", m)
+	}
+}
+
 func TestTrashReportsFailedMetaUnlinkAndCanRetry(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only directory does not stop root")
@@ -411,6 +436,82 @@ func TestShellTrashKeepsPreparedArchivesAndRejectsRestoreDuringRemoval(t *testin
 	}
 	if _, ok := session.ReadMeta(m.Name); !ok || len(listCleanupArchives()) != 1 {
 		t.Fatal("a failed remove did not roll back the session and its prepared archive")
+	}
+}
+
+func TestOldArchiveCannotPlaceHandoverFilesDuringTrash(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	tmuxSays(t, tmuxNoServer)
+	m := session.Meta{Name: "shold01", Dir: e.home, Kind: session.KindShell}
+	file := filepath.Join(paths.SessionWorkDir(m.Name), "handover-plan.md")
+	session.WriteMeta(m)
+	writeAt(t, file, "version one")
+	prior := map[string]string{}
+	do(t, e.srv, "DELETE", "/sessions/"+m.Name, nil, http.StatusOK, &prior)
+	oldID := prior["archive"]
+	restoreOld := "/cleanup/archives/" + oldID + "/restore"
+	do(t, e.srv, "POST", restoreOld, nil, http.StatusOK, nil)
+	writeAt(t, file, "version two")
+	_, err := removeWithShellTrash([]session.Meta{m}, func(session.Meta) bool { return true }, func() error {
+		// Model the interval after the live payload has been removed and before the
+		// delete releases the name. The newer archive already holds version two.
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+		if code := errCodeOf(t, e.srv, "POST", restoreOld, http.StatusConflict); code != gitx.ErrCodeDeleteInProgress() {
+			t.Errorf("restore code = %q, want delete_in_progress", code)
+		}
+		for _, path := range []string{file, restoringMarker(oldID)} {
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Errorf("refused restore wrote %s: %v", filepath.Base(path), err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range listCleanupArchives() {
+		if a.ID != oldID {
+			do(t, e.srv, "POST", "/cleanup/archives/"+a.ID+"/restore", nil, http.StatusOK, nil)
+			if b, _ := os.ReadFile(file); string(b) != "version two" {
+				t.Fatalf("restored contents = %q, want version two", b)
+			}
+			return
+		}
+	}
+	t.Fatal("new archive is missing")
+}
+
+func TestShellTrashSkipsADeletedOrShelvedSession(t *testing.T) {
+	for _, mode := range []string{"gone", "shelved"} {
+		t.Run(mode, func(t *testing.T) {
+			e := spaceDeleteSetup(t)
+			tmuxSays(t, tmuxNoServer)
+			m := session.Meta{Name: "shskip1", Dir: e.home, Kind: session.KindShell}
+			session.WriteMeta(m)
+			old := trashAfterArchive
+			t.Cleanup(func() { trashAfterArchive = old })
+			trashAfterArchive = func(cur session.Meta) {
+				if mode == "shelved" {
+					cur.Archived = true
+					session.WriteMeta(cur)
+				} else if err := os.Remove(session.MetaPath(cur.Name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			removed := false
+			failed, err := removeWithShellTrash([]session.Meta{m}, func(session.Meta) bool { return true }, func() error {
+				removed = true
+				return nil
+			})
+			if err != nil || failed != "" || !removed || trashHolds(t, m.Name) {
+				t.Fatalf("delete = %q, %v, removed %v; it should skip the session", failed, err, removed)
+			}
+			if cur, ok := session.ReadMeta(m.Name); ok != (mode == "shelved") || (ok && !cur.Archived) {
+				t.Fatalf("unexpected meta after skip: %+v, present %v", cur, ok)
+			}
+		})
 	}
 }
 

@@ -107,7 +107,7 @@ var stopUnpublishedLaunch = func(m session.Meta) error {
 			return errors.New("the managed session is still running")
 		}
 	} else {
-		out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(m.Name))).CombinedOutput()
+		out, err := tmuxx.CombinedOutput("kill-session", "-t", session.ExactTarget(session.TmuxName(m.Name)))
 		if err != nil {
 			live, probeErr := tmuxx.LiveSessionNamesChecked()
 			if probeErr != nil || live[m.Name] {

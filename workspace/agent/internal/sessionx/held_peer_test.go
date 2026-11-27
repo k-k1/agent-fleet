@@ -5,6 +5,8 @@ package sessionx
 
 import (
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -55,6 +57,52 @@ func TestHeldPeerDroppedByArchiveAndTrash(t *testing.T) {
 	ForgetRuntime(m)
 	if n := agents.HeldCount(name); n != 0 {
 		t.Fatalf("held after the trash = %d, want 0", n)
+	}
+}
+
+func TestShelfAndRestoreReportMetaWriteFailures(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	fakeTmux(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Cleanup(WaitListBackground)
+	name := "held_write_failure"
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindShell}
+	session.WriteMeta(m)
+	holdPeerMessage(t, name)
+	t.Cleanup(func() { agents.DropHeld(name, agents.DropArchived) })
+	setMode := func(mode os.FileMode) {
+		t.Helper()
+		if err := os.Chmod(session.MetaDir(), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { setMode(0o700) })
+	assertWriteFailure := func(h http.HandlerFunc) {
+		t.Helper()
+		rec := callHandler(h, http.MethodPost, name, "")
+		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), errCodeMetaWriteFailed) {
+			t.Fatalf("answer = %d %s, want meta_write_failed", rec.Code, rec.Body)
+		}
+	}
+	setMode(0o500)
+	assertWriteFailure(HandleArchiveSession)
+	if cur, ok := session.ReadMeta(name); !ok || cur.Archived || agents.HeldCount(name) != 1 {
+		t.Fatalf("failed shelf changed the visible row or dropped its queued input: %+v", cur)
+	}
+	setMode(0o700)
+	if rec := callHandler(HandleArchiveSession, http.MethodPost, name, ""); rec.Code != http.StatusOK {
+		t.Fatalf("archive retry = %d %s", rec.Code, rec.Body)
+	}
+	setMode(0o500)
+	assertWriteFailure(HandleRestoreSession)
+	if cur, ok := session.ReadMeta(name); !ok || !cur.Archived {
+		t.Fatal("failed restore removed the session from the shelf")
+	}
+	setMode(0o700)
+	if rec := callHandler(HandleRestoreSession, http.MethodPost, name, ""); rec.Code != http.StatusOK {
+		t.Fatalf("restore retry = %d %s", rec.Code, rec.Body)
 	}
 }
 
