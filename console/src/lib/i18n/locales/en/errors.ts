@@ -218,6 +218,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_read_only": "This server is not editable.",
   "err.mcp_not_toggleable": "A built-in server cannot be disabled or enabled.",
   "err.mcp_name_taken": "A server with this name is already registered.",
+  "err.mcp_workspace_selection_invalid": "Choose at least one supported Google Workspace service and a scope bundle.",
   "err.mcp_invalid": "The MCP server definition is invalid.",
   "err.mcp_name_invalid": "Use 1-48 characters of letters, digits, dash or underscore, starting with a letter or digit.",
   "err.mcp_name_reserved": "That name is reserved by Agent Fleet.",

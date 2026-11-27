@@ -38,6 +38,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.probe_err.session_rejected": "The server rejected the session ID it just issued. It may be running as several instances without session affinity (routing a session to the same instance). Make the server stateless, or route every request of a session to the same instance.",
   "mcp.probe_err.oauth_required": "This server requires OAuth sign-in. Choose OAuth as the authentication, save, then sign in from the server's row.",
   "mcp.oauth_required": "OAuth sign-in required",
+  "mcp.oauth_metadata_found": "OAuth metadata found",
   "mcp.auth_oauth": "OAuth",
   "mcp.auth_oauth_note": "Sign in with your own account at the server's authorization server. Save the server first, then press Sign in on its row. No token is typed here.",
   "mcp.oauth_state_not_signed_in": "Not signed in",

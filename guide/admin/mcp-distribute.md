@@ -92,6 +92,18 @@ These changes cut every member's sign-in, and members sign in again.
 - Changing or removing the client. A shared sign-in ends when no distribution keeps that client. With a confidential client, earlier tokens can no longer be revoked and stay valid at the old authorization server until they expire
 - Switching a distribution that carried values to OAuth deletes the stored header values
 
+### Distribute Google Workspace
+
+1. In your Google Cloud project, enable the APIs and MCP services for the products you plan to distribute. Configure the consent screen and add the scopes shown in Agent Fleet's preset under Google Auth Platform → **Data Access**. [Google Workspace MCP setup](https://developers.google.com/workspace/guides/configure-mcp-servers)
+2. Under Google Auth Platform → **Clients**, create a **Web application** OAuth client and select **Use this client for an AI-powered agent**. Add `{PUBLIC_BASE_URL}/oauth2/mcp/callback` under **Authorized redirect URIs**, replacing `{PUBLIC_BASE_URL}` with your Agent Fleet deployment's public URL. The preset displays the redirect URI when the deployment has configured its public URL.
+3. Open Tenant settings → **Operations** → **MCP distribution** → **Google Workspace preset**. Enter the client ID and secret, choose the services, and review the requested scopes. **Read-only** is the default. **Standard** adds selected write scopes for Gmail drafts, Drive files, Docs, Sheets, Slides, Calendar events, and Chat messages. Google limits available tools on the endpoints used by the preset.
+4. Use **Test connection** on a selected service to check it from your current workspace. If Google publishes both a public tool list and OAuth metadata, the test shows **Connected** and **OAuth metadata found** together.
+5. Press **Distribute**. The preset creates one ordinary OAuth definition per selected service. Members use one Google sign-in for the group when Google accepts the shared request. You can open each server's row later to edit it individually.
+
+The preset uses `/mcp/v1self` for services that offer it. People API and Google Classroom use `/mcp/v1` with read-only scopes in both bundles. People API, Google Classroom, and Universal Search require Google's Developer Preview access. [Supported products and endpoints](https://developers.google.com/workspace/guides/configure-mcp-servers#supported-products)
+
+If outbound traffic is restricted, allow the exact service hostnames shown in the form and `accounts.google.com` for OAuth discovery. The Control Plane uses `oauth2.googleapis.com` for token requests. For example, Gmail uses `gmailmcp.googleapis.com` and People uses `people.googleapis.com`.
+
 ## When changes arrive
 
 | What you do | On the members' side |

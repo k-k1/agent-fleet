@@ -216,6 +216,7 @@ export const errors = {
   "err.mcp_read_only": "このサーバーは編集できません",
   "err.mcp_not_toggleable": "組み込みサーバーは無効化・有効化できません",
   "err.mcp_name_taken": "同じ名前のサーバーがすでに登録されています",
+  "err.mcp_workspace_selection_invalid": "対応する Google Workspace サービスを 1 つ以上と、スコープのセットを選んでください。",
   "err.mcp_invalid": "MCP サーバーの定義が不正です",
   "err.mcp_name_invalid": "名前は英数字・ハイフン・アンダースコア 48 文字以内で、先頭は英数字にしてください",
   "err.mcp_name_reserved": "その名前は Agent Fleet が使用する予約名です",

@@ -15,6 +15,7 @@ func TestMCPServerOAuthClientSQLite(t *testing.T) {
 	}
 	defer st.Close()
 	checkMCPServerOAuthClient(t, st)
+	t.Run("batch rollback", func(t *testing.T) { checkCreateMCPServersRollsBack(t, st) })
 }
 
 func TestMCPServerOAuthClientPostgres(t *testing.T) {
@@ -28,6 +29,7 @@ func TestMCPServerOAuthClientPostgres(t *testing.T) {
 	}
 	defer st.Close()
 	checkMCPServerOAuthClient(t, st)
+	t.Run("batch rollback", func(t *testing.T) { checkCreateMCPServersRollsBack(t, st) })
 }
 
 // checkMCPServerOAuthClient: the tenant client's four columns and the definition scopes live in
@@ -76,5 +78,22 @@ func checkMCPServerOAuthClient(t *testing.T, st *SQL) {
 	if l := list[0]; l.OAuthIssuer != m.OAuthIssuer || l.OAuthClientID != "af-public" || l.OAuthSecretEnc != "" || l.OAuthKeyRef != "" ||
 		l.OAuthScopes != "https://www.googleapis.com/auth/drive.readonly openid" {
 		t.Fatalf("after update = %+v", l)
+	}
+}
+
+func checkCreateMCPServersRollsBack(t *testing.T, st *SQL) {
+	t.Helper()
+	ctx := context.Background()
+	tn, err := st.CreateTenant(ctx, "batch", "Batch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := MCPServerRow{ID: "first", TenantID: tn.ID, Name: "google-gmail"}
+	conflict := MCPServerRow{ID: "other", TenantID: tn.ID, Name: first.Name}
+	if name, err := st.CreateMCPServers(ctx, []MCPServerRow{first, conflict}); err != nil || name != first.Name {
+		t.Fatalf("batch conflict: name=%q err=%v", name, err)
+	}
+	if rows, err := st.ListMCPServers(ctx, first.TenantID); err != nil || len(rows) != 0 {
+		t.Fatalf("partial batch: %d rows, err=%v", len(rows), err)
 	}
 }

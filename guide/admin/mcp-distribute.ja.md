@@ -92,6 +92,18 @@ MCP サーバーの認可サーバーに Agent Fleet 用のクライアントを
 - クライアントを変える・削除する（共有しているサインインは、そのクライアントを持つ配布が無くなったときに終わります。confidential クライアントだったときは、それまでのトークンはもう失効させられず、古い認可サーバーで期限が切れるまで有効なままです）
 - 値を配っていたサーバーを OAuth に切り替えると、保存していたヘッダーの値は消えます
 
+### Google Workspace を配る
+
+1. Google Cloud プロジェクトで、配布する製品の API と MCP サービスを有効にします。同意画面を設定し、Agent Fleet のプリセットに表示されるスコープを Google Auth Platform の **データアクセス** に追加します。[Google Workspace MCP の設定ガイド](https://developers.google.com/workspace/guides/configure-mcp-servers?hl=ja)
+2. Google Auth Platform の **クライアント** で **ウェブ アプリケーション** 用の OAuth クライアントを作り、**このクライアントを AI エージェントに使用する** を選びます。**承認済みのリダイレクト URI** に `{PUBLIC_BASE_URL}/oauth2/mcp/callback` を追加し、`{PUBLIC_BASE_URL}` を Agent Fleet 配備の公開 URL に置き換えます。配備に公開 URL が設定されていれば、プリセットにリダイレクト URI が表示されます。
+3. テナント設定の **運用** → **MCP 配布** → **Google Workspace プリセット** を開きます。クライアント ID とシークレットを入力し、サービスを選んで、リクエストするスコープを確認します。初期値は **読み取り専用** です。**標準** では Gmail の下書き、Drive のファイル、ドキュメント、スプレッドシート、スライド、カレンダーの予定、Chat のメッセージ用の一部の書き込みスコープが加わります。使えるツールは Google が各エンドポイントで提供する範囲に限られます。
+4. 選んだサービスの **接続テスト** で、現在のワークスペースから接続を確かめます。Google がツール一覧と OAuth の構成情報を公開していれば、接続成功と OAuth の構成情報が両方表示されます。
+5. **配布する** を押します。選んだサービスごとに通常の OAuth サーバーの定義が 1 件ずつできます。Google が共有のリクエストを受け付ける場合、メンバーはグループ全体に 1 回の Google サインインで接続できます。あとからサーバーごとに編集できます。
+
+プリセットは、Google が提供しているサービスでは `/mcp/v1self` を使います。People API と Google Classroom は `/mcp/v1` を使い、どちらのセットでも読み取り専用です。People API、Google Classroom、Universal Search には Google の開発者プレビューへの参加が必要です。[対応製品とエンドポイント](https://developers.google.com/workspace/guides/configure-mcp-servers?hl=ja#supported-products)
+
+外部通信を制限している場合は、フォームに表示される各サービスのホスト名と、OAuth の構成情報の取得先 `accounts.google.com` を許可します。コントロールプレーンはトークンの取得に `oauth2.googleapis.com` を使います。Gmail のホストは `gmailmcp.googleapis.com`、People API のホストは `people.googleapis.com` です。
+
 ## 変更が届くまで
 
 | すること | メンバーの側 |

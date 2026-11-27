@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 // MCPServerRow is one tenant-distributed MCP server definition (docs/log/48 P4 +
@@ -50,6 +51,7 @@ type MCPServerStore interface {
 	ListMCPServers(ctx context.Context, tenantID string) ([]MCPServerRow, error)
 	GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerRow, bool, error)
 	CreateMCPServer(ctx context.Context, row MCPServerRow) error
+	CreateMCPServers(ctx context.Context, rows []MCPServerRow) (conflict string, err error)
 	UpdateMCPServer(ctx context.Context, row MCPServerRow) error
 	DeleteMCPServer(ctx context.Context, tenantID, id string) error
 }
@@ -102,15 +104,51 @@ func (s *SQL) GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerR
 }
 
 func (s *SQL) CreateMCPServer(ctx context.Context, m MCPServerRow) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := insertMCPServer(ctx, s.db, m)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		if err != nil {
+			return err
+		}
+		return errors.New("MCP server name already exists")
+	}
+	return nil
+}
+
+// CreateMCPServers publishes the entire set at once so members never see a partial preset.
+func (s *SQL) CreateMCPServers(ctx context.Context, rows []MCPServerRow) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	for _, row := range rows {
+		res, err := insertMCPServer(ctx, tx, row)
+		if err != nil {
+			return "", err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return "", err
+		}
+		if n == 0 {
+			return row.Name, nil
+		}
+	}
+	return "", tx.Commit()
+}
+
+func insertMCPServer(ctx context.Context, db sqlExecQuery, m MCPServerRow) (sql.Result, error) {
+	return db.ExecContext(ctx,
 		`INSERT INTO mcp_server(id, tenant_id, name, label, transport, url, headers_enc, key_ref,
 		   targets, kinds, timeout_ms, enabled, user_secret, auth, oauth_issuer, oauth_client_id, oauth_secret_enc, oauth_key_ref, oauth_scopes,
 		   created_by, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id, name) DO NOTHING`,
 		m.ID, m.TenantID, m.Name, m.Label, m.Transport, m.URL, m.HeadersEnc, m.KeyRef,
 		m.Targets, m.Kinds, m.TimeoutMS, b2i(m.Enabled), b2i(m.UserSecret), m.Auth, m.OAuthIssuer, m.OAuthClientID, m.OAuthSecretEnc, m.OAuthKeyRef, m.OAuthScopes,
 		m.CreatedBy, m.CreatedAt, m.UpdatedAt)
-	return err
 }
 
 func (s *SQL) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {

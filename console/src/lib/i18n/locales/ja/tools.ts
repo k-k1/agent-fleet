@@ -37,6 +37,7 @@ export const tools = {
   "mcp.probe_err.session_rejected": "サーバーが、自ら発行したセッション ID を拒否しました。複数インスタンスで動作していて、セッションの親和性（同じセッションを同じインスタンスへ振り分ける設定）がない可能性があります。サーバーをステートレスにするか、同じセッションのリクエストを必ず同じインスタンスへ振り分けてください",
   "mcp.probe_err.oauth_required": "OAuth によるサインインが必要なサーバーです。認証で OAuth を選んで保存し、サーバーの行からサインインしてください",
   "mcp.oauth_required": "OAuth のサインインが必要です",
+  "mcp.oauth_metadata_found": "OAuth の構成情報を確認しました",
   "mcp.auth_oauth": "OAuth",
   "mcp.auth_oauth_note": "サーバーの認可サーバーに、あなた自身のアカウントでサインインします。先にサーバーを保存し、一覧の行の「サインイン」を押してください。ここにトークンを入力する必要はありません。",
   "mcp.oauth_state_not_signed_in": "未サインイン",

@@ -73,6 +73,7 @@ GET /api/admin/mcp-oauth/trusted-hosts
 PUT /api/admin/mcp-oauth/trusted-hosts
 GET /api/admin/mcp-servers
 POST /api/admin/mcp-servers
+POST /api/admin/mcp-servers/google-workspace
 DELETE /api/admin/mcp-servers/{id}
 PUT /api/admin/mcp-servers/{id}
 PUT /api/admin/membership-role

@@ -34,8 +34,28 @@ export const putMcpSecrets = (id: string, headers: Record<string, string>): Prom
   apiJSON(`api/mcp-servers/${encodeURIComponent(id)}/secrets`, "PUT", { headers });
 
 // --- Tenant distribution (control-plane admin routes) --------------------------------------
-export const listTenantMcpServers = (slug: string): Promise<Reply<{ servers?: TenantServer[] }> | null> =>
+export type WorkspaceScopeBundle = "read_only" | "standard";
+export type WorkspaceMcpService = Record<WorkspaceScopeBundle, string[]> & {
+  id: string;
+  name: string;
+  label: string;
+  host: string;
+  url: string;
+  preview?: boolean;
+};
+export type WorkspaceMcpPreset = { redirect_uri?: string; services: WorkspaceMcpService[] };
+export type WorkspaceMcpRequest = {
+  tenant_slug: string;
+  client_id: string;
+  client_secret: string;
+  services: string[];
+  bundle: WorkspaceScopeBundle;
+};
+
+export const listTenantMcpServers = (slug: string): Promise<Reply<{ servers?: TenantServer[]; google_workspace?: WorkspaceMcpPreset }> | null> =>
   api("api/admin/mcp-servers?tenant=" + encodeURIComponent(slug));
+export const createWorkspaceMcpServers = (body: WorkspaceMcpRequest): Promise<Reply<{ created: number }> | null> =>
+  apiJSON("api/admin/mcp-servers/google-workspace", "POST", body);
 /** POST when `id` is empty, PUT otherwise. */
 export const saveTenantMcpServer = (id: string, body: unknown): Promise<Reply<McpAck> | null> =>
   id ? apiJSON("api/admin/mcp-servers/" + encodeURIComponent(id), "PUT", body) : apiJSON("api/admin/mcp-servers", "POST", body);

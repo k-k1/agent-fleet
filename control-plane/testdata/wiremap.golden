@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 152
+# count: 153
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {agent_silent,auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} cond{agent_silent,auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -51,8 +51,9 @@ git_lfs_locks.go gitServerAPI.lfsLocksList x1 {locks,next_cursor}
 git_lfs_locks.go gitServerAPI.lfsLocksVerify x1 {next_cursor,ours,theirs}
 git_lfs_locks.go gitServerAPI.lfsUnlock x1 {lock}
 internal/mcpsrv/mcp_server.go ServerAPI.AdminDelete x1 {deleted,name}
-internal/mcpsrv/mcp_server.go ServerAPI.AdminList x1 {servers,tenant}
+internal/mcpsrv/mcp_server.go ServerAPI.AdminList x1 {google_workspace,servers,tenant}
 internal/mcpsrv/mcp_server.go ServerAPI.Distribute x1 {servers,unreadable,watchSources}
+internal/mcpsrv/mcp_workspace_preset.go ServerAPI.AdminCreateWorkspacePreset x1 {created}
 internal/tenantsrv/tenant_slot_class.go Admin.SetTenantSlotClass x1 {slot_class,tenant}
 internal/tenantsrv/tenants.go Admin.AddMembership x1 {role,tenant,user_key}
 internal/tenantsrv/tenants.go Admin.CleanHome x1 {cleaned,pending,tenant}

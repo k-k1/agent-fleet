@@ -79,6 +79,7 @@ The registrations live inside your workspace, so start the workspace first if it
 - On failure you see why. Whatever the server itself printed or answered is shown as it is
 - When the server asks for an OAuth sign-in, the test says "**OAuth sign-in required**" instead of failing, and lists the
   authorization server, how a client can register and the scopes it found. For a saved server whose authentication is OAuth, you can "**Sign in**" from there
+- When a public tool list is available and the test finds OAuth metadata, it shows "**OAuth metadata found**" alongside "**Connected**"
 
 ## Sign in to an OAuth server
 
@@ -104,6 +105,10 @@ A list of more than 12 scopes, here or in a connection test, is folded into "**S
   there by hand (and the secret, if it has one) and press "**Save and sign in**"
 - "**Disconnect**" deletes the saved sign-in, and revokes it at the authorization server when that supports it
 - Servers your administrator distributed with one client can share one sign-in; the row names the others. Signing in on any of them connects all of them that are switched on, and "**Disconnect**" on any of them disconnects all of them
+
+### Sign in to Google Workspace
+
+When your administrator distributes Google Workspace, its services appear with the **Tenant** label. Leave the services you want switched on and press **Sign in** on any of their rows. Sign in to your Google account and approve the requested scopes. The same consent connects all switched-on services sharing the client when Google accepts the shared request. If the Console asks you to sign in separately, sign in on each service you want to use.
 
 ## What you can change, by origin
 
