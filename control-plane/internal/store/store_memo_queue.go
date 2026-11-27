@@ -239,7 +239,7 @@ type MemoWaitOps interface {
 	CountLimitedDeliveries(kind string) (int, error)
 	RecentQueueDeliveries(queueID string, limit int) ([]MemoDelivery, error)
 	CountDeliveriesCreatedSince(queueID, since string) (int, error)
-	CountLiveDeliveries(queueID string) (queue, member int, err error)
+	MemoRunCapacity(queueID string) (MemoRunCapacity, error)
 	// NthOldestDeliverySince is the creation time of the queue's skip-th oldest delivery (0 is
 	// the oldest) created at or after since, counted as CountDeliveriesCreatedSince counts.
 	NthOldestDeliverySince(queueID, since string, skip int) (string, bool, error)

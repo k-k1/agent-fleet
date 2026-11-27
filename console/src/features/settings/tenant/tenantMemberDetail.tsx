@@ -111,6 +111,7 @@ export function MemberView({
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const [limit, setLimit] = useState<number | string>(member.max_sessions ?? 0);
+  const [memoRunLimit, setMemoRunLimit] = useState<number | string>(member.memo_run_limit || "");
   // The three workspace size axes. Memory is stored in bytes and edited in MB, CPU in
   // Fargate units (1024 = 1 vCPU) and disk in GiB — 0 means "unset → deployment default"
   // on every axis. They are independent on purpose (ADR 0044 decision 1): the presets below
@@ -428,10 +429,16 @@ export function MemberView({
     }
   };
   const saveLimit = async () => {
+    const runLimit = Number(memoRunLimit);
+    if (memoRunLimit !== "" && (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 10)) {
+      toast(tr("admin.memo_run_limit_range"));
+      return;
+    }
     const res = await putUserLimits({
       user_key: key,
       tenant_slug: slug,
       max_sessions: +limit || 0,
+      memo_run_limit: runLimit,
       mem_limit: Math.round(+memMb || 0) * 1048576,
       cpu_limit: Math.round(+cpuUnits || 0),
       // Sent explicitly rather than omitted: the endpoint writes the whole quota row,
@@ -439,10 +446,15 @@ export function MemberView({
       disk_gb: Math.round(+diskGb || 0),
       slot_class: slotClass,
     });
-    // The reply is not checked for an error: an error body just leaves these fields unread.
+    if (res && !isOk(res)) {
+      toast(errText(res.error));
+      return;
+    }
     const limits = isOk(res) ? res : null;
     setSavedLimits({
       max_sessions: +limit || 0,
+      memo_run_limit: limits?.memo_run_limit ?? runLimit,
+      memo_run_limit_effective: limits?.memo_run_limit_effective ?? (runLimit || member.memo_run_limit_default || 4),
       mem_limit: Math.round(+memMb || 0) * 1048576,
       cpu_limit: Math.round(+cpuUnits || 0),
       disk_gb: Math.round(+diskGb || 0),
@@ -616,6 +628,7 @@ export function MemberView({
           {!cur.mem_limit && !cur.disk_gb && !cur.max_sessions && (
             <span className="muted">{tr("admin.ws_size_unset")}</span>
           )}
+          <span className="muted">{tr("admin.memo_run_limit_effective", { n: cur.memo_run_limit_effective ?? 4 })}</span>
           {/* Hidden while the editor is open: pressing it again re-seeds every field from
               the stored values, so it would throw away whatever was typed with no warning
               and no undo. Cancel is the way out, and it says so. */}
@@ -624,6 +637,7 @@ export function MemberView({
               className="ws-size-edit"
               onClick={() => {
                 setLimit(cur.max_sessions ?? 0);
+                setMemoRunLimit(cur.memo_run_limit || "");
                 setMemMb(cur.mem_limit ? Math.round(cur.mem_limit / 1048576) : 0);
                 setCpuUnits(cur.cpu_limit ?? 0);
                 setDiskGb(cur.disk_gb ?? 0);
@@ -773,6 +787,11 @@ export function MemberView({
                 <FieldLabel htmlFor="md-max-sessions" plain className="af-cap" info={tr("admin.max_sessions_hint")}>{tr("admin.max_sessions_label")}</FieldLabel>
                 <input id="md-max-sessions" type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} />
                 <span className="af-unit">{tr("admin.max_sessions_zero")}</span>
+              </div>
+              <div className="admin-fld">
+                <FieldLabel htmlFor="md-memo-run-limit" plain className="af-cap" info={tr("admin.memo_run_limit_range")}>{tr("admin.memo_run_limit")}</FieldLabel>
+                <input id="md-memo-run-limit" type="number" min="1" max="10" value={memoRunLimit} onChange={(e) => setMemoRunLimit(e.target.value)} />
+                <span className="af-unit">{tr("admin.memo_run_limit_inherit", { n: cur.memo_run_limit_default ?? 4 })}</span>
               </div>
             </div>
             <div className="le-actions">

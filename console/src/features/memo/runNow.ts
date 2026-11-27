@@ -11,7 +11,7 @@ import { toast } from "../../ui/toast.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import type { Memo, MemoQueue } from "../../types/memo.ts";
 import { memoQueueFire, memoQueueFireOne } from "./api.ts";
-import { fireBlockWords } from "./queues.ts";
+import { fireBlockWords, readMemoRunLimit } from "./queues.ts";
 
 /** How a press ended: started a run, was refused for want of a slot (the caller may show who holds
  *  them), or failed otherwise. The toast has been shown already. */
@@ -21,7 +21,8 @@ export async function runNow(categoryId: string, memoId?: string): Promise<RunNo
   try {
     const res = memoId === undefined ? await memoQueueFire(categoryId) : await memoQueueFireOne(categoryId, memoId);
     if (res?.error) {
-      toast(errText(res.error) || t("memo.d_fire_failed"), { kind: "warn" });
+      const limit = res.error.code === "memo_queue_member_limit" ? readMemoRunLimit(res.runLimit) : undefined;
+      toast(limit ? t("memo.waiting_run_limit", { limit }) : errText(res.error) || t("memo.d_fire_failed"), { kind: "warn" });
       return res.error.code === "memo_queue_no_slot" ? "no_slot" : "failed";
     }
     toast(t("memo.d_fire_started"), { kind: "success" });
@@ -83,7 +84,7 @@ export function memoRunNowWhy(
   if (later(m.startAfter)) return { key: "memo.run_one_scheduled", params: { at: at(m.startAfter ?? "") } };
   if (m.afterStatus?.some((a) => a.state !== "satisfied")) return { key: "memo.run_one_prerequisites" };
   if (queue?.fireBlock?.reason === "no_place") {
-    return { key: queue.fireBlock.detail?.by === "member" ? "memo.waiting_no_place_member" : "memo.waiting_no_place" };
+    return fireBlockWords(queue, at, kindLabel);
   }
   return null;
 }

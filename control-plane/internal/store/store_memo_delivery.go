@@ -232,9 +232,6 @@ type MemoDeliveryStore interface {
 // MemoDeliveryTxOps are the delivery reads and writes a MemoTx may make, scoped to its
 // membership.
 type MemoDeliveryTxOps interface {
-	// CountLiveDeliveries counts the deliveries that are not closed: of the queue, and of the
-	// whole membership.
-	CountLiveDeliveries(queueID string) (queue, member int, err error)
 	InsertDelivery(d MemoDelivery) error
 	GetDelivery(id string) (MemoDelivery, bool, error)
 	// CountUnsentDeliveries counts the membership's deliveries in claimed or sending: the
@@ -595,12 +592,40 @@ func (t memoTx) SetDeliveryRetireForced(id string) error {
 	return err
 }
 
-func (t memoTx) CountLiveDeliveries(queueID string) (int, int, error) {
-	var q, m int
+const (
+	DefaultMemoRunLimit = 4
+	MaxMemoRunLimit     = 10
+)
+
+// EffectiveMemoRunLimit resolves a zero override to the tenant's default, then the deployment fallback.
+func EffectiveMemoRunLimit(tenant, member int) int {
+	if member > 0 {
+		return member
+	}
+	if tenant > 0 {
+		return tenant
+	}
+	return DefaultMemoRunLimit
+}
+
+// MemoRunCapacity counts each delivery that holds a slot, independent of its session tree.
+type MemoRunCapacity struct {
+	QueueOpen, Open, Limit int
+}
+
+func (t memoTx) MemoRunCapacity(queueID string) (MemoRunCapacity, error) {
+	var c MemoRunCapacity
+	var tenant, member int
 	err := t.q.QueryRowContext(t.ctx, `SELECT
-		  COALESCE(SUM(CASE WHEN queue_id=? THEN 1 ELSE 0 END), 0), COUNT(*)
-		FROM memo_delivery WHERE membership_id=? AND state<>?`, queueID, t.mid, DeliveryClosed).Scan(&q, &m)
-	return q, m, err
+		COALESCE(SUM(CASE WHEN d.queue_id=? THEN 1 ELSE 0 END),0), COUNT(d.id),
+		tenant.memo_run_limit, COALESCE(u.memo_run_limit,0)
+		FROM membership m JOIN tenant ON tenant.id=m.tenant_id
+		LEFT JOIN user_limit u ON u.membership_id=m.id
+		LEFT JOIN memo_delivery d ON d.membership_id=m.id AND d.state<>?
+		WHERE m.id=? GROUP BY tenant.memo_run_limit, u.memo_run_limit`,
+		queueID, DeliveryClosed, t.mid).Scan(&c.QueueOpen, &c.Open, &tenant, &member)
+	c.Limit = EffectiveMemoRunLimit(tenant, member)
+	return c, err
 }
 
 func (t memoTx) InsertDelivery(d MemoDelivery) error {

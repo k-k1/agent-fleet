@@ -617,6 +617,8 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 // them create one (tenant.memo_queues). Existing queues are listed whatever the switch says.
 type memoQueuesWire struct {
 	TenantEnabled bool `json:"tenantEnabled"`
+	OpenRuns      int  `json:"openRuns"`
+	RunLimit      int  `json:"runLimit"`
 	// RepoSettings is whether the repository settings routes are on (AF_MEMO_QUEUE_REPO_SETTINGS):
 	// the Console offers the check and the export only then.
 	RepoSettings bool           `json:"repoSettings"`
@@ -655,7 +657,13 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 		queueSet[q.CategoryID] = struct{}{}
 	}
 	now := time.Now()
+	var capacity store.MemoRunCapacity
 	err = a.store.MemoRead(r.Context(), mv.MembershipID, func(rd store.MemoWaitOps) error {
+		var err error
+		capacity, err = rd.MemoRunCapacity("")
+		if err != nil {
+			return err
+		}
 		for _, q := range qs {
 			c, ok := byID[q.CategoryID]
 			if !ok {
@@ -688,7 +696,8 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, memoQueuesWire{TenantEnabled: on, RepoSettings: a.mgr.memoRepoSettings, Queues: out})
+	writeJSON(w, http.StatusOK, memoQueuesWire{TenantEnabled: on, OpenRuns: capacity.Open, RunLimit: capacity.Limit,
+		RepoSettings: a.mgr.memoRepoSettings, Queues: out})
 }
 
 // putQueue creates or replaces a category's queue settings. A category that becomes a queue

@@ -194,7 +194,13 @@ export const destroyMemberWorkspace = (
   rawApiJSON("api/admin/workspaces", "DELETE", who(slug, key));
 export const removeMembership = (slug: string, key: string, purge: boolean): Promise<Reply<{ pending?: boolean }> | null> =>
   rawApiJSON("api/admin/memberships", "DELETE", { ...who(slug, key), purge });
-export type UserLimitsReply = { slot_class?: string; slot_class_effective?: string; home_resize?: HomeResize | null };
+export type UserLimitsReply = {
+  slot_class?: string;
+  slot_class_effective?: string;
+  memo_run_limit?: number;
+  memo_run_limit_effective?: number;
+  home_resize?: HomeResize | null;
+};
 export const putUserLimits = (body: object): Promise<Reply<UserLimitsReply> | null> =>
   rawApiJSON("api/admin/user-limits", "PUT", body);
 export const putMembershipRole = (slug: string, key: string, role: string): Promise<Reply<Ack> | null> =>

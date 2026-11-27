@@ -52,7 +52,7 @@ Only tenant administrators and the deployment administrator can switch it.
 
 - Each run is a session in the member's own workspace, and it counts against the member's session limit ([Set session limits](../resources/session-limits.md)). A run that would go over the limit is not sent, and its memos wait to run again
 - The spend limit of a run is set by the member in the category's settings. 0 means no limit
-- The limits that auto-run itself has are fixed, and are listed in [Limits and defaults](../../ref/limits.md)
+- The open run limit across categories defaults to 4 per member. See [Set the auto-run limit](../resources/session-limits.md#set-the-auto-run-limit) and [Limits and defaults](../../ref/limits.md#memo-auto-run)
 - A memo a session adds to an auto-run category always waits for the member's approval. An administrator cannot approve on a member's behalf
 
 ## Related

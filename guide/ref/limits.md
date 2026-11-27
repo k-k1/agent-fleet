@@ -46,12 +46,12 @@ These do not vary by deployment.
 
 ## Memo auto-run
 
-Fixed in the product, for [Run memos automatically](../user/chat/memo-auto-run.md). The settings' ranges are checked when you save, and the Console shows them.
+For [Run memos automatically](../user/chat/memo-auto-run.md). The settings' ranges are checked when you save, and the Console shows them.
 
 | Limit | Value | What happens at it |
 |---|---|---|
 | Open runs per category ("Sessions at the same time") | 1 to 6, starts at 2 | "Run now" is refused. Nothing starts by itself until a run ends |
-| Open runs across all of a member's categories | 4 | The same |
+| Open runs across all of a member's categories | 4 by default, configurable from 1 to 10 ([Set the auto-run limit](../admin/resources/session-limits.md#set-the-auto-run-limit)) | New runs can start when the open count falls below the limit |
 | Memos per run ("Memos per session") | 1 to 20, starts at 1 | A run takes no more than this many |
 | Instruction | 16 KiB | Saving is refused. An instruction is also required to turn auto-run on or to "Run now" |
 | Spend limit per run | 0 to 10,000 USD, starts at 0 (no limit) | Saving is refused outside the range |
@@ -103,8 +103,8 @@ controller's next pass ([Run inference engines on your own GPUs](../operate/engi
 There is no fixed number to quote: a deployment administrator sets them per tenant, and the
 screen shows the values in force. Read the screen rather than this page.
 
-- A tenant administrator sees, under **Tenant settings → Limits & idle**, only the workspaces per
-  tenant and the sessions per member ("**Limits — Workspace: X / Session: Y**", `∞` for no limit),
+- A tenant administrator sees, under **Tenant settings → Limits & idle**, the workspaces per
+  tenant, the default open auto-runs per member, and the sessions per member ("**Limits — Workspace: X / Session: Y**", `∞` for no limit),
   next to the tenant's **Default machine** where the deployment offers a choice (which they pick
   themselves). The other values below are not on their screen; they ask the
   deployment administrator ([Set session limits](../admin/resources/session-limits.md#check-the-tenant-wide-limits))
@@ -114,7 +114,7 @@ screen shows the values in force. Read the screen rather than this page.
 
 What is set per tenant:
 
-- Workspaces per tenant, and sessions per member
+- Workspaces per tenant, sessions per member, and the default open auto-runs per member
 - A cap on each workspace's memory (**Per-workspace memory cap**). The CPU, memory and disk of a
   member's workspace are set per member, within that cap, where the target supports it;
   see [deploy-targets.md](deploy-targets.md)

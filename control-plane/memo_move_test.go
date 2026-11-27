@@ -41,13 +41,13 @@ func TestMemoMoveKeepsSlotUntilReplacementFinishes(t *testing.T) {
 			t.Fatalf("replacement must hold the original slot while clearing the source limit: %+v, creates=%d", got, agent.createCount())
 		}
 		if err := e.st.MemoTx(context.Background(), d.MembershipID, func(tx store.MemoTxOps) error {
-			queue, member, err := tx.CountLiveDeliveries(q)
+			capacity, err := tx.MemoRunCapacity(q)
 			if err != nil {
 				return err
 			}
 			launches, err := tx.CountDeliveriesCreatedSince(q, store.DeliveryTS(time.Now().Add(-24*time.Hour)))
-			if err == nil && (queue != 1 || member != 1 || launches != 1) {
-				t.Errorf("move charged %d queue slots, %d member slots and %d launches", queue, member, launches)
+			if err == nil && (capacity.QueueOpen != 1 || capacity.Open != 1 || launches != 1) {
+				t.Errorf("move charged %d queue slots, %d member slots and %d launches", capacity.QueueOpen, capacity.Open, launches)
 			}
 			return err
 		}); err != nil {
@@ -234,16 +234,16 @@ func TestMemoMoveContinuationRequiresCurrentProducer(t *testing.T) {
 
 func TestMemoMoveKeepsMemberAtCapacity(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		agent, q := e.autoQueue("app", "impl", map[string]any{"maxActive": memoQueueMemberLimit + 1}, memoQueueMemberLimit+1)
+		agent, q := e.autoQueue("app", "impl", map[string]any{"maxActive": store.DefaultMemoRunLimit + 1}, store.DefaultMemoRunLimit+1)
 		var live []store.MemoDelivery
-		for i := 0; i < memoQueueMemberLimit && len(live) < memoQueueMemberLimit; i++ {
+		for i := 0; i < store.DefaultMemoRunLimit && len(live) < store.DefaultMemoRunLimit; i++ {
 			e.autoTick(time.Now())
 			live = e.liveDeliveries(q)
 			for _, d := range live {
 				agent.setRow(d.Session, map[string]any{"state": "working", "progressAgeSec": 1})
 			}
 		}
-		if len(live) != memoQueueMemberLimit {
+		if len(live) != store.DefaultMemoRunLimit {
 			t.Fatalf("expected the member cap, got %d deliveries", len(live))
 		}
 		agent.setRow(live[0].Session, map[string]any{"alive": false, "state": "", "movedTo": "continued"})
@@ -253,13 +253,13 @@ func TestMemoMoveKeepsMemberAtCapacity(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			e.autoTick(time.Now())
 		}
-		if n := agent.createCount(); n != memoQueueMemberLimit {
+		if n := agent.createCount(); n != store.DefaultMemoRunLimit {
 			t.Fatalf("member started %d runs with a busy replacement", n)
 		}
 		agent.setRow("continued", map[string]any{"state": "idle"})
 		e.autoTick(time.Now())
 		e.autoTick(time.Now())
-		if n := agent.createCount(); n != memoQueueMemberLimit+1 {
+		if n := agent.createCount(); n != store.DefaultMemoRunLimit+1 {
 			t.Fatalf("member started %d runs after one slot became free", n)
 		}
 	})

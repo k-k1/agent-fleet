@@ -537,6 +537,11 @@ export const admin = {
   "admin.home_resize_no_home": "home はまだありません。次に作られるときに {to} GiB になります。",
   "admin.home_resize_failed":
     "home を拡張できませんでした。設定は保存済みなので、時間をおいて保存し直してください（同じボリュームは 6 時間に 1 度しか変更できません）: {detail}",
+  "admin.memo_run_limit": "自動実行の同時実行上限",
+  "admin.memo_run_limit_default": "メンバーごとの自動実行上限（既定値）",
+  "admin.memo_run_limit_inherit": "空欄にするとテナントの既定値（{n} 件）を使います。",
+  "admin.memo_run_limit_effective": "自動実行の上限 {n} 件",
+  "admin.memo_run_limit_range": "1〜10 の整数を入力してください。",
   "admin.max_sessions_label": "最大セッション数",
   "admin.max_sessions_zero": "0 = テナントの上限",
   "admin.max_sessions_hint": "0 を指定すると、テナント全体の最大セッション数に従います。",

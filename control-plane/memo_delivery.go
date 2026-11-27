@@ -40,9 +40,6 @@ import (
 )
 
 const (
-	// memoQueueMemberLimit bounds the deliveries that are not closed across all of a member's
-	// queues (ADR 0137 section 7, provisional).
-	memoQueueMemberLimit = 4
 	// memoDeliveryListMax is how many deliveries GET .../deliveries answers.
 	memoDeliveryListMax = 50
 	// memoQueueSendsPerTick bounds the queue sends one tick starts. They share the tick's
@@ -319,8 +316,15 @@ func (a memoAPI) fireOne(w http.ResponseWriter, r *http.Request, res *resolved) 
 }
 
 func (a memoAPI) fireTarget(w http.ResponseWriter, r *http.Request, res *resolved, only string) {
-	d, aerr := memoFireNow(r.Context(), a.mgr, res, r.PathValue("categoryId"), only)
+	d, runLimit, aerr := memoFireNow(r.Context(), a.mgr, res, r.PathValue("categoryId"), only)
 	if aerr != nil {
+		if aerr.code == errCodeMemoQueueMemberLimit {
+			writeJSON(w, aerr.status, map[string]any{
+				"error":    map[string]string{"code": aerr.code, "message": aerr.message},
+				"runLimit": runLimit,
+			})
+			return
+		}
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -331,13 +335,14 @@ func (a memoAPI) fireTarget(w http.ResponseWriter, r *http.Request, res *resolve
 // for (see memoReserveAndClaim). The running-session count of the quota is read
 // before the transaction (an Agent call does not belong under the membership lock), and the
 // deliveries not yet sent are added to it inside, where they cannot change.
-func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID, only string) (store.MemoDelivery, *apiError) {
+func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID, only string) (store.MemoDelivery, int, *apiError) {
 	on, err := mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID)
 	if err != nil {
-		return store.MemoDelivery{}, internalErr(err)
+		return store.MemoDelivery{}, 0, internalErr(err)
 	}
+	disabled := &apiError{http.StatusConflict, errCodeMemoQueuesDisabled, "your tenant has not turned memo queues on"}
 	if !on {
-		return store.MemoDelivery{}, &apiError{http.StatusConflict, errCodeMemoQueuesDisabled, "your tenant has not turned memo queues on"}
+		return store.MemoDelivery{}, 0, disabled
 	}
 	running, limit := -1, 0
 	if !mgr.nativeRuntime {
@@ -350,8 +355,22 @@ func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID, o
 	}
 	var out store.MemoDelivery
 	var refusal *apiError
+	var runLimit int
 	err = mgr.store.MemoTx(ctx, res.mv.MembershipID, func(tx store.MemoTxOps) error {
-		d, aerr, err := memoReserveAndClaim(tx, categoryID, only, running, limit, false)
+		on, err := tx.LockTenantSwitch()
+		if err != nil {
+			return err
+		}
+		if !on {
+			refusal = disabled
+			return nil
+		}
+		capacity, err := tx.MemoRunCapacity(categoryID)
+		if err != nil {
+			return err
+		}
+		runLimit = capacity.Limit
+		d, aerr, err := memoReserveAndClaim(tx, categoryID, only, capacity, running, limit, false)
 		if err != nil {
 			return err
 		}
@@ -360,9 +379,9 @@ func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID, o
 		return nil
 	})
 	if err != nil {
-		return store.MemoDelivery{}, memoTxResult(err)
+		return store.MemoDelivery{}, 0, memoTxResult(err)
 	}
-	return out, refusal
+	return out, runLimit, refusal
 }
 
 // The reasons a press for one message is refused with errCodeMemoQueueMemoNotReady. They are the
@@ -376,14 +395,14 @@ const (
 	memoNotReadyDeferred      = "it was handed back and waits for its time"
 )
 
-// memoReserveAndClaim runs inside a MemoTx. only, when set, makes the claim a batch of exactly that
+// memoReserveAndClaim uses capacity read inside the same MemoTx. only, when set, makes the claim a batch of exactly that
 // message: it goes through every check a message of the oldest-first claim goes through, and one it
 // fails is refused with the reason (errCodeMemoQueueMemoNotReady), never replaced by another
 // message. A message that is not in this queue (or not this member's) is a 404.
 // auto marks a delivery the dispatcher fires by itself. running is the member's running metered sessions
 // (-1 when unknown, then the quota is not checked, as the Console's create does), limit the
 // max_sessions cap (0 = none).
-func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, limit int, auto bool) (store.MemoDelivery, *apiError, error) {
+func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, capacity store.MemoRunCapacity, running, limit int, auto bool) (store.MemoDelivery, *apiError, error) {
 	none := store.MemoDelivery{}
 	c, ok, err := tx.GetCategory(categoryID)
 	if err != nil {
@@ -416,17 +435,13 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	if _, ok := memoQueuePlace(c.Repo); !ok {
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueBadRepo, "the queue's repository is not a folder under repos, nor a space"}, nil
 	}
-	inQueue, inMember, err := tx.CountLiveDeliveries(c.ID)
-	if err != nil {
-		return none, nil, err
-	}
-	switch memoPlaceTaken(q, inQueue, inMember) {
+	switch memoPlaceTaken(q, capacity) {
 	case "category":
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueNoSlot,
-			fmt.Sprintf("every slot of this queue is taken (%d of %d)", inQueue, q.MaxActive)}, nil
+			fmt.Sprintf("every slot of this queue is taken (%d of %d)", capacity.QueueOpen, q.MaxActive)}, nil
 	case "member":
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueMemberLimit,
-			fmt.Sprintf("your queues already run %d deliveries, the most at once", inMember)}, nil
+			fmt.Sprintf("your auto-run limit is %d across all categories (%d open)", capacity.Limit, capacity.Open)}, nil
 	}
 	if limit > 0 {
 		// The deliveries not yet sent have no session to count yet. With the running count

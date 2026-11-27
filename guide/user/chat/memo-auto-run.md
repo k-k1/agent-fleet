@@ -323,7 +323,7 @@ It is all or nothing, and it is refused once a result has been used. The history
 - It is enabled by what the queue list checks, which is whether a press can start something: at least one memo waiting to run whose "Waits for" memos are all done, and a free place (under "Sessions at the same time", and under the limit across all your categories). Otherwise it is greyed out, and its tooltip says why: no memo is waiting, every waiting memo waits for another memo or for its time, or the places are taken. The Control Plane still decides when you press, so a refusal can still appear (an empty instruction, your session limit, or an organisation that has not allowed auto-run are not checked beforehand)
 - It works with "Run by itself" off, while paused, outside the time window, and when the day's runs are used up
 - A stopped workspace is started
-- It is refused when the category already has as many runs as "Sessions at the same time", when all your categories together have 4, when you are at your session limit, when the instruction is empty, or when the organisation has not allowed auto-run. The screen says which
+- It is refused when the category already has as many runs as "Sessions at the same time", when the open count across all your categories is at or above your limit, when you are at your session limit, when the instruction is empty, or when the organisation has not allowed auto-run. The screen says which
 
 ### Run one memo now
 
@@ -346,7 +346,7 @@ Memos run oldest first, so a memo added later waits behind every memo added befo
 
 ### See the runs
 
-The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lists the runs of every auto-run category, one row per run and not one per working copy. Its head shows the title and the number of runs that are running or waiting for you, with "**Clear finished runs**" and a refresh button.
+The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lists the runs of every auto-run category, one row per run and not one per working copy. The header shows **open runs / your limit** across all categories, even when a filter or working set hides some runs. Each run uses one slot until the queue closes it. This includes runs waiting for an answer or review. Reviewers and other sessions a run starts share its slot.
 
 A filter box at the top of the view narrows the runs. It matches, case-insensitively, a run's category, its work item (title, key, or `#N` / `PROJ-12`), and its own session and the sessions it started, such as reviewers (name, slug, branch, worktree folder). A run stays listed when one of its children matches; categories with no match are hidden, and the "**Ended N**" fold is open while you filter. **Esc** or the × button clears the filter, and **Enter** moves to the first row. With no match the view says "No runs match the filter."
 
@@ -362,7 +362,7 @@ The "**...**" button on a row opens its menu. "**Stop this run's sessions**" sto
 
 The runs are not listed in the "Sessions" view: the working copies and sessions that auto-run started stay out of the repository tree. Stopping or deleting a repository from the tree still covers them, and its confirmation lists them as "Listed elsewhere". Runs that a [schedule](../fleet/schedules.md) started are not in the tree either; the **Schedules** view lists them.
 
-The icon shows an amber number when a run's session waits for your answer; it stays until you answer. It shows a red dot when a run ended as failed, until you open the view. The view also lists a run that is older than the newest 50 of its category's history while it is still open. The row of the session open in the main area (a run, or a reviewer or other session it started) is highlighted like the active row in the Sessions view, and the view scrolls to it. A row inside a folded "Ended N" stays folded; open the fold to see it.
+The activity-bar icon shows the same open count. It turns amber when a run is waiting for your answer. A failed run adds a red cue until you open the view. The view also lists a run that is older than the newest 50 of its category's history while it is still open. The row of the session open in the main area (a run, or a reviewer or other session it started) is highlighted like the active row in the Sessions view, and the view scrolls to it. A row inside a folded "Ended N" stays folded; open the fold to see it.
 
 ### Read the run history
 
@@ -556,7 +556,7 @@ They arrive in the notification center. In **⚙ Settings → "Notifications"**,
 ## Use it more safely
 
 - **Set a spend limit.** "Spend limit (USD)" applies to each run. 0 means no limit, so set a number before you let it start by itself ([Stop a session that spends too much with a budget](../sessions/budget.md))
-- **Keep the numbers low.** A category holds at most 6 open runs, and all your auto-run categories together at most 4. "Runs per day" holds back a runaway too
+- **Keep the numbers low.** A category holds at most 6 open runs. The default across all of your categories is 4. Your administrator can [change your limit](../../admin/resources/session-limits.md#set-the-auto-run-limit). "Runs per day" holds back a runaway too
 - **A session's memo always passes through your approval.** There is no setting that runs what a session or an `/mcp` connection wrote without your check. A memo becomes what the next session is told to do, so read it before you approve
 - **Write the instruction with a clear scope.** For example:
   - What to do ("fix the bug the memo describes and add a test")
@@ -593,7 +593,7 @@ When memos are waiting to run and nothing starts, a line or a notice under the c
 | The last run could not be sent, so auto-run is waiting a while before it tries again.<br>The last run could not be sent, so auto-run is waiting until *time* before it tries again. | Wait, and it tries again by itself. The wait begins at 5 minutes, doubles with each failure in a row, and is at most 4 hours. If it goes on, check the run history for the run that ended as "Not sent" |
 | A session is waiting for the *agent* usage limit to lift, so no new run starts. | One of your runs, in any category, waits for a usage limit of the same agent. It starts when the limit lifts |
 | This category is already running as many memos at once as it may. The next one starts when a run finishes. | Open runs have reached "Sessions at the same time". Wait for one to end, or raise the number (at most 6) |
-| You already have the most runs going at once across your categories. The next one starts when a run finishes. | You have 4 open runs across all categories. Wait for one to end |
+| Your limit is *N* open auto-runs across all categories. New runs can start when the open count drops below it. | Wait until the open count drops below your limit |
 
 *agent* is the name of the agent.
 

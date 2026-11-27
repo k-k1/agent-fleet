@@ -16,6 +16,7 @@ export interface Tenant {
   running?: number;
   max_workspaces?: number;
   max_sessions?: number;
+  memo_run_limit?: number;
   max_git_repos?: number;
   max_lfs_bytes?: number;
   max_workspace_mem?: number; // per-workspace RAM cap in bytes (0 = no tenant cap)
@@ -69,6 +70,9 @@ export interface Member {
    *  surviving row on some runtimes). Absent from an older CP. */
   has_workspace?: boolean;
   max_sessions?: number | null;
+  memo_run_limit?: number;
+  memo_run_limit_default?: number;
+  memo_run_limit_effective?: number;
   mem_limit?: number | null; // per-workspace RAM cap in bytes (0/undefined = unset)
   cpu_limit?: number | null; // per-workspace CPU cap in Fargate units, 1024 = 1 vCPU (0/undefined = unset)
   disk_gb?: number | null; // per-workspace working disk in GiB (0/undefined = unset → 20 GiB free default)

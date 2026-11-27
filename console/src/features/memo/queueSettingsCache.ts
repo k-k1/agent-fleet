@@ -37,6 +37,7 @@ interface QueueSettingsCache {
   tenant: string;
   queues: MemoQueue[];
   tenantEnabled: boolean;
+  runCapacity?: MemoQueuesWire["runCapacity"];
   /** The Control Plane offers the repository settings check and export (#4881). */
   repoSettings: boolean;
   /** False until a read has succeeded: tenantEnabled's initial false is "not read yet". */
@@ -74,7 +75,7 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
     floor = ticket; // a slower, older read must not land over this one
     // A read that lands began after every mark (earlier ones were dropped above), so it holds the
     // rows the marks were waiting for.
-    set({ tenant, queues: wire.queues, tenantEnabled: wire.tenantEnabled, repoSettings: wire.repoSettings, known: true, unsure: [] });
+    set({ tenant, queues: wire.queues, tenantEnabled: wire.tenantEnabled, runCapacity: wire.runCapacity, repoSettings: wire.repoSettings, known: true, unsure: [] });
   },
   applySaved: (tenant, queue) => {
     const cur = get();
@@ -102,17 +103,18 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
   },
   reset: () => {
     floor = ++seq;
-    set({ tenant: "", queues: [], tenantEnabled: false, repoSettings: false, known: false, unsure: [] });
+    set({ tenant: "", queues: [], tenantEnabled: false, runCapacity: undefined, repoSettings: false, known: false, unsure: [] });
   },
 }));
 
 const NONE: MemoQueue[] = [];
 
 /** The cached settings as seen from `tenant`: empty and unknown while the cache holds another's. */
-export function useQueueSettings(tenant: string): { queues: MemoQueue[]; tenantEnabled: boolean; known: boolean } {
+export function useQueueSettings(tenant: string): Pick<QueueSettingsCache, "queues" | "tenantEnabled" | "runCapacity" | "known"> {
   const t = useQueueSettingsCache((s) => s.tenant);
   const queues = useQueueSettingsCache((s) => s.queues);
   const tenantEnabled = useQueueSettingsCache((s) => s.tenantEnabled);
   const known = useQueueSettingsCache((s) => s.known);
-  return t === tenant ? { queues, tenantEnabled, known } : { queues: NONE, tenantEnabled: false, known: false };
+  const runCapacity = useQueueSettingsCache((s) => s.runCapacity);
+  return t === tenant ? { queues, tenantEnabled, known, runCapacity } : { queues: NONE, tenantEnabled: false, known: false };
 }

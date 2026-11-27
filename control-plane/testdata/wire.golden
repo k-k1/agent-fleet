@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 710
+# count: 718
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -351,6 +351,7 @@ memoQueueDTO.fireBlock.detail.blocked number,omitempty
 memoQueueDTO.fireBlock.detail.by string,omitempty
 memoQueueDTO.fireBlock.detail.deferred number,omitempty
 memoQueueDTO.fireBlock.detail.needed number,omitempty
+memoQueueDTO.fireBlock.detail.runLimit number,omitempty
 memoQueueDTO.fireBlock.detail.scheduled number,omitempty
 memoQueueDTO.fireBlock.detail.waiting number,omitempty
 memoQueueDTO.fireBlock.reason string
@@ -386,11 +387,13 @@ memoQueueDTO.waiting.detail.blocked number,omitempty
 memoQueueDTO.waiting.detail.by string,omitempty
 memoQueueDTO.waiting.detail.deferred number,omitempty
 memoQueueDTO.waiting.detail.needed number,omitempty
+memoQueueDTO.waiting.detail.runLimit number,omitempty
 memoQueueDTO.waiting.detail.scheduled number,omitempty
 memoQueueDTO.waiting.detail.waiting number,omitempty
 memoQueueDTO.waiting.reason string
 memoQueueDTO.waiting.until string,omitempty
 memoQueueDTO.worktree bool
+memoQueuesWire.openRuns number
 memoQueuesWire.queues[].acceptOwnSessions bool
 memoQueuesWire.queues[].agentKind string
 memoQueuesWire.queues[].batch number
@@ -407,6 +410,7 @@ memoQueuesWire.queues[].fireBlock.detail.blocked number,omitempty
 memoQueuesWire.queues[].fireBlock.detail.by string,omitempty
 memoQueuesWire.queues[].fireBlock.detail.deferred number,omitempty
 memoQueuesWire.queues[].fireBlock.detail.needed number,omitempty
+memoQueuesWire.queues[].fireBlock.detail.runLimit number,omitempty
 memoQueuesWire.queues[].fireBlock.detail.scheduled number,omitempty
 memoQueuesWire.queues[].fireBlock.detail.waiting number,omitempty
 memoQueuesWire.queues[].fireBlock.reason string
@@ -442,18 +446,21 @@ memoQueuesWire.queues[].waiting.detail.blocked number,omitempty
 memoQueuesWire.queues[].waiting.detail.by string,omitempty
 memoQueuesWire.queues[].waiting.detail.deferred number,omitempty
 memoQueuesWire.queues[].waiting.detail.needed number,omitempty
+memoQueuesWire.queues[].waiting.detail.runLimit number,omitempty
 memoQueuesWire.queues[].waiting.detail.scheduled number,omitempty
 memoQueuesWire.queues[].waiting.detail.waiting number,omitempty
 memoQueuesWire.queues[].waiting.reason string
 memoQueuesWire.queues[].waiting.until string,omitempty
 memoQueuesWire.queues[].worktree bool
 memoQueuesWire.repoSettings bool
+memoQueuesWire.runLimit number
 memoQueuesWire.tenantEnabled bool
 memoWaiting.detail.agentKind string,omitempty
 memoWaiting.detail.blocked number,omitempty
 memoWaiting.detail.by string,omitempty
 memoWaiting.detail.deferred number,omitempty
 memoWaiting.detail.needed number,omitempty
+memoWaiting.detail.runLimit number,omitempty
 memoWaiting.detail.scheduled number,omitempty
 memoWaiting.detail.waiting number,omitempty
 memoWaiting.reason string
@@ -463,6 +470,7 @@ memoWaitingDetail.blocked number,omitempty
 memoWaitingDetail.by string,omitempty
 memoWaitingDetail.deferred number,omitempty
 memoWaitingDetail.needed number,omitempty
+memoWaitingDetail.runLimit number,omitempty
 memoWaitingDetail.scheduled number,omitempty
 memoWaitingDetail.waiting number,omitempty
 notificationDTO.createdAt string
