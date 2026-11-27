@@ -237,14 +237,28 @@ const StateSpendLimit = "spend_limit"
 // excerpt so the operator report can say the turn errored and the chat bridge can post
 // the reason. Drivers that don't yet distinguish failures keep calling MarkTurnEnd.
 func MarkTurnEndErr(sid string, st TurnState, failure string) {
+	markTurnEnd(sid, st, failure, "", false)
+}
+
+// MarkTurnEndIfRev is MarkTurnEndErr for a verdict that took time to reach: the end is written,
+// and notified, only while the status record is still the one named by rev
+// (status.PersistTurnEndIfRev). It reports whether it was.
+func MarkTurnEndIfRev(sid string, st TurnState, failure, rev string) bool {
+	return markTurnEnd(sid, st, failure, rev, true)
+}
+
+func markTurnEnd(sid string, st TurnState, failure, rev string, onlyIfRev bool) bool {
 	previous, _ := status.Read(sid)
+	if onlyIfRev && previous.Rev != rev {
+		return false
+	}
 	if st == TurnUnknown {
 		// We only lost sight of the runtime. idle is written (so nothing sticks on "in
 		// progress"), but this is not the end of a turn, so TurnEnd is not raised: if the
 		// level-based report reconciler (docs/log/51) counted this idle as evidence of
 		// completion, it would report a turn that may still be running as finished.
 		status.Persist(sid, "idle")
-		return
+		return true
 	}
 	// The reason travels in the SAME write as the fact (status.PersistTurnEndReason), not as
 	// a side channel to notify()'s goroutine below: that goroutine is deliberately async
@@ -265,15 +279,21 @@ func MarkTurnEndErr(sid string, st TurnState, failure string) {
 		// though the status record keeps no reason (a resume or a report would act on one).
 		status.NoteFirstTurnCancelled(sid)
 	}
-	status.PersistTurnEndReason(sid, "idle", reason)
+	if onlyIfRev {
+		if !status.PersistTurnEndIfRev(sid, "idle", reason, "", rev) {
+			return false
+		}
+	} else {
+		status.PersistTurnEndReason(sid, "idle", reason)
+	}
 	recordTurnEnd(sid, time.Now(), reason, runOf(sid))
-	if st == TurnFailed {
+	switch st {
+	case TurnFailed:
 		notify(sid, previous.State, StateFailed, failure)
-		return
-	}
-	if st == TurnAborted {
+	case TurnAborted:
 		notify(sid, previous.State, StateAborted, failure)
-		return
+	default:
+		notify(sid, previous.State, "idle", "")
 	}
-	notify(sid, previous.State, "idle", "")
+	return true
 }

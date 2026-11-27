@@ -43,20 +43,15 @@ import (
 // already fired it and the persisted state is idle — no double fire.
 func notifyPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
-	if state != "idle" || status.LiveState(sid) != "working" || !idleEndsThisTurn(m, sid) || turnEndHeld(m) {
+	// The record this verdict belongs to, taken before anything that reads the source: the checks
+	// below and the failure read can wait on SQLite and tmux, and the next input may write a new
+	// working record meanwhile. The end is written, and notified, only while this record is still
+	// the current one, checked inside the status lock (agents.MarkTurnEndIfRev).
+	rec, ok := status.Read(sid)
+	if !ok || state != "idle" || status.LiveState(sid) != "working" || !idleEndsThisTurn(m, sid) || turnEndHeld(m) {
 		return
 	}
-	// The failure read below may wait on tmux, and the next turn's input can land meanwhile and
-	// write a new working record. The verdict belongs to the record read here: written only while
-	// it is still the current one.
-	rev := ""
-	if rec, ok := status.Read(sid); ok {
-		rev = rec.Rev
-	}
-	current := func() bool {
-		rec, ok := status.Read(sid)
-		return ok && rec.Rev == rev
-	}
+	rev := rec.Rev
 	if t := liveStateTraits(m.Kind); t.TurnFailure != nil {
 		mark, ok := status.TurnMarkOf(sid)
 		if ok || t.TurnFailureUnmarked {
@@ -65,17 +60,12 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 			case agents.TurnFailurePending:
 				return
 			default:
-				if current() {
-					agents.MarkTurnEndErr(sid, agents.TurnFailed, failure)
-				}
+				agents.MarkTurnEndIfRev(sid, agents.TurnFailed, failure, rev)
 				return
 			}
 		}
 	}
-	if !current() {
-		return
-	}
-	agents.MarkTurnEnd(sid, agents.TurnCompleted)
+	agents.MarkTurnEndIfRev(sid, agents.TurnCompleted, "", rev)
 }
 
 // turnMarkBaseline is where a kind's source stood at some instant; ok=false when it has no

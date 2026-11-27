@@ -221,3 +221,23 @@ func TestSweepOrphanFirstTurnsKeepsALedgerItCannotLock(t *testing.T) {
 		t.Errorf("unlocked sweep removed %d, want 1", n)
 	}
 }
+
+// A verdict that took time to reach belongs to the record it started from: once a newer working
+// record was written, PersistTurnEndIfRev refuses, and the record stays working.
+func TestPersistTurnEndIfRevRefusesANewerRecord(t *testing.T) {
+	isolate(t)
+	sid := "ifrev-sid"
+	Persist(sid, "working")
+	old, _ := Read(sid)
+	if !PersistTurnEndIfRev(sid, "idle", "", "", old.Rev) {
+		t.Fatal("the current record was refused")
+	}
+	Persist(sid, "working") // the next turn
+	cur, _ := Read(sid)
+	if PersistTurnEndIfRev(sid, "idle", TurnEndReasonFailed, "", old.Rev) {
+		t.Fatal("an end bound to an older record was written")
+	}
+	if now, _ := Read(sid); now.State != "working" || now.Rev != cur.Rev || now.TurnEnd {
+		t.Fatalf("the newer record was changed: %+v", now)
+	}
+}

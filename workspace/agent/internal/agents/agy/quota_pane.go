@@ -151,10 +151,12 @@ type quotaSighting struct {
 func firstSeenQuota(name, text string, now time.Time) time.Time {
 	quotaSeen.Lock()
 	defer quotaSeen.Unlock()
-	if e, ok := quotaSeen.m[name]; ok && e.text == text {
+	// Keyed by the compact text: a resize that wraps the same banner differently is the same refusal.
+	key := compact(text)
+	if e, ok := quotaSeen.m[name]; ok && e.text == key {
 		return e.at
 	}
-	quotaSeen.m[name] = quotaSighting{text: text, at: now}
+	quotaSeen.m[name] = quotaSighting{text: key, at: now}
 	return now
 }
 
@@ -200,9 +202,14 @@ func TurnFailure(m session.Meta, _ string) string {
 
 // atQuotaLimit is agents.UsageLimitTraits.AtLimit: the quota is a window that waiting clears.
 func atQuotaLimit(m session.Meta) (agents.LimitKind, bool) {
-	text, ok := paneQuotaBanner(m.Name)
+	frame := capturePaneFrame(session.TmuxName(m.Name))
+	text, ok := quotaBannerInFrame(frame)
 	if !ok {
-		forgetQuota(m.Name)
+		// Forget the first sighting only on an idle frame that shows the banner gone: a failed
+		// capture or an unpainted footer says nothing, and dropping it would move the reset.
+		if hasIdleFooter(frame) {
+			forgetQuota(m.Name)
+		}
 		return agents.LimitWindow, false
 	}
 	firstSeenQuota(m.Name, text, quotaNow())

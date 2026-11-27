@@ -224,3 +224,53 @@ func TestQuotaBannerWrapsAreReadWhole(t *testing.T) {
 		}
 	}
 }
+
+// The same refusal keeps its first sighting through a re-wrap and through one failed capture; only
+// an idle frame without the banner forgets it.
+func TestQuotaFirstSightingSurvivesRewrapAndAFailedCapture(t *testing.T) {
+	old, oldNow := capturePaneFrame, quotaNow
+	defer func() { capturePaneFrame, quotaNow = old, oldNow }()
+	m := session.Meta{Name: "qr3", Dir: t.TempDir()}
+	defer forgetQuota(m.Name)
+	t0 := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	clock := t0
+	quotaNow = func() time.Time { return clock }
+	capturePaneFrame = func(string) string { return quotaLine + idleChrome }
+	want, _, ok := quotaResetAt(m, false, time.Time{})
+	if !ok {
+		t.Fatal("no reset")
+	}
+	clock = t0.Add(5 * time.Minute)
+	// resized: the same banner wrapped inside "limits"
+	capturePaneFrame = func(string) string {
+		return "Individual quota reached. Please upgrade your subscription to increase your limi\nts. Resets in 1h39m46s." + idleChrome
+	}
+	if got, _, _ := quotaResetAt(m, false, time.Time{}); !got.Equal(want) {
+		t.Fatalf("re-wrap moved the reset: %v vs %v", got, want)
+	}
+	// one failed capture and one unpainted frame
+	for _, f := range []string{"", "x\nesc to cancel\n"} {
+		capturePaneFrame = func(string) string { return f }
+		if _, at := atQuotaLimit(m); at {
+			t.Fatal("limit read from a bad frame")
+		}
+	}
+	clock = t0.Add(6 * time.Minute)
+	capturePaneFrame = func(string) string { return quotaLine + idleChrome }
+	if got, _, _ := quotaResetAt(m, false, time.Time{}); !got.Equal(want) {
+		t.Fatalf("a failed capture moved the reset: %v vs %v", got, want)
+	}
+}
+
+// A run that completed 500 ms after the episode opened counts (no 2 s floor).
+func TestRanTurnSinceCountsAShortTurnRightAfterTheEpisode(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	rows := [][3]any{{14, stepStatusDone, []byte("x")}, {15, stepStatusDone, []byte("x")}}
+	m, now := staleFixture(t, "slot-short", rows, [][]byte{executorRow(4, 1)}, time.Minute)
+	capturePaneFrame = func(string) string { return idleFrame() }
+	at := now.Add(-time.Minute).Add(-500 * time.Millisecond)
+	if !ranTurnSince(m, at) {
+		t.Fatal("a turn completed 500ms after the episode was ignored")
+	}
+}

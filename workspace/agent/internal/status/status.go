@@ -266,6 +266,19 @@ func PersistTurnEndReason(sid, state, reason string) {
 // PersistTurnEndFor is PersistTurnEndReason that also closes turn promptID in the ledger
 // (SessionStatus.PromptID). An empty promptID writes no ledger entry.
 func PersistTurnEndFor(sid, state, reason, promptID string) {
+	persistTurnEnd(sid, state, reason, promptID, "", false)
+}
+
+// PersistTurnEndIfRev is PersistTurnEndFor that writes only while the record is still the one
+// named by rev (SessionStatus.Rev), the check and the write sharing one critical section. A
+// verdict reached by reading a slow source (a pane) belongs to the record it started from: the
+// next input may have written a new working record meanwhile, and ending that one would report a
+// turn that has not finished. It reports whether the end was written.
+func PersistTurnEndIfRev(sid, state, reason, promptID, rev string) bool {
+	return persistTurnEnd(sid, state, reason, promptID, rev, true)
+}
+
+func persistTurnEnd(sid, state, reason, promptID, rev string, onlyIfRev bool) bool {
 	at := ObservedTurnEnd(sid)
 	if at == "" {
 		at = time.Now().Format(time.RFC3339)
@@ -278,8 +291,14 @@ func PersistTurnEndFor(sid, state, reason, promptID string) {
 	// and the closed turn would be left without one.
 	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
 	defer unlock()
+	if onlyIfRev {
+		if cur, ok := Read(sid); !ok || cur.Rev != rev {
+			return false
+		}
+	}
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
 	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
+	return true
 }
 
 // WriteCompletionKey sets the answer-ready dedup key for the current turn-end.
