@@ -71,20 +71,10 @@ type LiveStateTraits struct {
 	// from a finished one in the report and the turn-failed status reason. Called only after
 	// idleEndsThisTurn agreed the turn ended.
 	TurnFailure func(m session.Meta, mark string) string
-	// TurnFailureUnmarked asks for TurnFailure also when the turn has no mark (a first input
-	// before the source has a position, one typed into the terminal), with mark "". Only for a
-	// kind whose TurnFailure does not need the mark.
-	TurnFailureUnmarked bool
 	// QueueTurnFailure opts Terminal sessions into closing an auto-run on the
 	// failure evidence. The delivery and the notifier share the turn identity.
 	QueueTurnFailure bool
 }
-
-// TurnFailurePending is what a kind's TurnFailure returns when the source says the turn ended but
-// its own second evidence (the screen) cannot confirm it yet: the poll records nothing this time
-// and asks again. The kind must stop returning it after a short grace, or a completion is held
-// back for good.
-const TurnFailurePending = "\x00pending"
 
 // FileMarkOffset is the byte offset of a FileSizeMark taken on path, ok=false when the mark is
 // unparseable or path is no longer the file it was taken from. For a kind's TurnFailure, which

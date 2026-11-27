@@ -120,15 +120,6 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// an idle verdict says nothing about a tool still going. The CP reaper treats a row
 		// without this flag as idle-wait and may halt it or stop the Workspace mid-build.
 		li.BackgroundBusy, li.BackgroundBusyReason = backgroundWork(m, li.State, realProbes)
-		// A quota-refused turn leaves the session idle, but re-sending hits the same refusal until
-		// the window lifts. Reading it here, not only once the sweep opened an episode, makes the
-		// session read the same before and after the sweep (the queue closes an idle turn-failed
-		// run and waits on a limited one).
-		if li.State == "idle" {
-			if _, atLimit := atQuotaLimit(m); atLimit {
-				li.State = agents.StateLimited
-			}
-		}
 	}
 	// Capture on BOTH sides of alive. Alive polls adopt the UUID via the
 	// brain-dir diff as soon as the first prompt lands (what lights the live

@@ -4,11 +4,12 @@ package agy
 //
 // agy has no hook for a failed turn and its conversation DB records the refusal on no step
 // (error_details stays empty), so the only per-session evidence is the line the TUI draws as the
-// last thing of the turn. The sweep's usage-limit capability and the polled turn end both read
-// it from the pane, and both need the same attribution: the banner counts only when it is the
-// LAST thing in the transcript above the composer, because a newer successful turn draws its
-// reply below an older refusal that is still on screen, and booking a resume against that
-// refusal would send a prompt onto unrelated work.
+// last thing of the turn. The sweep's usage-limit capability reads it from the pane, and the
+// banner counts only when it is the LAST thing in the transcript above the composer: a newer
+// successful turn draws its reply below an older refusal that is still on screen, and booking a
+// resume against that refusal would send a prompt onto unrelated work. The refused turn is NOT
+// reported as a failed turn: it ends as an ordinary idle and the session reads limited through
+// the sweep's episode, which is also what keeps a queue run waiting instead of closing it.
 
 import (
 	"database/sql"
@@ -19,7 +20,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // quotaBannerLines bounds how many transcript lines the banner may be wrapped over.
@@ -118,16 +118,9 @@ func quotaResetIn(text string) (time.Duration, bool) {
 
 func isRule(t string) bool { return strings.Trim(t, "─━-═ ") == "" }
 
-// paneSessionAlive is the tmux liveness probe, replaceable by tests.
-var paneSessionAlive = tmuxx.HasSession
-
 // quotaNow is the clock of the first sighting, read when the pane was actually captured (not the
 // sweep's start time, which a slow earlier session can leave seconds behind).
 var quotaNow = time.Now
-
-// quotaPaintGrace is how long after the conversation's last write an unreadable or unpainted
-// pane still counts as "not drawn yet" rather than as a clean end.
-const quotaPaintGrace = 30 * time.Second
 
 // paneQuotaBanner is quotaBannerInFrame on the session's live pane.
 func paneQuotaBanner(name string) (string, bool) {
@@ -164,40 +157,6 @@ func forgetQuota(name string) {
 	quotaSeen.Lock()
 	delete(quotaSeen.m, name)
 	quotaSeen.Unlock()
-}
-
-// quotaTurnFailure is the pane half of agents.LiveStateTraits.TurnFailure: the turn that just ended was refused for
-// quota when the banner is the last thing it drew. Without it the poll reports a clean
-// completion. The pane carries no turn identity, so a turn without a mark (a first input, one
-// typed into the terminal) is judged too (TurnFailureUnmarked).
-//
-// One capture answers all three questions (refused, cleanly idle, not confirmable yet), and it
-// never waits. When the pane is not captured or its idle footer is not painted while the
-// conversation was written within quotaPaintGrace, a refusal may still be about to appear: it
-// returns agents.TurnFailurePending, and the poll asks again. Past the grace the end completes
-// as before, so an unreadable pane cannot hold a completion back for good.
-func quotaTurnFailure(m session.Meta) string {
-	frame := capturePaneFrame(session.TmuxName(m.Name))
-	if text, ok := quotaBannerInFrame(frame); ok {
-		return text
-	}
-	if hasIdleFooter(frame) {
-		return ""
-	}
-	// No frame at all only counts as "not captured" while the tmux session is there: a session
-	// without a pane has nothing to wait for.
-	if strings.TrimSpace(frame) == "" && !paneSessionAlive(session.TmuxName(m.Name)) {
-		return ""
-	}
-	captureConversation(m)
-	conv := sids.Read(session.UUID(m.Dir, m.Name))
-	if conv == "" {
-		return ""
-	}
-	if mt, ok := dbModTime(conv); ok && quotaNow().Sub(mt) < quotaPaintGrace {
-		return agents.TurnFailurePending
-	}
-	return ""
 }
 
 // atQuotaLimit is agents.UsageLimitTraits.AtLimit: the quota is a window that waiting clears.
@@ -272,14 +231,4 @@ func lastRunCompleted(conv string) bool {
 	}
 	end, state := turnEnd(db)
 	return state == turnLogRead && end >= last
-}
-
-// polledTurnFailure is agents.LiveStateTraits.TurnFailure: the conversation's own executor error
-// first (it needs the turn mark and names the turn), then the quota banner the TUI draws, which
-// no step records.
-func polledTurnFailure(m session.Meta, mark string) string {
-	if failure := turnFailure(m, mark); failure != "" {
-		return failure
-	}
-	return quotaTurnFailure(m)
 }

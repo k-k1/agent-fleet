@@ -1,11 +1,9 @@
 package agy
 
 import (
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -83,9 +81,6 @@ func TestAgyUsageLimitTraitsAreWired(t *testing.T) {
 	if tr.AtLimit == nil || tr.ResetAt == nil || tr.RanTurnSince == nil || tr.ManagedOnly {
 		t.Fatalf("traits not wired for Terminal: %+v", tr)
 	}
-	if lt := a.LiveStateTraits(); lt.TurnFailure == nil || !lt.TurnFailureUnmarked {
-		t.Fatal("polled turn end has no failure reader")
-	}
 }
 
 // Only the newest banner is read: an older countdown on screen never leaks into the reset.
@@ -140,36 +135,6 @@ func TestQuotaResetCountsFromFirstSighting(t *testing.T) {
 }
 
 func idleFrame() string { return "done" + idleChrome }
-
-// An unreadable or unpainted pane right after the DB's last write holds the completion back; an
-// idle pane, or a pane that stays unreadable past the grace, does not.
-func TestTurnFailurePendingWaitsForThePaneOnlyBriefly(t *testing.T) {
-	old, oldAlive := capturePaneFrame, paneSessionAlive
-	defer func() { capturePaneFrame, paneSessionAlive = old, oldAlive }()
-	paneSessionAlive = func(string) bool { return true }
-	user, model := 14, 15
-	rows := [][3]any{{user, stepStatusDone, []byte("x")}, {model, stepStatusDone, []byte("x")}}
-	for _, tc := range []struct {
-		name, frame string
-		age         time.Duration
-		want        string
-	}{
-		{"capture failed, DB just written", "", time.Second, agents.TurnFailurePending},
-		{"footer not painted, DB just written", "partial\nesc to cancel\n", time.Second, agents.TurnFailurePending},
-		{"idle footer", idleFrame(), time.Second, ""},
-		{"capture failed, past the grace", "", 5 * time.Minute, ""},
-		{"no tmux session at all", "\x00", time.Second, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m, _ := staleFixture(t, "slot-pend", rows, [][]byte{executorRow(4, 1)}, tc.age)
-			capturePaneFrame = func(string) string { return strings.TrimPrefix(tc.frame, "\x00") }
-			paneSessionAlive = func(string) bool { return !strings.HasPrefix(tc.frame, "\x00") }
-			if got := quotaTurnFailure(m); got != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
-			}
-		})
-	}
-}
 
 // A booking is cancelled only by a newer turn that COMPLETED: an input that landed, a turn still
 // running, an interrupted run and a bare DB write keep it.
@@ -272,24 +237,5 @@ func TestRanTurnSinceCountsAShortTurnRightAfterTheEpisode(t *testing.T) {
 	at := now.Add(-time.Minute).Add(-500 * time.Millisecond)
 	if !ranTurnSince(m, at) {
 		t.Fatal("a turn completed 500ms after the episode was ignored")
-	}
-}
-
-// A quota-refused turn reads limited in the list before any sweep episode exists, and a normal
-// idle still reads idle.
-func TestWireLiveReadsAQuotaRefusalAsLimited(t *testing.T) {
-	old := capturePaneFrame
-	defer func() { capturePaneFrame = old }()
-	rows := [][3]any{{14, stepStatusDone, []byte("x")}, {15, stepStatusDone, []byte("x")}}
-	m, _ := staleFixture(t, "slot-wl", rows, [][]byte{executorRow(4, 1)}, time.Minute)
-	defer forgetQuota(m.Name)
-	for _, tc := range []struct{ name, frame, want string }{
-		{"refused", quotaLine + idleChrome, agents.StateLimited},
-		{"clean", idleFrame(), "idle"},
-	} {
-		capturePaneFrame = func(string) string { return tc.frame }
-		if got := (agentImpl{}).WireLive(m, true).State; got != tc.want {
-			t.Errorf("%s: state %q, want %q", tc.name, got, tc.want)
-		}
 	}
 }

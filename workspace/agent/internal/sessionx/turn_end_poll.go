@@ -55,15 +55,8 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 		return
 	}
 	if t := liveStateTraits(m.Kind); t.TurnFailure != nil {
-		mark, ok := status.TurnMarkOf(sid)
-		if ok || t.TurnFailureUnmarked {
-			switch failure := t.TurnFailure(m, mark); failure {
-			case "":
-			case agents.TurnFailurePending:
-				// The source says the turn ended but the screen cannot confirm it yet: record
-				// nothing, the next poll asks again.
-				return
-			default:
+		if mark, ok := status.TurnMarkOf(sid); ok {
+			if failure := t.TurnFailure(m, mark); failure != "" {
 				status.RecordTurnEndFailure(sid, st.Rev, failure)
 				agents.MarkObservedTurnFailed(sid, st.Rev)
 				return
@@ -179,12 +172,9 @@ func recordPolledTurnEnd(m session.Meta, state string) {
 	}
 	failure := ""
 	if traits.TurnFailure != nil {
-		if mark, ok := status.TurnMarkOf(sid); ok || traits.TurnFailureUnmarked {
+		if mark, ok := status.TurnMarkOf(sid); ok {
 			failure = traits.TurnFailure(m, mark)
 		}
-	}
-	if failure == agents.TurnFailurePending {
-		return // nothing is recorded, not even the end's time: the next read decides
 	}
 	status.RecordTurnEndFailure(sid, st.Rev, failure)
 }
