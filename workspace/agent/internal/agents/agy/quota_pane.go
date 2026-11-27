@@ -13,6 +13,7 @@ package agy
 
 import (
 	"database/sql"
+	"math"
 	"regexp"
 	"strings"
 	"sync"
@@ -160,6 +161,20 @@ func forgetQuota(name string) {
 }
 
 // atQuotaLimit is agents.UsageLimitTraits.AtLimit: the quota is a window that waiting clears.
+// newestTurnEnded says the screen may be read as the newest turn's outcome: the state source
+// agrees that turn has ended, and it did not end on an executor error that is not a quota refusal
+// (the conversation's own failure of the current turn wins over a banner a lagging pane still
+// shows from the turn before).
+func newestTurnEnded(m session.Meta) bool {
+	if LiveState(m) != "idle" {
+		return false
+	}
+	if r, ok := lastStep(m); ok && r.stepType == stepTypeError && !quotaReachedRe.MatchString(executorErrorPayload(r.payload)) {
+		return false
+	}
+	return true
+}
+
 func atQuotaLimit(m session.Meta) (agents.LimitKind, bool) {
 	frame := capturePaneFrame(session.TmuxName(m.Name))
 	text, ok := quotaBannerInFrame(frame)
@@ -174,7 +189,7 @@ func atQuotaLimit(m session.Meta) (agents.LimitKind, bool) {
 	// The screen is only evidence about the newest turn once the state source agrees that turn
 	// has ended: a new input that reached the conversation before the pane repainted would
 	// otherwise leave the previous turn's refusal looking current.
-	if LiveState(m) != "idle" {
+	if !newestTurnEnded(m) {
 		return agents.LimitWindow, false
 	}
 	firstSeenQuota(m.Name, text, quotaNow())
@@ -185,7 +200,9 @@ func atQuotaLimit(m session.Meta) (agents.LimitKind, bool) {
 // sighting. ok=false when the newest banner names no countdown, so an older one is never read.
 func quotaResetAt(m session.Meta, _ bool, _ time.Time) (time.Time, string, bool) {
 	text, ok := paneQuotaBanner(m.Name)
-	if !ok {
+	// The same newest-turn condition as AtLimit: a follow-up that books late (auto-resume turned on
+	// after the episode opened) must not book from a frame AtLimit rejected.
+	if !ok || !newestTurnEnded(m) {
 		return time.Time{}, "", false
 	}
 	d, ok := quotaResetIn(text)
@@ -223,21 +240,28 @@ func lastRunCompleted(conv string) bool {
 		return false
 	}
 	defer db.Close()
+	// One statement is one snapshot: the run's outcome and end position come from the same
+	// executor_metadata row, and the newest step from the same read, so a run recorded between
+	// two reads cannot mix an old success with a newer step list. An executor error is a run that
+	// completed (field 1 = 4) with an error step last, which is a failed turn, not a successful one.
 	var data []byte
-	if db.QueryRow(`SELECT data FROM executor_metadata ORDER BY idx DESC LIMIT 1`).Scan(&data) != nil {
+	var last, lastType sql.NullInt64
+	if db.QueryRow(`SELECT (SELECT data FROM executor_metadata ORDER BY idx DESC LIMIT 1),
+		(SELECT idx FROM steps ORDER BY idx DESC LIMIT 1),
+		(SELECT step_type FROM steps ORDER BY idx DESC LIMIT 1)`).Scan(&data, &last, &lastType) != nil ||
+		len(data) == 0 || !last.Valid || !lastType.Valid {
 		return false
 	}
 	kind, found, ok := protoVarintField(data, 1)
 	if !ok || !found || kind != executorCompleted {
 		return false
 	}
-	// One snapshot answers both "where did the run end" and "how": an executor error is a run
-	// that completed (field 1 = 4) with an error step last, which is a failed turn, not a
-	// successful one.
-	var last, lastType int
-	if db.QueryRow(`SELECT idx, step_type FROM steps ORDER BY idx DESC LIMIT 1`).Scan(&last, &lastType) != nil {
+	end, found3, ok := protoVarintField(data, 3)
+	if !ok || end > math.MaxInt32 {
 		return false
 	}
-	end, state := turnEnd(db)
-	return state == turnLogRead && end >= last && lastType != stepTypeError
+	if !found3 {
+		end = 0 // proto3 leaves a zero out of the wire (see turnEnd)
+	}
+	return int64(end) >= last.Int64 && int(lastType.Int64) != stepTypeError
 }

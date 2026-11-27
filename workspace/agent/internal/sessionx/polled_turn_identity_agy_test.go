@@ -164,6 +164,39 @@ func TestTurnIdentityAgyQueueListReportsExecutorFailureWithoutDriveState(t *test
 	}
 }
 
+// The newest turn ended on an executor error while the pane still shows an older quota banner: the
+// list keeps idle + turn-failed (what closes the queue run), never limited.
+func TestWireSessionAgyExecutorErrorWinsOverALaggingQuotaBanner(t *testing.T) {
+	m, _, add := agyIdentityFixture(t, "agy_ident_failure_banner")
+	m.QueueDelivery = "delivery1"
+	session.WriteMeta(m)
+	add([][2]int{{0, 14}, {1, 15}}, 1)
+	markSessionWorkingFrom(m.Name, captureTurnMark(m.Name))
+	add([][2]int{{2, 14}, {3, 21}, {4, 17}}, 4)
+
+	dbPath := filepath.Join(paths.GeminiHome(), "antigravity-cli", "conversations", "conv-"+m.Name+".db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	message := "expected pending tool step at index 3, got status CORTEX_STEP_STATUS_CANCELED"
+	details := append(binary.AppendUvarint([]byte{0x12}, uint64(len(message))), message...)
+	payload := append(binary.AppendUvarint([]byte{0x1a}, uint64(len(details))), details...)
+	if _, err := db.Exec(`UPDATE steps SET step_payload=? WHERE idx=4`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	agyFakePane(t, agyQuotaFrame) // the previous turn's refusal, still on screen
+	got := wireSession(m, true)
+	if got.LastTurnEndAt == "" || got.LastTurnEndReason != status.TurnEndReasonFailed {
+		t.Fatalf("end = %q, reason = %q", got.LastTurnEndAt, got.LastTurnEndReason)
+	}
+	if got.State == agents.StateLimited {
+		t.Fatalf("a stale banner turned a failed turn into limited: %q", got.State)
+	}
+}
+
 func TestAgyQueueFailureNotifiesAfterEveryFailureWithItsObservedText(t *testing.T) {
 	m, sid, add := agyIdentityFixture(t, "agy_queue_failure_notice")
 	m.QueueDelivery = "delivery1"

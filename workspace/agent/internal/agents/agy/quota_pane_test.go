@@ -105,7 +105,7 @@ func TestQuotaResetCountsFromFirstSighting(t *testing.T) {
 	old := capturePaneFrame
 	defer func() { capturePaneFrame = old }()
 	capturePaneFrame = func(string) string { return "x\n" + quotaLine + idleChrome }
-	m := session.Meta{Name: "qr1", Dir: t.TempDir()}
+	m := endedTurnFixture(t, "qr1")
 	defer forgetQuota(m.Name)
 	t0 := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
 	clock := t0
@@ -195,7 +195,7 @@ func TestQuotaBannerWrapsAreReadWhole(t *testing.T) {
 func TestQuotaFirstSightingSurvivesRewrapAndAFailedCapture(t *testing.T) {
 	old, oldNow := capturePaneFrame, quotaNow
 	defer func() { capturePaneFrame, quotaNow = old, oldNow }()
-	m := session.Meta{Name: "qr3", Dir: t.TempDir()}
+	m := endedTurnFixture(t, "qr3")
 	defer forgetQuota(m.Name)
 	t0 := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
 	clock := t0
@@ -270,5 +270,49 @@ func TestAtQuotaLimitWaitsForTheStateSourceToAgree(t *testing.T) {
 	m2, _ := staleFixture(t, "slot-lag-new", inflight, [][]byte{executorRow(4, 1)}, time.Minute)
 	if _, at := atQuotaLimit(m2); at {
 		t.Fatal("the previous turn's refusal was read as the new turn's limit")
+	}
+}
+
+// endedTurnFixture is a session whose newest turn has ended (user, model, run completed at 1).
+func endedTurnFixture(t *testing.T, slot string) session.Meta {
+	t.Helper()
+	rows := [][3]any{{14, stepStatusDone, []byte("x")}, {15, stepStatusDone, []byte("x")}}
+	m, _ := staleFixture(t, slot, rows, [][]byte{executorRow(4, 1)}, time.Minute)
+	return m
+}
+
+// ResetAt gives way to the same newest-turn condition as AtLimit: a rejected frame books nothing.
+func TestQuotaResetAtIsNotBookedFromARejectedFrame(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	capturePaneFrame = func(string) string { return quotaLine + idleChrome }
+	rows := [][3]any{{14, stepStatusDone, []byte("x")}, {15, stepStatusDone, []byte("x")}, {14, stepStatusDone, []byte("x")}}
+	m, _ := staleFixture(t, "slot-reset-lag", rows, [][]byte{executorRow(4, 1)}, time.Minute)
+	defer forgetQuota(m.Name)
+	if _, _, ok := quotaResetAt(m, false, time.Time{}); ok {
+		t.Fatal("a reset was booked from a frame the newest turn rejected")
+	}
+}
+
+// The conversation's own executor error for the newest turn wins over a banner a lagging pane
+// still shows from the turn before; a quota refusal recorded as an error step still counts.
+func TestAtQuotaLimitDefersToANewerExecutorError(t *testing.T) {
+	old := capturePaneFrame
+	defer func() { capturePaneFrame = old }()
+	capturePaneFrame = func(string) string { return quotaLine + idleChrome }
+	failed := [][3]any{{14, stepStatusDone, []byte("x")}, {stepTypeError, stepStatusDone, []byte("x")}}
+	m, _ := staleFixture(t, "slot-err-wins", failed, [][]byte{executorRow(4, 1)}, time.Minute)
+	defer forgetQuota(m.Name)
+	if _, at := atQuotaLimit(m); at {
+		t.Fatal("an older banner overrode the newest turn's executor error")
+	}
+}
+
+// The run outcome and its end position are one read: an interrupted newest run is not a success.
+func TestLastRunCompletedReadsOneRow(t *testing.T) {
+	rows := [][3]any{{14, stepStatusDone, []byte("x")}, {15, stepStatusDone, []byte("x")}}
+	m, _ := staleFixture(t, "slot-onerow", rows, [][]byte{executorRow(4, 1), executorRow(2, 1)}, time.Minute)
+	if lastRunCompleted(sids.Read(session.UUID(m.Dir, m.Name))) {
+		t.Fatal("an older success was mixed with a newer interrupted run")
 	}
 }
