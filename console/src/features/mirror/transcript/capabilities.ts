@@ -145,6 +145,8 @@ export interface TranscriptCaps {
    * or null → the bare trace.
    */
   toolNote?: (turn: Group, i: number) => ReactNode | null;
+  /** A note alongside the tool groups, inside the work fold when present. */
+  workNote?: (turn: Group) => ReactNode | null;
 
   // ── Display preferences ───────────────────────────────────────────────────────
   /** Show the agent's chain-of-thought expanded (per-kind behaviour setting, default off). */

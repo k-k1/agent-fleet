@@ -158,7 +158,7 @@ describe("placeRuns", () => {
     const p = placeRuns(groups, [at(15, { profile: "script-profile" })]);
     expect(p.onTool.get(toolKey(1, 3))?.map((r) => r.id)).toEqual(["r15"]);
   });
-  it("leaves AWS runs loose when the latest Code Mode launch is opaque", () => {
+  it("keeps AWS runs in the work trace when the latest Code Mode launch is opaque", () => {
     const opaque: Part = { kind: "tool", tool: "exec", info: '// @exec: {"yield_time_ms": 1}' };
     const wait: Part = { kind: "tool", tool: "wait", info: '{"cell_id":"1"}' };
     const older = bash("af-aws-exec --profile prod-admin -- aws s3 ls");
@@ -167,7 +167,8 @@ describe("placeRuns", () => {
     const p = placeRuns(g, [at(1), at(4), at(6)]);
     expect(p.onTool.get(toolKey(1, 0))?.map((r) => r.id)).toEqual(["r1"]);
     expect(p.onTool.get(toolKey(1, 4))?.map((r) => r.id)).toEqual(["r6"]);
-    expect(p.loose.map((r) => r.id)).toEqual(["r4"]);
+    expect(p.inWork.get(1)?.map((r) => r.id)).toEqual(["r4"]);
+    expect(p.loose).toEqual([]);
   });
   it.each([
     '"/opt/af-aws-exec" --list',

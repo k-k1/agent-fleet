@@ -162,7 +162,7 @@ describe("CloudRunGroup", () => {
     expect(host.textContent).toContain("p1 / me@example.com");
   });
   it("names the group under a tool call for assistive technology", async () => {
-    await render(<CloudRunGroup runs={[run("a", "2026-10-30T12:00:01Z")] as never} attached />);
+    await render(<CloudRunGroup runs={[run("a", "2026-10-30T12:00:01Z")] as never} placement="tool" />);
     const g = host.querySelector(".cloud-run-group")!;
     expect(g.getAttribute("role")).toBe("group");
     expect(g.getAttribute("aria-label")).toBe(t("cloudruns.on_tool"));

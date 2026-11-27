@@ -641,6 +641,7 @@ function TranscriptTurnImpl({
               }}
             >
               {renderAssistantParts(turn.parts.slice(0, split.at), true)}
+              {caps.workNote?.(turn)}
             </WorkDisclosure>
             {/* Shared files the work produced, hoisted out of the closed disclosure and kept in
                 order just above the final answer. A shared file is a DELIVERABLE, and the
@@ -655,7 +656,10 @@ function TranscriptTurnImpl({
             {renderAssistantParts(turn.parts.slice(split.at), false, split.at)}
           </>
         ) : (
-          renderAssistantParts(turn.parts)
+          <>
+            {renderAssistantParts(turn.parts)}
+            {caps.workNote?.(turn)}
+          </>
         )}
       </div>
       {/* Files this reply edited, as chips — the answer to "which one did it just change"

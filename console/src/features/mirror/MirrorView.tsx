@@ -468,16 +468,24 @@ function MirrorViewBody({
   const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
   const maxSpend = spends.length ? Math.max(...spends) : 0;
 
-  // af-aws-exec / af-gcloud-exec runs go on the tool call that started them, inside the work
-  // fold; only the runs no call can take stand between the turns (cloudRunCards). Placed on the
-  // turns of the whole window, so a run whose call has not been paged in yet waits loose.
+  // Use the whole loaded window so a run whose tool call has not been paged in yet can
+  // move into the work trace when that page arrives.
   const placedRuns = useMemo(() => placeRuns(groups, cloudRuns), [groups, cloudRuns]);
   const toolNote = useMemo(() => {
     const { onTool } = placedRuns;
     if (!onTool.size) return undefined;
     return (turn: Group, i: number) => {
       const runs = typeof turn.idx === "number" ? onTool.get(toolKey(turn.idx, i)) : undefined;
-      return runs ? <CloudRunGroup runs={runs} attached /> : null;
+      return runs ? <CloudRunGroup runs={runs} placement="tool" /> : null;
+    };
+  }, [placedRuns]);
+
+  const workNote = useMemo(() => {
+    const { inWork } = placedRuns;
+    if (!inWork.size) return undefined;
+    return (turn: Group) => {
+      const runs = typeof turn.idx === "number" ? inWork.get(turn.idx) : undefined;
+      return runs ? <CloudRunGroup runs={runs} placement="work" /> : null;
     };
   }, [placedRuns]);
 
@@ -498,6 +506,7 @@ function MirrorViewBody({
     translate,
     toolCard,
     toolNote,
+    workNote,
     maxSpend,
   });
 

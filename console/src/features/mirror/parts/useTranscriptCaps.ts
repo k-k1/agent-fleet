@@ -39,6 +39,7 @@ export function useTranscriptCaps({
   translate,
   toolCard,
   toolNote,
+  workNote,
   maxSpend,
 }: {
   session: string;
@@ -57,6 +58,7 @@ export function useTranscriptCaps({
   translate: ReturnType<typeof useTranslate>;
   toolCard?: TranscriptCaps["toolCard"];
   toolNote?: TranscriptCaps["toolNote"];
+  workNote?: TranscriptCaps["workNote"];
   maxSpend: number;
 }) {
   const { setLightbox, rejectedPlansRef, rejectedGen } = st;
@@ -137,6 +139,7 @@ export function useTranscriptCaps({
       toolCard,
       // Likewise: a new one exactly when a run lands or a call it could belong to does.
       toolNote,
+      workNote,
       // Only the owner of a Managed session can edit its queue; a Terminal (CLI) session's
       // queue lives in the CLI (ADR 0105 decision 6).
       queue:
@@ -159,6 +162,7 @@ export function useTranscriptCaps({
       translate,
       toolCard,
       toolNote,
+      workNote,
       managed,
       readOnly,
     ],
