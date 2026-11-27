@@ -177,6 +177,7 @@ type MemoTxOps interface {
 	// SetMemoRunNext sets or clears the run-next mark of one waiting (held or pending) message of a
 	// queue. False means no such message: it is gone, claimed, sent, or not in a queue.
 	SetMemoRunNext(id string, on bool) (bool, error)
+	ConfirmMemoDelivery(id, deliveryID string) (bool, error)
 	// CountQueueIntakeSince counts the creates into a queue from inside the workspace or
 	// /mcp logged at or after since, dropping older entries. Moving or deleting a message
 	// does not take its create off the log.

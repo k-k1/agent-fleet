@@ -355,7 +355,7 @@ const AFTER_REASONS = [
 /** The words for how a note another waits for stands. A reason this Console does not know (a newer
  *  Control Plane) falls back to the state alone. */
 export function afterItemWords(it: Pick<MemoAfterItem, "state" | "reason">): MsgKey {
-  if (it.state === "satisfied") return "memo.after_r_done";
+  if (it.state === "satisfied") return it.reason === "confirmed" ? "memo.after_r_confirmed" : "memo.after_r_done";
   if (it.reason && (AFTER_REASONS as readonly string[]).includes(it.reason)) return `memo.after_r_${it.reason}` as MsgKey;
   return it.state === "failed" ? "memo.after_r_failed" : "memo.after_r_waiting";
 }

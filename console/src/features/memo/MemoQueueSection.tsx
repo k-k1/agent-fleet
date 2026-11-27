@@ -38,6 +38,7 @@ import {
   memoRelease,
   memoStopChain,
   memoSetRunNext,
+  memoConfirmPrerequisite,
   memoQueueResume,
 } from "./api.ts";
 import { memoScope, useMemoStore } from "./store.ts";
@@ -51,7 +52,7 @@ import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { useSettings } from "../../lib/settings.ts";
-import type { Memo, MemoCategory, MemoAttachment } from "../../types/memo.ts";
+import type { Memo, MemoAfterItem, MemoCategory, MemoAttachment } from "../../types/memo.ts";
 import { errText } from "../../core/api/client.ts";
 import { MemoQueueSettingsModal } from "./MemoQueueSettingsModal.tsx";
 import { useQueueSettings, useQueueSettingsCache } from "./queueSettingsCache.ts";
@@ -459,6 +460,30 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       toast(t("memo.run_next_failed"), { kind: "warn" });
     } finally {
       setRunNextBusyFor(m.id, false);
+    }
+    bumpMemos();
+  };
+
+  const confirmPrerequisite = async (memoId: string, item: MemoAfterItem) => {
+    if (!item.confirmDeliveryId) return;
+    const ok = await askConfirm({
+      title: tr("memo.after_confirm"),
+      body: tr("memo.after_confirm_body", { label: item.label || item.id }),
+      confirmLabel: tr("memo.after_confirm"),
+      safeFocus: true,
+    });
+    const scope = useTenantStore.getState();
+    if (!ok || scope.tenant !== tenant || scope.identityRev !== identity) return;
+    try {
+      const res = await memoConfirmPrerequisite(memoId, item.id, item.confirmDeliveryId);
+      if (res?.error) {
+        const message = res.error.code === "memo_prerequisite_changed" ? tr("memo.after_confirm_changed") : errText(res.error);
+        toast(message || tr("memo.after_confirm_failed"), { kind: "warn" });
+      } else {
+        toast(tr("memo.after_confirm_done"), { kind: "success" });
+      }
+    } catch {
+      toast(tr("memo.after_confirm_failed"), { kind: "warn" });
     }
     bumpMemos();
   };
@@ -1289,6 +1314,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       recipeAgent={isQueue && (m.state === "held" || m.state === "pending") ? (queue?.agentKind ?? "") : undefined}
                       afterChoices={isQueue && (m.state === "held" || m.state === "pending") ? afterChoices(g.memos, m) : undefined}
                       afterPool={g.memos}
+                      onConfirmPrerequisite={isQueue && memosTenant === (tenant ?? "") ? (item) => void confirmPrerequisite(m.id, item) : undefined}
                       onOpenTidyRuns={
                         cat && isQueue
                           ? () => {
@@ -1913,6 +1939,7 @@ interface MemoRowProps {
   afterChoices?: { id: string; label: string }[];
   /** The notes of the category as loaded, to name a prerequisite by its text and state. */
   afterPool?: Memo[];
+  onConfirmPrerequisite?: (item: MemoAfterItem) => void;
   /** Opens the run history of this note's category; absent outside an auto-run category. */
   onOpenTidyRuns?: () => void;
   /** The category's follow-up allowance, for "follow-up K of M". */
@@ -2372,10 +2399,12 @@ function MemoRow(props: MemoRowProps) {
         )}
         {m.state === "held" && m.heldReason && m.heldReason.reason !== "deferred" && !continuationHeldKey(m.heldReason.reason) && !heldRecipeKey(m.heldReason.reason) && (
           <div className="memo-after-held">
-            {tr("memo.after_held", {
-              label: m.afterStatus?.find((a) => a.id === m.heldReason!.after)?.label || m.heldReason.after,
-              reason: tr(afterItemWords({ state: "failed", reason: m.heldReason.reason })),
-            })}
+            {m.afterStatus?.some((a) => a.id === m.heldReason!.after && a.state === "satisfied")
+              ? tr("memo.after_confirm_approve")
+              : tr("memo.after_held", {
+                  label: m.afterStatus?.find((a) => a.id === m.heldReason!.after)?.label || m.heldReason.after,
+                  reason: tr(afterItemWords({ state: "failed", reason: m.heldReason.reason })),
+                })}
           </div>
         )}
         {m.afterStatus && m.afterStatus.length > 0 && (
@@ -2384,6 +2413,22 @@ function MemoRow(props: MemoRowProps) {
             {m.afterStatus.map((a) => (
               <span key={a.id} className={"memo-after-item a-" + a.state}>
                 {a.label || a.id}: {tr(afterItemMessage(a).key, afterItemMessage(a).params)}
+                {props.onConfirmPrerequisite && a.confirmDeliveryId && (
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      className="linkish"
+                      aria-label={tr("memo.after_confirm_named", { label: a.label || a.id })}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        props.onConfirmPrerequisite?.(a);
+                      }}
+                    >
+                      {tr("memo.after_confirm")}
+                    </button>
+                  </>
+                )}
               </span>
             ))}
           </div>

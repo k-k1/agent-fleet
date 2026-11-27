@@ -7,6 +7,7 @@
 // closed as clean and was not retired as overdue, and the PR snapshot of its session, read from
 // the running Agent after the close, names at least one PR and every PR is merged. With no PRs,
 // satisfaction requires a recorded good first turn and a last answer that starts with Done:.
+// The owner can also confirm a delivered prerequisite after its run ends.
 package memoafter
 
 import (
@@ -40,6 +41,7 @@ const (
 	WhyPending   = "pending"    // waiting: released, not fired yet
 	WhyRunning   = "running"    // waiting: claimed, or its delivery is not closed
 	WhyFirstTurn = "first_turn" // waiting: closed clean, its first turn not collected yet
+	WhyConfirmed = "confirmed"  // satisfied by the queue owner
 
 	WhyDeleted      = "deleted"
 	WhyMoved        = "moved"       // moved out of the queue
@@ -126,6 +128,8 @@ type Item struct {
 	// Answer is the first line of the last answer behind a reason of not_done, "" when none could
 	// be read.
 	Answer string `json:"answer,omitempty"`
+	// ConfirmDeliveryID binds the Console action to the run whose evidence was shown.
+	ConfirmDeliveryID string `json:"confirmDeliveryId,omitempty"`
 	// Delivery is the prerequisite's delivery, for the dispatcher's wakes. Never on the wire.
 	Delivery string `json:"-"`
 }
@@ -404,7 +408,15 @@ func prereq(m store.Memo, id string, lk Lookup) (Item, error) {
 			return it, err
 		}
 		it.Delivery = p.DeliveryID
+		canConfirm := ok && store.CanConfirmPrerequisite(d)
+		if canConfirm && p.ConfirmedDeliveryID == d.ID {
+			it.State, it.Reason = Satisfied, WhyConfirmed
+			return it, nil
+		}
 		it.State, it.Reason = DeliveryState(d, ok, lk.Now)
+		if canConfirm && it.State != Satisfied {
+			it.ConfirmDeliveryID = d.ID
+		}
 		switch it.Reason {
 		case WhyPR, WhyPRClosed:
 			it.PRs = ParseSnapshot(d.PRSnapshot)

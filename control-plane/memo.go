@@ -276,6 +276,11 @@ func memoListWith(ctx context.Context, st store.MemoStore, membershipID string, 
 			if d.AfterStatus, err = memoafter.Status(m, lk); err != nil {
 				return nil, err
 			}
+			if !reasons {
+				for i := range d.AfterStatus {
+					d.AfterStatus[i].ConfirmDeliveryID = ""
+				}
+			}
 		}
 		if d.TidyFrom != nil {
 			// A moved message names the category it came from, so that nobody asks for it.

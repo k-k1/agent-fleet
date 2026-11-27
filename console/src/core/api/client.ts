@@ -1516,6 +1516,8 @@ export const memoStopChain = (id: string): Promise<MemoWriteResult> =>
 // Member login only. 409 memo_locked when the message is no longer waiting.
 export const memoSetRunNext = (id: string, runNext: boolean): Promise<MemoWriteResult> =>
   apiJSON(`api/memos/${encodeURIComponent(id)}/run-next`, "POST", { runNext });
+export const memoConfirmPrerequisite = (id: string, prerequisiteId: string, deliveryId: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memos/${encodeURIComponent(id)}/confirm-prerequisite`, "POST", { prerequisiteId, deliveryId });
 // The manual Tidy's apply (ADR 0137 section 8): the operations the member approved, as one run.
 // 409 memo_tidy_stale (error.stale names the changed notes) and 400 memo_tidy_invalid
 // (error.tidyCode is the validator's code) both change nothing.

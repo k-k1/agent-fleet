@@ -1230,3 +1230,61 @@ func (a memoAPI) setRunNext(w http.ResponseWriter, r *http.Request, _ store.Iden
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+type memoConfirmPrerequisiteIn struct {
+	PrerequisiteID string `json:"prerequisiteId"`
+	DeliveryID     string `json:"deliveryId"`
+}
+
+// confirmPrerequisite records the owner's confirmation against the run shown on an
+// existing dependency. Console only, like release. It leaves the run and approvals alone.
+func (a memoAPI) confirmPrerequisite(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	var in memoConfirmPrerequisiteIn
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.PrerequisiteID == "" || in.DeliveryID == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "prerequisiteId and deliveryId are required"})
+		return
+	}
+	stale := &apiError{http.StatusConflict, "memo_prerequisite_changed", "this prerequisite or its run has changed"}
+	err := a.store.MemoTx(r.Context(), mv.MembershipID, func(tx store.MemoTxOps) error {
+		dep, found, err := tx.GetMemo(r.PathValue("id"))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return memoTxFail(&apiError{http.StatusNotFound, "not_found", "memo not found"})
+		}
+		_, inQueue, err := tx.QueueOf(dep.Repo, dep.Category)
+		if err != nil {
+			return err
+		}
+		if !inQueue {
+			return memoTxFail(stale)
+		}
+		items, err := memoafter.Status(dep, memoafter.TxLookup(tx, nil, time.Now()))
+		if err != nil {
+			return err
+		}
+		for _, it := range items {
+			if it.ID != in.PrerequisiteID || it.Delivery != in.DeliveryID {
+				continue
+			}
+			if it.State == memoafter.Satisfied {
+				return nil
+			}
+			if it.ConfirmDeliveryID == "" || (dep.State != store.MemoStateHeld && dep.State != store.MemoStatePending) {
+				break
+			}
+			if confirmed, err := tx.ConfirmMemoDelivery(it.ID, it.ConfirmDeliveryID); err != nil || confirmed {
+				return err
+			}
+			break
+		}
+		return memoTxFail(stale)
+	})
+	if aerr := memoTxResult(err); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
