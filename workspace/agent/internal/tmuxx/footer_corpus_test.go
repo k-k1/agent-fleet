@@ -89,6 +89,9 @@ func TestFooterCorpus(t *testing.T) {
 			if got := agentsViewActive(s); got != want.agents {
 				t.Errorf("AgentsViewActive(%s) = %v, want %v", name, got, want.agents)
 			}
+			if main := (want.idle || want.busy) && !want.agents; ClaudeMainComposer(s) != main {
+				t.Errorf("ClaudeMainComposer(%s) should be %v", name, main)
+			}
 			// The limit-menu verdict is pinned on every frame too, and the false side
 			// is the important one: a false positive reads a running turn as stopped
 			// at the limit and goes on to call HealIdle, so the whole corpus holds

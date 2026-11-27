@@ -922,6 +922,7 @@ type hookAgent struct {
 	mu      sync.Mutex
 	onTurn  func()
 	status  int
+	code    string
 	prompts []string
 }
 
@@ -935,7 +936,7 @@ func (e *inboxEnv) useHookAgent() *hookAgent {
 		h.mu.Lock()
 		p, _ := body["prompt"].(string)
 		h.prompts = append(h.prompts, p)
-		f, status := h.onTurn, h.status
+		f, status, code := h.onTurn, h.status, h.code
 		h.onTurn = nil
 		h.mu.Unlock()
 		if f != nil {
@@ -944,10 +945,14 @@ func (e *inboxEnv) useHookAgent() *hookAgent {
 		w.Header().Set("Content-Type", "application/json")
 		if status != 0 {
 			w.WriteHeader(status)
-			_, _ = w.Write([]byte(`{"error":{"code":"not_running","message":"down"}}`))
+			if code == "" {
+				code = "not_running"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code}})
 			return
 		}
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/sessions/"), "/turn")
+		_ = json.NewEncoder(w).Encode(map[string]any{"sent": name, "op": "start", "submit_confirmed": true})
 	}))
 	e.t.Cleanup(h.close)
 	e.workspaceFor("a", newCapturingAgent(e.t))
@@ -1193,6 +1198,28 @@ func TestMemoQueueRefusedFlushLeavesRowsAsTheyWere(t *testing.T) {
 			t.Fatalf("held after a failed send: %+v", got)
 		}
 		e.assertPendingReleaseMatches()
+	})
+}
+
+func TestMemoQueueUnconfirmedFlushDisarmsReleasedRows(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		h := e.useHookAgent()
+		console, tok := memoFaceClient{"console", e}, memoFaceClient{"token", e}
+		_, plain := console.create(textMemo("r", "", "a note"))
+		_, pending := console.create(textMemo("r", "q", "released"))
+		_, held := tok.create(textMemo("r", "q", "waiting"))
+		h.status, h.code = http.StatusBadGateway, "delivery_unconfirmed"
+		res := console.http("POST", "/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{plain.ID, pending.ID, held.ID}})
+		if res.Code != http.StatusBadGateway || decode[errResp](t, res).Error.Code != "delivery_unconfirmed" || len(h.prompts) != 1 {
+			t.Fatalf("flush = %d %s, prompts = %q", res.Code, res.Body.String(), h.prompts)
+		}
+		for id, state := range map[string]string{plain.ID: "", pending.ID: store.MemoStateUnconfirmed, held.ID: store.MemoStateUnconfirmed} {
+			if got := e.memoRow(id); got.State != state || got.SentAt != "" || got.SendToken != "" ||
+				got.ReleaseHash != "" || got.ReleasedAt != "" || got.ReleasedBy != "" {
+				t.Fatalf("row %s after unconfirmed flush (want %q): %+v", id, state, got)
+			}
+		}
 	})
 }
 

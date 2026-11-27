@@ -205,7 +205,8 @@ func newCapturingAgent(t *testing.T) *capturingAgent {
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/turn"):
 			p, _ := body["prompt"].(string)
 			c.prompts = append(c.prompts, p)
-			_, _ = io.WriteString(w, `{"ok":true}`)
+			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/sessions/"), "/turn")
+			_ = json.NewEncoder(w).Encode(map[string]any{"sent": name, "op": "start", "submit_confirmed": true})
 		case r.Method == "POST" && r.URL.Path == "/sessions":
 			c.creates = append(c.creates, body)
 			name := "s-" + strconv.Itoa(len(c.creates))

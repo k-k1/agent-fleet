@@ -549,7 +549,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	}
 	// workingRev names the optimistic "working" this send wrote, the one write an unconfirmed
 	// delivery may take back: a record read back afterwards could already be a hook's.
-	workingRev, ok := submitPromptTUIRev(lease, w, name, pane, body.Prompt)
+	workingRev, ok := submitPromptTUI(r.Context(), lease, w, name, pane, body.Prompt, false)
 	if !ok {
 		return
 	}
@@ -834,18 +834,9 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-// submitPromptTUI is the shared {prompt}→TUI delivery behind /input's {prompt} path
-// and /turn's tui start/steer route. Guards, types + submits, and marks working;
-// on failure the HTTP error is already written and false is returned. The caller holds the
-// session's lease (ADR 0115 decision 11.1).
-func submitPromptTUI(lease *lifegate.Lease, w http.ResponseWriter, name, pane, prompt string) bool {
-	_, ok := submitPromptTUIRev(lease, w, name, pane, prompt)
-	return ok
-}
-
-// submitPromptTUIRev is submitPromptTUI that also returns the Rev of the optimistic "working"
-// it wrote ("" when it wrote none), the one write an unconfirmed delivery may take back.
-func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane, prompt string) (workingRev string, ok bool) {
+// submitPromptTUI shares the Terminal guards between /input and /turn. For optimistic
+// sends it returns the revision of its working mark, so /input can withdraw that write.
+func submitPromptTUI(ctx context.Context, lease *lifegate.Lease, w http.ResponseWriter, name, pane, prompt string, confirmSubmit bool) (workingRev string, ok bool) {
 	if err := lease.Check(name); err != nil {
 		writeGateErr(w, err)
 		return "", false
@@ -880,6 +871,16 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 		}
 		writeBlockedErr(w, st, blockedKind)
 		return "", false
+	}
+	if confirmSubmit {
+		meta, ok := session.ReadMeta(name)
+		if !ok {
+			httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session")
+			return "", false
+		}
+		if NormalizeKind(meta.Kind) == session.KindClaude {
+			return "", submitObservedClaudePrompt(ctx, w, meta, pane, prompt)
+		}
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
 	// send_to_session right after create (no initial_prompt) would vanish. Its
@@ -1422,8 +1423,8 @@ func writeBlockedErr(w http.ResponseWriter, state, kind string) {
 // after a send doesn't read a stale idle before claude's UserPromptSubmit hook fires.
 //
 // It records no turn mark: the prompt-delivery sites, which can take the baseline before the
-// input is delivered, use markSessionWorkingFrom (submitPromptTUI, its revision variant and
-// injectSessionPrompt). Any other caller's turn keeps the settle window.
+// input is delivered, use markSessionWorkingFrom (submitPromptTUI and injectSessionPrompt).
+// Any other caller's turn keeps the settle window.
 func markSessionWorking(name string) (rev string) {
 	return markSessionWorkingFrom(name, turnMarkBaseline{})
 }

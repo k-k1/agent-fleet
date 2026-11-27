@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -78,6 +79,103 @@ func TestHandleSessionTurnStartTypesPrompt(t *testing.T) {
 			if !strings.Contains(string(got), "paste-buffer -p -d -b af-prompt-"+name+"-") ||
 				!strings.Contains(string(got), "send-keys -t %7 Enter") {
 				t.Fatalf("tmux commands = %q, want bracketed paste + Enter", got)
+			}
+		})
+	}
+}
+
+func TestHandleSessionTurnConfirmsClaudeSubmitOnce(t *testing.T) {
+	const prompt = "Please review this memo"
+	const userRow = `{"type":"user","message":{"role":"user","content":"Please review this memo"}}` + "\n"
+	rule := strings.Repeat("─", 40)
+	box := func(draft string) string {
+		return rule + "\n❯ " + draft + "\n" + rule + "\n  ⏸ manual mode on · ← for agents\n"
+	}
+	for _, tc := range []struct {
+		name      string
+		confirmed bool
+	}{
+		{name: "Enter ignored"},
+		{name: "matching user turn recorded later", confirmed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := fakeTmux(t)
+			const name = "turn_claude"
+			m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
+			session.WriteMeta(m)
+			sid := session.UUID(m.Dir, m.Name)
+			dir := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", "-submit")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			transcript := filepath.Join(dir, sid+".jsonl")
+			if err := os.WriteFile(transcript, []byte(userRow), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			rowPath := filepath.Join(dir, "user-row")
+			if err := os.WriteFile(rowPath, []byte(userRow), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMUX_TEST_TRANSCRIPT", transcript)
+			t.Setenv("TMUX_TEST_USER_ROW", rowPath)
+			if tc.confirmed {
+				t.Setenv("TMUX_TEST_CONFIRM", "1")
+			} else {
+				t.Setenv("TMUX_TEST_CONFIRM", "0")
+			}
+			script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  list-panes) printf '1 %%7\n' ;;
+  send-keys)
+    if [ "$4" = Enter ]; then
+      printf '%s\n' '{"type":"user","message":{"role":"user","content":"Another prompt"}}' >> "$TMUX_TEST_TRANSCRIPT"
+      if [ "$TMUX_TEST_CONFIRM" = 1 ]; then
+        ( /bin/sleep 0.15 && /bin/cat "$TMUX_TEST_USER_ROW" >> "$TMUX_TEST_TRANSCRIPT" ) </dev/null >/dev/null 2>&1 &
+      fi
+    fi ;;
+esac
+`
+			if err := os.WriteFile(filepath.Join(filepath.Dir(logPath), "tmux"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			oldCapture, oldWindow, oldPoll := reclaimCapture, claudeSubmitWindow, deliveryPoll
+			frame := "❯ 1. Yes, I trust this folder\n  2. No, exit\n"
+			reclaimCapture = func(string) string { return frame }
+			claudeSubmitWindow, deliveryPoll = 80*time.Millisecond, 10*time.Millisecond
+			if tc.confirmed {
+				claudeSubmitWindow = 3 * time.Second
+			}
+			t.Cleanup(func() { reclaimCapture, claudeSubmitWindow, deliveryPoll = oldCapture, oldWindow, oldPoll })
+			body := fmt.Sprintf(`{"op":"start","prompt":%q,"confirm_submit":true}`, prompt)
+			if boot := postTurn(t, name, body); boot.Code != http.StatusConflict ||
+				!strings.Contains(boot.Body.String(), "composer_not_ready") {
+				t.Fatalf("send during startup = %d %s", boot.Code, boot.Body.String())
+			}
+			frame = box("")
+			rec := postTurn(t, name, body)
+			if tc.confirmed {
+				if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"submit_confirmed":true`) {
+					t.Fatalf("submit = %d %s, want confirmed", rec.Code, rec.Body.String())
+				}
+				got, err := os.ReadFile(transcript)
+				if err != nil || strings.Count(string(got), userRow) != 2 {
+					t.Fatalf("confirmation preceded the new user row: %s (%v)", got, err)
+				}
+			} else {
+				if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "delivery_unconfirmed") {
+					t.Fatalf("submit = %d %s, want unconfirmed", rec.Code, rec.Body.String())
+				}
+				frame = box(prompt)
+				if again := postTurn(t, name, body); again.Code != http.StatusConflict ||
+					!strings.Contains(again.Body.String(), "composer_not_empty") {
+					t.Fatalf("send over retained draft = %d %s", again.Code, again.Body.String())
+				}
+			}
+			got, err := os.ReadFile(logPath)
+			if err != nil || strings.Count(string(got), "send-keys -t %7 Enter\n") != 1 ||
+				strings.Count(string(got), "send-keys -t %7 -l -- "+prompt+"\n") != 1 {
+				t.Fatalf("tmux commands = %q (%v), want exactly one prompt and one Enter", got, err)
 			}
 		})
 	}

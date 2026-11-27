@@ -745,6 +745,13 @@ func agentsViewActive(s string) bool {
 	return railMainUnselectedRe.MatchString(tail)
 }
 
+// ClaudeMainComposer reports whether the captured footer belongs to the main conversation's
+// composer. It stays visible during a turn, so it also permits a submit while Claude is busy.
+func ClaudeMainComposer(s string) bool {
+	footer := afterLastComposerBorder(s)
+	return atPromptFooter(footer) && !modalActive(footer) && !agentsViewActive(s)
+}
+
 // afterLastComposerBorder returns the chrome region: everything below the input box's
 // bottom rule (footer / hint / agent rail). "" when the box is not drawn.
 func afterLastComposerBorder(s string) string {

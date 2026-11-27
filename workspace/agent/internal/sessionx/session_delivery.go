@@ -27,8 +27,10 @@ package sessionx
 // be confused with "delivery failed".
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 	"unicode"
@@ -37,10 +39,65 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
+
+// The Terminal lock covers the baseline, the one submit, and observation so another API
+// send cannot supply the evidence. Keep this wait shorter than an interrupt's lock wait.
+var claudeSubmitWindow = 8 * time.Second
+
+func submitObservedClaudePrompt(ctx context.Context, w http.ResponseWriter, m session.Meta, pane, prompt string) bool {
+	sid := session.UUID(m.Dir, m.Name)
+	baseline := claude.TranscriptSnapshot(sid)
+	frame := reclaimCapture(pane)
+	draft, _, hasBox := claudeBox(frame)
+	if !hasBox || !tmuxx.ClaudeMainComposer(frame) {
+		httpx.WriteErr(w, http.StatusConflict, "composer_not_ready", "Claude's conversation composer is not ready. Check the terminal before sending again.")
+		return false
+	}
+	if strings.TrimSpace(draft) != "" {
+		httpx.WriteErr(w, http.StatusConflict, "composer_not_empty", "Claude's composer already holds a draft. Clear or submit it in the terminal before sending again.")
+		return false
+	}
+	if ctx.Err() != nil {
+		httpx.WriteErr(w, http.StatusRequestTimeout, "send_cancelled", "The request ended before the prompt was sent.")
+		return false
+	}
+	if err := typeLineAndSubmit(m.Name, pane, prompt); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return false
+	}
+	if !slashCmdRe.MatchString(strings.TrimSpace(prompt)) {
+		cancelStopArmOnNewPrompt(m.Name)
+	}
+	// Claude's hooks own the working state. The tmux exit status and the spinner can both
+	// precede a user turn or belong to other work, so neither settles this send.
+	if !awaitClaudeSubmit(ctx, sid, baseline, claude.ShapePrompt(prompt)) {
+		httpx.WriteErr(w, http.StatusBadGateway, "delivery_unconfirmed", "Claude did not record the prompt as a user turn within the observation window. Check the terminal before sending again.")
+		return false
+	}
+	return true
+}
+
+func awaitClaudeSubmit(ctx context.Context, sid string, baseline map[string]int64, prompt string) bool {
+	ctx, cancel := context.WithTimeout(ctx, claudeSubmitWindow)
+	defer cancel()
+	poll := time.NewTicker(deliveryPoll)
+	defer poll.Stop()
+	for {
+		if claude.PromptSubmittedSince(sid, baseline, prompt) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-poll.C:
+		}
+	}
+}
 
 // The evidence waits. Variables so tests shorten them.
 var (

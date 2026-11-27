@@ -376,7 +376,7 @@ func unprovenBoxBlocks(name, pane string) bool {
 
 // strandedPrompts holds the sessions whose input box a stop left holding text it could not take
 // out: a prompt shown as a paste placeholder or scrolled, one that would not clear. The next send
-// would be typed after it and both would run as one prompt (issue #3290), so submitPromptTUIRev
+// would be typed after it and both would run as one prompt (issue #3290), so submitPromptTUI
 // refuses until the box reads empty.
 var strandedPrompts sync.Map
 

@@ -1280,10 +1280,11 @@ func memoSameSentContent(cur, sent store.Memo) bool {
 		cur.RefProvider == sent.RefProvider && cur.RefKey == sent.RefKey && cur.RefURL == sent.RefURL
 }
 
-// memoSendUnknown is a send whose outcome is unknown: the Agent was not reached or did not
-// answer with one of its own errors. An Agent error (question_pending, not_running, ...) is a
-// refusal, and nothing was sent.
-func memoSendUnknown(aerr *apiError) bool { return aerr != nil && aerr.code == "flush_failed" }
+// A transport failure, missing confirmation, or failed tmux command can mean the bytes
+// already reached the pane. A refusal such as question_pending happens before typing.
+func memoSendUnknown(aerr *apiError) bool {
+	return aerr != nil && (aerr.code == "flush_failed" || aerr.code == "delivery_unconfirmed" || aerr.code == "tmux_failed")
+}
 
 // memoSettleSend records a send's outcome on the rows that still carry its reservation. Sent:
 // sent_at, and a queue message delivered. Refused: as before the flush. Unknown: a held or
@@ -1334,21 +1335,31 @@ func memoSettleSend(ctx context.Context, st store.MemoStore, membershipID, token
 // deliberately TUI-only now; managed sessions have no tmux process, so sending a
 // memo there incorrectly reports not_running. Old workspace images can briefly lag
 // the Control Plane during a rollout, hence the narrow fallback when /turn itself is
-// absent (a plain 404/405 rather than a structured Agent error).
+// absent (a plain 404/405 rather than a structured Agent error). Neither an older
+// /turn that ignored the flag nor legacy /input can confirm submission.
 func sendMemoPrompt(ctx context.Context, rt runtime.Runtime, sessionName, prompt string) *apiError {
 	path := "/sessions/" + url.PathEscape(sessionName)
-	payload, _ := json.Marshal(map[string]string{"op": "start", "prompt": prompt})
-	if _, err := agentText(ctx, rt, http.MethodPost, path+"/turn", payload); err == nil {
-		return nil
-	} else if !agentEndpointMissing(err) {
+	payload, _ := json.Marshal(map[string]any{"op": "start", "prompt": prompt, "confirm_submit": true})
+	body, err := agentText(ctx, rt, http.MethodPost, path+"/turn", payload)
+	switch {
+	case err == nil:
+		var ack struct {
+			Sent            string `json:"sent"`
+			Op              string `json:"op"`
+			SubmitConfirmed bool   `json:"submit_confirmed"`
+		}
+		if json.Unmarshal([]byte(body), &ack) == nil && ack.Sent == sessionName && ack.Op == "start" && ack.SubmitConfirmed {
+			return nil
+		}
+	case !agentEndpointMissing(err):
 		return memoAgentError(err)
+	default:
+		legacy, _ := json.Marshal(map[string]string{"prompt": prompt})
+		if _, err := agentText(ctx, rt, http.MethodPost, path+"/input", legacy); err != nil {
+			return memoAgentError(err)
+		}
 	}
-
-	legacy, _ := json.Marshal(map[string]string{"prompt": prompt})
-	if _, err := agentText(ctx, rt, http.MethodPost, path+"/input", legacy); err != nil {
-		return memoAgentError(err)
-	}
-	return nil
+	return &apiError{http.StatusBadGateway, "delivery_unconfirmed", "the workspace agent did not confirm submission; check the session before sending again"}
 }
 
 // agentEndpointMissing distinguishes an old Agent with no /turn route from a real

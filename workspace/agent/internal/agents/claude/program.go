@@ -277,6 +277,26 @@ func TranscriptSnapshot(sid string) map[string]int64 {
 	return snap
 }
 
+// PromptSubmittedSince looks for the submitted text in a new main-conversation user row.
+// A queue record only proves acceptance into Claude's in-memory queue, which can be lost.
+func PromptSubmittedSince(sid string, snap map[string]int64, prompt string) bool {
+	prompt = strings.TrimSpace(strings.ReplaceAll(prompt, "\r\n", "\n"))
+	if prompt == "" {
+		return false
+	}
+	for _, p := range jsonlPaths(sid) {
+		for line := range bytes.SplitSeq(appendedSince(p, snap[p]), []byte("\n")) {
+			var row forkLine
+			if json.Unmarshal(line, &row) == nil && row.Type == "user" && row.Message.Role == "user" &&
+				isUserPrompt(row.Message.Content) && !claudeOwnLine(line) &&
+				strings.ReplaceAll(contentText(row.Message.Content), "\r\n", "\n") == prompt {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // UserTurnAppendedSince reports whether a `"type":"user"` line landed in sid's log
 // AFTER snap was taken. claude persists a submitted prompt as a user line within well
 // under a second of a real submit, so this — not tmux send-keys exiting 0, which only
