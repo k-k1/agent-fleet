@@ -95,10 +95,12 @@ deploy/local/apt-pin-check.sh        # exit 0 は「ピンがまだ配られて�
 #    issue に出ているピン済みパッケージ（remedy `bump`）ごとに、workspace/Dockerfile のピンと
 #    issue の "Fixed in" を比べ、ピンが古ければ main の apt-pin-bump の ARG 値を持ち込むか
 #    deploy/local/apt-pin-bump.sh を実行し、commit する（"build(workspace): ..."）。
-#    続いてランタイム段の upgrade: Debian の `rebuild` 行があるイメージごとに、タグの Dockerfile が
-#    それを走らせているか確かめ、無ければ main のランタイム段の apt ブロック一式
-#    （`apt-get update --error-on=any` と `apt-get upgrade`。workspace/Dockerfile と control-plane/Dockerfile）を
-#    持ち込み、commit する（"build(images): ..."）。無いままだと、同じベースから同じ脆弱なパッケージを作り直すだけになる。
+#    続いてランタイム段の upgrade: Debian の `rebuild` 行があるイメージごとに（ネイティブ rootfs は
+#    workspace/Dockerfile が対象）、タグのランタイム段が `apt-get update --error-on=any` と
+#    `apt-get upgrade` の両方を走らせているか確かめ、どちらかが欠けていれば main のランタイム段の
+#    apt ブロックを持ち込み、commit する（"build(images): ..."）。upgrade が無いと同じベースから同じ
+#    脆弱なパッケージを作り直すだけになり、--error-on=any が無いと trixie-security の取得失敗のまま
+#    修正なしで公開できてしまう。
 git grep -n -e 'apt-get update' -e 'apt-get upgrade' HEAD -- workspace/Dockerfile control-plane/Dockerfile
 
 # 3) リリースノートは通常どおり（deploy/release/notes/README.md）: 0.40.1.md と 0.40.1.ja.md、

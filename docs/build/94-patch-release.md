@@ -104,11 +104,12 @@ deploy/local/apt-pin-check.sh        # exit 0 only says the pin is still SERVED
 #    workspace/Dockerfile with the issue's "Fixed in"; if the pin is older, bring the new
 #    ARG value over from main (the apt-pin-bump PR) or run deploy/local/apt-pin-bump.sh,
 #    and commit ("build(workspace): ...").
-#    Then the runtime-stage upgrade: for each image with a Debian `rebuild` row, check that
-#    the tag's Dockerfile runs it, and bring main's whole runtime-stage apt block over if not
-#    (`apt-get update --error-on=any`, then `apt-get upgrade`, in workspace/Dockerfile and
-#    control-plane/Dockerfile), and commit ("build(images): ..."). Without it the patch
-#    release rebuilds the same vulnerable package from the same base.
+#    Then the runtime-stage upgrade: for each image with a Debian `rebuild` row (the native
+#    rootfs counts as workspace/Dockerfile), check that the tag's runtime stage runs both
+#    `apt-get update --error-on=any` and `apt-get upgrade`; if either is missing, bring main's
+#    runtime-stage apt block over, and commit ("build(images): ..."). Without the upgrade the
+#    patch release rebuilds the same vulnerable package from the same base; without
+#    --error-on=any a failed trixie-security fetch still lets it publish without the fix.
 git grep -n -e 'apt-get update' -e 'apt-get upgrade' HEAD -- workspace/Dockerfile control-plane/Dockerfile
 
 # 3) the release notes, as for any release (deploy/release/notes/README.md): 0.40.1.md and
