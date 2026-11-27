@@ -206,8 +206,26 @@ describe("where a held MCP call shows", () => {
     expect(toastCount()).toBe(0);
     const reads = state.gets;
     await act(async () => fail());
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
 
     expect(state.gets).toBe(reads);
+    expect(toastCount()).toBe(0);
+  });
+  it("ignores a close after the tenant changes before the old toast is withdrawn", async () => {
+    await render(null);
+    const x = document.querySelector<HTMLButtonElement>(".ui-toast-x")!;
+    const reads = state.gets;
+
+    state.held = false;
+    await act(async () => {
+      state.tenant = "b";
+      useTenantStore.setState({ tenant: state.tenant });
+      x.click();
+    });
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+
+    expect(state.posts).toEqual([]);
+    expect(state.gets).toBe(reads + 1);
     expect(toastCount()).toBe(0);
   });
   // A switch of tenant drops the old list and reads the new one at once, not at the next poll.

@@ -82,9 +82,10 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
           .answer(e, null)
           .then((err) => {
             if (!err || ownerKey() !== who) return;
+            closedIds.current.delete(e.id);
+            if (err.code === "stale") return;
             // Not declined (an answer from the card was already on its way, or the decline
             // failed): the toast comes back, showing how it ends.
-            closedIds.current.delete(e.id);
             if (err.code !== "busy") toast(t("mcpelicit.answer_failed", { reason: errText(err) }), { kind: "warn" });
             void useMcpElicitStore.getState().refresh();
           });
