@@ -66,6 +66,7 @@ func TestHookStateMapping(t *testing.T) {
 	}{
 		{"PreInvocation", hookInput{}, "working"},
 		{"PreToolUse", hookInput{}, "working"},
+		{"PostToolUse", hookInput{}, ""},
 		{"Stop", hookInput{FullyIdle: ptr(true)}, "idle"},
 		{"Stop", hookInput{}, "idle"},
 		{"Stop", hookInput{FullyIdle: ptr(false)}, "working"},
@@ -187,7 +188,7 @@ func TestEnsureHooksMergesByName(t *testing.T) {
 		t.Fatalf("user's hook changed: %v", got["mine"])
 	}
 	ours := got[hookName].(map[string]any)
-	for _, ev := range []string{"SessionStart", "PreInvocation", "PreToolUse", "Stop"} {
+	for _, ev := range []string{"SessionStart", "PreInvocation", "PreToolUse", "PostToolUse", "Stop"} {
 		if _, ok := ours[ev]; !ok {
 			t.Errorf("event %s missing", ev)
 		}
@@ -199,6 +200,10 @@ func TestEnsureHooksMergesByName(t *testing.T) {
 	// The tool events are grouped, the others are not.
 	if _, ok := ours["PreToolUse"].([]any)[0].(map[string]any)["hooks"]; !ok {
 		t.Error("PreToolUse is not a {matcher, hooks} group")
+	}
+	post := ours["PostToolUse"].([]any)[0].(map[string]any)
+	if post["matcher"] != "run_command" || len(post["hooks"].([]any)) != 1 {
+		t.Errorf("PostToolUse must observe run_command only: %+v", post)
 	}
 
 	// Idempotent: a second run writes nothing.
@@ -296,7 +301,7 @@ func TestNeutralOutputPerEvent(t *testing.T) {
 	if got := neutralOutput([]string{"PreToolUse"}); got != "" {
 		t.Errorf("PreToolUse output = %q, want empty", got)
 	}
-	for _, args := range [][]string{{"Stop"}, {"SessionStart"}, {"PreInvocation"}, nil} {
+	for _, args := range [][]string{{"Stop"}, {"SessionStart"}, {"PreInvocation"}, {"PostToolUse"}, nil} {
 		got := neutralOutput(args)
 		var obj map[string]any
 		if got != "{}" || json.Unmarshal([]byte(got), &obj) != nil {

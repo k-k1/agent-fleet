@@ -7,11 +7,14 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
+// The CLI uses a local ID or prefixes it with the task's conversation UUID.
+const taskIDPattern = `(?:` + conversationIDPattern + `/)?([A-Za-z0-9_-]+)`
+
 var (
 	commandExitRe       = regexp.MustCompile(`^(?:The command|Command) exited with code (-?[0-9]+)\.$`)
 	backgroundCommandRe = regexp.MustCompile(`^Background command ID: ([A-Za-z0-9_-]+)$`)
-	backgroundTaskRe    = regexp.MustCompile(`^Tool is running as a background task with task id: ([A-Za-z0-9_-]+)$`)
-	taskStatusRe        = regexp.MustCompile(`^Task: ([A-Za-z0-9_-]+)\nStatus: ((?i:pending|queued|running|waiting|done|completed|error|failed|canceled|interrupted|halted))(?:\n|$)`)
+	backgroundTaskRe    = regexp.MustCompile(`^Tool is running as a background task with task id: ` + taskIDPattern + `$`)
+	taskStatusRe        = regexp.MustCompile(`^Task: ` + taskIDPattern + `\nStatus: ((?i:pending|queued|running|waiting|done|completed|error|failed|canceled|interrupted|halted))(?:\n|$)`)
 	readFileRe          = regexp.MustCompile("^File Path: `((?:file:///|/)[^`\n]+)`\nTotal Lines: [0-9]+\nTotal Bytes: [0-9]+(?:\n|$)")
 )
 

@@ -112,7 +112,7 @@ func TestTranscriptClassifiesRecognizableToolResults(t *testing.T) {
 	if _, err := f.Seek(0, 0); err != nil {
 		t.Fatal(err)
 	}
-	turns := parseTranscript(f, nil)
+	turns := parseTranscript(f, nil, nil)
 	if len(turns) != 1 || len(turns[0].Parts) != len(rows) {
 		t.Fatalf("unexpected parsed turns: %+v", turns)
 	}

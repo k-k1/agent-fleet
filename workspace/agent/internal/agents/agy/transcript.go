@@ -75,7 +75,7 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 		(len(failures) == 0 || failures[len(failures)-1].index < failure.index) {
 		failures = append(failures, failure)
 	}
-	td.Turns = parseTranscript(f, failures)
+	td.Turns = parseTranscript(f, failures, readCommandStep(conv))
 	// A conversation that never switched models records none, so its turns carry the model
 	// the session was launched (or last resumed) with.
 	stampModel(td.Turns, modelLabel(m.Model))
@@ -140,7 +140,7 @@ var commandIndentRe = regexp.MustCompile(`(?m)^\t{4}`)
 
 func stripCommandIndent(s string) string { return commandIndentRe.ReplaceAllString(s, "") }
 
-func parseTranscript(f *os.File, failures []executorErrorStep) []transcript.Turn {
+func parseTranscript(f *os.File, failures []executorErrorStep, commandAt func(int) string) []transcript.Turn {
 	var turns []transcript.Turn
 	var cur *transcript.Turn // open assistant turn
 	flush := func() {
@@ -225,7 +225,7 @@ func parseTranscript(f *os.File, failures []executorErrorStep) []transcript.Turn
 			if cur == nil {
 				cur = &transcript.Turn{Role: "assistant", Idx: line, Model: model}
 			}
-			cur.Parts = append(cur.Parts, toolStep(s.Type, s.Content))
+			cur.Parts = append(cur.Parts, withCommand(toolStep(s.Type, s.Content), s, commandAt))
 		default:
 			// SYSTEM bookkeeping (CONVERSATION_HISTORY / CHECKPOINT / SYSTEM_MESSAGE):
 			// model-facing context management, not conversation content.
