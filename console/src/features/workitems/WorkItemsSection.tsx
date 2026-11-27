@@ -39,6 +39,7 @@ import { useWorkItemStore, startWorkItemPolling } from "./store.ts";
 import { useWorkItemModal } from "./modal.ts";
 import { useOpenWorkItemSession } from "./WorkItemModalHost.tsx";
 import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
+import { JiraWorkTypeIcon } from "./JiraWorkTypeIcon.tsx";
 import { WorkItemStateIcon } from "./WorkItemStateIcon.tsx";
 import { LabelBadge } from "./LabelBadge.tsx";
 import { resolveSessionRef } from "./sessionRefs.ts";
@@ -89,6 +90,8 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
   const tr = useT();
   const tone = stateTone(item);
   const stateText = stateLabel(item.state);
+  const jira = item.provider === "jira";
+  const jiraState = ["open", "in_progress", "done"].includes(item.state) ? item.state : "other";
   const busy = started.length > 0;
   // The row shows only what differs between rows (docs/log/80 §80.18.2). An assignee or repo
   // that is the same on every row is dropped, and if nothing is left the second line is not
@@ -105,14 +108,16 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
   const conflictText = item.mergeable === "conflict" ? tr("wi.detail_merge_conflict") : "";
   const unreadText = unread ? tr(unread === "comments" ? "wi.unread_comments" : "wi.unread_updated") : "";
   const commentCount = item.commentCount ?? 0;
-  const issueState = item.kind === "issue" && item.provider === "github" ? stateText : "";
-  const label = [tr("wi.open_detail", { key: item.key }), issueState, unreadText, ciText, conflictText].filter(Boolean).join(" — ");
+  const issueState = jira || (item.kind === "issue" && item.provider === "github") ? stateText : "";
+  const label = [
+    tr("wi.open_detail", { key: item.key }), jira ? item.type : "", issueState, unreadText, ciText, conflictText,
+  ].filter(Boolean).join(" — ");
   return (
     // The whole row opens the detail modal. The external link and the started badge nested
     // inside it are controls of their own, so each stops propagation before acting; otherwise
     // one press would open two things.
     <div
-      className={"wi-row" + (item.state === "done" ? " wi-row--done" : "") + (unread ? " is-unread" : "")}
+      className={"wi-row" + (item.state === "done" ? " wi-row--done" : "") + (jira ? " wi-row--jira" : "") + (unread ? " is-unread" : "")}
       role="button"
       tabIndex={0}
       aria-label={label}
@@ -124,15 +129,18 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
         }
       }}
     >
-      <span className={`wi-dot tone-${tone}`} title={stateText}>
-        <WorkItemStateIcon name={workItemIcon(item)} />
-      </span>
+      {jira ? <JiraWorkTypeIcon type={item.type} /> : (
+        <span className={`wi-dot tone-${tone}`} title={stateText}>
+          <WorkItemStateIcon name={workItemIcon(item)} />
+        </span>
+      )}
       <div className="wi-info">
         <div className="wi-head">
           {unread && <span className="wi-unread" role="img" aria-label={unreadText} title={unreadText} />}
           <span className="wi-key" title={item.key}>
             {shortKey(item.key)}
           </span>
+          {jira && <span className={`wi-jira-state wi-jira-state--${jiraState}`} title={stateText} aria-hidden="true" />}
           <span className="wi-title" title={item.assignee ? `${item.title} — @${item.assignee}` : item.title}>
             {item.title}
           </span>
