@@ -540,6 +540,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.home_resize_no_home": "There is no home yet. The next one created will be {to} GiB.",
   "admin.home_resize_failed":
     "The home could not be grown. The setting is saved, so try saving again later (one volume can only be modified once every 6 hours): {detail}",
+  "admin.memo_run_limit": "Max open auto-runs",
+  "admin.memo_run_limit_default": "Default open auto-runs per member",
+  "admin.memo_run_limit_inherit": "Leave blank to use the tenant default ({n}).",
+  "admin.memo_run_limit_effective": "Open auto-run limit {n}",
+  "admin.memo_run_limit_range": "Enter a whole number from 1 to 10.",
   "admin.max_sessions_label": "Max sessions",
   // A member's 0 is not "unlimited": the tenant's max sessions applies (sessionQuotaExceeded).
   "admin.max_sessions_zero": "0 = tenant's limit",

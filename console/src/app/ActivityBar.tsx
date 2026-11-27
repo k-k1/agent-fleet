@@ -215,6 +215,8 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
       <span className="actbar-rule" />
       {views.map((v) => {
         const badge = badges[v.id];
+        const count = badge?.openRuns ?? badge?.count;
+        const description = badge ? badgeText(badge, tr, v.id) : "";
         const active = shown && view === v.id;
         const name = tr(v.label);
         return (
@@ -225,7 +227,8 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
             data-rail-view={v.id}
             aria-pressed={active}
             aria-label={name}
-            title={badge ? `${name} — ${badgeText(badge, tr, v.id)}` : name}
+            aria-description={badge?.openRuns !== undefined ? description : undefined}
+            title={badge ? `${name} — ${description}` : name}
             onClick={() => {
               setAnnounced("");
               if (foldable) pickView(v.id);
@@ -235,8 +238,8 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
             <Icon name={v.icon} />
             {v.mark && <Icon name={v.mark} className="actbar-mark" />}
             {badge && (
-              <span className={"actbar-badge tone-" + badge.tone} data-badge={badge.tone}>
-                {badge.count != null ? (badge.count > 99 ? "99+" : badge.count) : ""}
+              <span className={"actbar-badge tone-" + badge.tone + (count != null ? " has-count" : "")} data-badge={badge.tone}>
+                {count != null ? (count > 99 ? "99+" : count) : ""}
               </span>
             )}
           </button>
@@ -433,14 +436,17 @@ function LaunchButton({ id, icon, label, name, onClick }: { id: string; icon: st
 }
 
 function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): string {
+  const open = b.openRuns === undefined ? "" : tCount("rail.badge.open_runs", b.openRuns);
   switch (b.tone) {
+    case "running":
+      return open;
     case "waiting":
       // What waits differs by view: sessions on an answer, proposals and memos on a decision.
-      return tCount(view === "shared" ? "rail.badge.handoffs" : view === "memory" ? "rail.badge.proposals" : view === "memo" ? "rail.badge.memos" : view === "autorun" ? "rail.badge.runs" : "rail.badge.waiting", b.count);
+      return [open, tCount(view === "shared" ? "rail.badge.handoffs" : view === "memory" ? "rail.badge.proposals" : view === "memo" ? "rail.badge.memos" : view === "autorun" ? "rail.badge.runs" : "rail.badge.waiting", b.count)].filter(Boolean).join(" · ");
     case "news":
       return tCount("rail.badge.news", b.count);
     case "failed":
-      return tr(view === "autorun" ? "rail.badge.run_failed" : "rail.badge.failed");
+      return [open, tr(view === "autorun" ? "rail.badge.run_failed" : "rail.badge.failed")].filter(Boolean).join(" · ");
     default:
       return tr("rail.badge.unread");
   }
@@ -492,9 +498,9 @@ function useRailBadges(onScreen: RailView | null, activeShown: boolean): Partial
   // client-side marks one unread (notifications never target the shared list).
   const pendingHandoffs = useHandoffStore((s) => pendingHandoffCount(s.received));
   // The runs the Auto-run view lists, read here too: the badge cannot wait for the view to mount.
-  useAutoRunFeed(running);
-  const { queues: runQueues, deliveries: queueRuns, loaded: autoRunsLoaded } = useScopedAutoRuns();
-  // The rows the view lists under the active working set, so the count and the acknowledgement match them.
+  useAutoRunFeed(true);
+  const { queues: runQueues, deliveries: queueRuns, loaded: autoRunsLoaded, runCapacity } = useScopedAutoRuns();
+  // Waiting and failure cues lead to rows in the active working set.
   const runs = useMemo(() => scopeRuns(buildRuns(sessions, queueRuns), runQueues, wset), [sessions, queueRuns, runQueues, wset]);
   const waitingRuns = useMemo(() => waitingRunCount(runs), [runs]);
   const failedAutoRuns = useMemo(() => failedRunKeys(runs), [runs]);
@@ -533,8 +539,11 @@ function useRailBadges(onScreen: RailView | null, activeShown: boolean): Partial
   if (pendingHandoffs > 0) out.shared = { tone: "waiting", count: pendingHandoffs };
   // A run's session waits on the member's answer: stays while the view is open, like a waiting
   // session. A failed run is news: the dot clears when the view has been looked at.
-  if (waitingRuns > 0) out.autorun = { tone: "waiting", count: waitingRuns };
-  else if (onScreen !== "autorun" && autoRunsLoaded && pendingNews(failedAutoRuns, acked.autorun).length > 0) out.autorun = { tone: "failed" };
+  const openRuns = runCapacity?.open;
+  if (waitingRuns > 0) out.autorun = { tone: "waiting", count: waitingRuns, openRuns };
+  else if (onScreen !== "autorun" && autoRunsLoaded && pendingNews(failedAutoRuns, acked.autorun).length > 0) {
+    out.autorun = { tone: "failed", openRuns: openRuns || undefined };
+  } else if (openRuns) out.autorun = { tone: "running", openRuns };
   if (pendingMemory > 0) out.memory = { tone: "waiting", count: pendingMemory };
   // A scheduled run's session waits on the member's answer; the Sessions view does not list it.
   if (waitingScheduled > 0) out.schedules = { tone: "waiting", count: waitingScheduled };

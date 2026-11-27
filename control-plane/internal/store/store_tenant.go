@@ -13,6 +13,7 @@ type Tenant struct {
 	// allowed_emails among them. HiddenProviders (0042) is the one that is DISPLAY
 	// only — accepted methods to leave off this tenant's login page (§61.15.9).
 	AllowedProviders, AutoJoinDomains, AllowedDomains, HiddenProviders string
+	MemoRunLimit                                                       int
 }
 
 // TenantLoginRules is the login-relevant slice of a tenant, as loaded in bulk by
@@ -39,6 +40,7 @@ type TenantStore interface {
 	GetTenant(ctx context.Context, id string) (Tenant, error)
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
+	SetTenantLimitsWithMemoRunLimit(ctx context.Context, tenantID, limitsJSON string, memoRunLimit int) error
 	ListTenants(ctx context.Context) ([]Tenant, error)
 	// DataRootCollisions lists stored tenant slugs and default-tenant user keys that
 	// already share a directory under the data root (store_dataroot.go). Report-only.
@@ -122,15 +124,22 @@ func (s *SQL) SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) 
 	return err
 }
 
+// SetTenantLimitsWithMemoRunLimit saves both settings in one write.
+func (s *SQL) SetTenantLimitsWithMemoRunLimit(ctx context.Context, tenantID, limitsJSON string, memoRunLimit int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET limits=?, memo_run_limit=? WHERE id=?`,
+		limitsJSON, memoRunLimit, tenantID)
+	return err
+}
+
 func (s *SQL) getTenant(ctx context.Context, id string) (Tenant, error) {
 	var t Tenant
 	var keyRef sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
-		        allowed_providers, auto_join_domains, allowed_domains, hidden_providers
+		        allowed_providers, auto_join_domains, allowed_domains, hidden_providers, memo_run_limit
 		 FROM tenant WHERE id=?`, id).
 		Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &keyRef, &t.CreatedAt,
-			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains, &t.HiddenProviders)
+			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains, &t.HiddenProviders, &t.MemoRunLimit)
 	t.KeyRef = keyRef.String
 	return t, err
 }
@@ -241,7 +250,7 @@ func (s *SQL) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, err
 func (s *SQL) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
-		        allowed_providers, auto_join_domains, allowed_domains, hidden_providers
+		        allowed_providers, auto_join_domains, allowed_domains, hidden_providers, memo_run_limit
 		 FROM tenant ORDER BY slug`)
 	if err != nil {
 		return nil, err
@@ -251,7 +260,7 @@ func (s *SQL) ListTenants(ctx context.Context) ([]Tenant, error) {
 	for rows.Next() {
 		var t Tenant
 		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &t.KeyRef, &t.CreatedAt,
-			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains, &t.HiddenProviders); err != nil {
+			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains, &t.HiddenProviders, &t.MemoRunLimit); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

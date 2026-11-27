@@ -651,7 +651,11 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 				return nil
 			}
 		}
-		d, aerr, err := memoReserveAndClaim(tx, q.CategoryID, "", running, limit, true)
+		capacity, err := tx.MemoRunCapacity(q.CategoryID)
+		if err != nil {
+			return err
+		}
+		d, aerr, err := memoReserveAndClaim(tx, q.CategoryID, "", capacity, running, limit, true)
 		if err != nil {
 			return err
 		}
@@ -1012,6 +1016,7 @@ type memoWaitingDetail struct {
 	Waiting   int    `json:"waiting,omitempty"`
 	AgentKind string `json:"agentKind,omitempty"`
 	By        string `json:"by,omitempty"`
+	RunLimit  int    `json:"runLimit,omitempty"`
 	// Blocked is how many pending messages wait for their prerequisites, for below_threshold and
 	// prerequisites.
 	Blocked int `json:"blocked,omitempty"`
@@ -1124,11 +1129,11 @@ func autoHeld(tx store.MemoWaitOps, q store.MemoQueue, now time.Time) (*memoWait
 // memoPlaceTaken says which limit leaves a queue without a place for a run, "" when it has one:
 // "category" when the queue's own slots are taken, "member" when the member's queues together
 // run the most there may be. The claim answers its refusals from the same function.
-func memoPlaceTaken(q store.MemoQueue, inQueue, inMember int) string {
+func memoPlaceTaken(q store.MemoQueue, capacity store.MemoRunCapacity) string {
 	switch {
-	case inQueue >= q.MaxActive:
+	case capacity.QueueOpen >= q.MaxActive:
 		return "category"
-	case inMember >= memoQueueMemberLimit:
+	case capacity.Open >= capacity.Limit:
 		return "member"
 	}
 	return ""
@@ -1182,12 +1187,16 @@ func memoNoneEligible(pending store.QueuePending) *memoWaiting {
 // memoPlaceWaiting is waitNoPlace when the queue has no slot for a run (its own or the member's),
 // nil when it has one.
 func memoPlaceWaiting(tx store.MemoWaitOps, q store.MemoQueue) (*memoWaiting, error) {
-	inQueue, inMember, err := tx.CountLiveDeliveries(q.CategoryID)
+	capacity, err := tx.MemoRunCapacity(q.CategoryID)
 	if err != nil {
 		return nil, err
 	}
-	if by := memoPlaceTaken(q, inQueue, inMember); by != "" {
-		return &memoWaiting{Reason: waitNoPlace, Detail: &memoWaitingDetail{By: by}}, nil
+	if by := memoPlaceTaken(q, capacity); by != "" {
+		detail := &memoWaitingDetail{By: by}
+		if by == "member" {
+			detail.RunLimit = capacity.Limit
+		}
+		return &memoWaiting{Reason: waitNoPlace, Detail: detail}, nil
 	}
 	return nil, nil
 }
@@ -1645,8 +1654,8 @@ func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemb
 		}
 		// A wake is for a message that could fire once its prerequisites read merged: a slot, the
 		// day's fires, a back-off and a usage limit would hold it anyway.
-		inQueue, inMember, err := tx.CountLiveDeliveries(q.CategoryID)
-		if err != nil || memoPlaceTaken(cur, inQueue, inMember) != "" {
+		capacity, err := tx.MemoRunCapacity(q.CategoryID)
+		if err != nil || memoPlaceTaken(cur, capacity) != "" {
 			return err
 		}
 		fires, err := tx.CountDeliveriesCreatedSince(q.CategoryID, store.DeliveryTS(now.Add(-memoFiresWindow)))

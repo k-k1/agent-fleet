@@ -1187,7 +1187,7 @@ func TestMemoDeliveryClaimSkipsAStaleRelease(t *testing.T) {
 // Two Control Planes that see the same free slot cannot both reserve it, also when they pick
 // different messages, and the member-wide limit holds the same way.
 func TestMemoDeliveryReservationHoldsAcrossControlPlanes(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		mid := e.members["a"]
 		qs := []string{
 			e.queueWith("app", "a", map[string]any{"maxActive": 2, "batch": 1}),
@@ -1202,8 +1202,11 @@ func TestMemoDeliveryReservationHoldsAcrossControlPlanes(t *testing.T) {
 		fire := func(st *store.SQL, q string) (bool, error) {
 			var aerr *apiError
 			err := st.MemoTx(context.Background(), mid, func(tx store.MemoTxOps) error {
-				var err error
-				_, aerr, err = memoReserveAndClaim(tx, q, "", -1, 0, false)
+				capacity, err := tx.MemoRunCapacity(q)
+				if err != nil {
+					return err
+				}
+				_, aerr, err = memoReserveAndClaim(tx, q, "", capacity, -1, 0, false)
 				return err
 			})
 			if err != nil {
@@ -1218,10 +1221,12 @@ func TestMemoDeliveryReservationHoldsAcrossControlPlanes(t *testing.T) {
 			var wg sync.WaitGroup
 			var mu sync.Mutex
 			won, errs := 0, []error{}
+			ready := make(chan struct{})
 			for i := 0; i < n; i++ {
 				wg.Add(1)
 				go func(i int) {
 					defer wg.Done()
+					<-ready
 					st := e.st
 					if i%2 == 1 {
 						st = e.other
@@ -1236,23 +1241,30 @@ func TestMemoDeliveryReservationHoldsAcrossControlPlanes(t *testing.T) {
 					}
 				}(i)
 			}
+			close(ready)
 			wg.Wait()
 			return won, errs
 		}
 		if won, errs := race(qs[:1], 8); won != 2 || len(errs) != 0 {
 			t.Fatalf("one queue with 2 slots: %d reservations, errors %v", won, errs)
 		}
-		if won, errs := race(qs[1:], 12); won != memoQueueMemberLimit-2 || len(errs) != 0 {
-			t.Fatalf("member-wide: %d more reservations, want %d, errors %v", won, memoQueueMemberLimit-2, errs)
+		if won, errs := race(qs[1:], 12); won != store.DefaultMemoRunLimit-2 || len(errs) != 0 {
+			t.Fatalf("member-wide: %d more reservations, want %d, errors %v", won, store.DefaultMemoRunLimit-2, errs)
 		}
-		rows, _ := e.st.DB().QueryContext(context.Background(), `SELECT COUNT(*) FROM memo WHERE membership_id=? AND state='claimed'`, mid)
-		defer rows.Close()
+		limit := 10
+		if _, err := e.st.PutUserLimitWithMemoRunLimit(t.Context(), mid, store.UserQuota{}, &limit); err != nil {
+			t.Fatal(err)
+		}
+		if won, errs := race(qs[1:], 16); won != 6 || len(errs) != 0 {
+			t.Fatalf("member override: %d more reservations, want 6, errors %v", won, errs)
+		}
 		var claimed int
-		for rows.Next() {
-			_ = rows.Scan(&claimed)
+		if err := e.st.DB().QueryRowContext(t.Context(),
+			`SELECT COUNT(*) FROM memo WHERE membership_id=? AND state='claimed'`, mid).Scan(&claimed); err != nil {
+			t.Fatal(err)
 		}
-		if claimed != memoQueueMemberLimit {
-			t.Fatalf("%d messages claimed, want %d", claimed, memoQueueMemberLimit)
+		if claimed != 10 {
+			t.Fatalf("%d messages claimed, want 10", claimed)
 		}
 	})
 }

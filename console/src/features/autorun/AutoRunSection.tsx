@@ -485,7 +485,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
   useEffect(() => {
     if (shown) refreshAutoRuns();
   }, [shown]);
-  const { queues, tenantEnabled, deliveries } = useScopedAutoRuns();
+  const { queues, tenantEnabled, deliveries, runCapacity } = useScopedAutoRuns();
   const reload = reloadAutoRuns;
   const wset = useActiveWorkingSet();
   const [dialog, setDialog] = useState<RunDialog | null>(null);
@@ -544,7 +544,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
   const viewRef = useRef<HTMLDivElement>(null);
   const shownRuns = nq ? runs.filter((r) => runMatches(r, labelOf(keyOf(r.categoryId)), nq, refs)) : runs;
   const ids = [...new Set(shownRuns.map((r) => keyOf(r.categoryId)))];
-  const active = runs.filter((r) => r.state !== "ended").length;
+  const active = runCapacity ? `${runCapacity.open} / ${runCapacity.limit}` : allRuns.filter((r) => r.state !== "ended").length;
   const doReload = async () => {
     setReloading(true);
     reload();

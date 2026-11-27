@@ -40,6 +40,14 @@ The whole form is shown in [Set the workspace size](workspace-size.md#change-the
 
 What a member sees at the limit is in [See how resources are used](overview.md#what-members-see-when-a-limit-is-hit).
 
+## Set the auto-run limit
+
+One member's open memo auto-runs share a limit across all categories. A deployment administrator can set the tenant default from 1 to 10 under **Admin → Tenants → Limits & idle**, in **Default open auto-runs per member**. The default is 4.
+
+To set a member's override, open **Tenant settings → Members**, pick the member, then choose **Size and limits → Change**. Enter 1 to 10 in **Max open auto-runs**, or leave it blank to inherit. The card shows the effective limit. Changes appear in the audit log.
+
+If you lower the limit, existing runs continue. Automatic starts and both **Run now** actions wait for the open count to drop below the new limit. The category limit still tops out at 6, and the session limit also applies where the deployment enforces it.
+
 ## Check the tenant-wide limits
 
 Open **Tenant settings → Tenant › Limits & idle**.
@@ -47,7 +55,8 @@ Open **Tenant settings → Tenant › Limits & idle**.
 ![Limits & idle: next to the tenant name, "a deployment administrator sets the tenant-wide caps", then the member count, the running workspaces and "Limits — Workspace: 4 / Session: 8"](../../assets/admin-res-limits-en-light.webp)
 
 - **Limits — Workspace: X / Session: Y** are the values in force. `∞` means no limit
-- To change them, ask the deployment administrator. They cannot be changed from this screen
+- **Open auto-run limit** shows the tenant default for members with no override
+- To change these values, ask the deployment administrator. They cannot be changed from this screen
 - Where the deployment offers a choice of machine, the tenant's **Default machine** is on the same screen ([Choose the machine](workspace-size.md#choose-the-machine))
 
 The deployment administrator also sets the following per tenant. Their values do not appear on your screen, so ask the deployment administrator when you need them.

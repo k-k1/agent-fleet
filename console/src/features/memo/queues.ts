@@ -103,6 +103,7 @@ function readWaiting(v: unknown): MemoQueueWaiting | undefined {
       waiting: num(d.waiting, 0),
       agentKind: str(d.agentKind),
       by: d.by === "member" ? "member" : "category",
+      runLimit: readMemoRunLimit(d.runLimit),
       blocked: num(d.blocked, 0),
       deferred: num(d.deferred, 0),
       scheduled: num(d.scheduled, 0),
@@ -179,7 +180,14 @@ export function readMemoQueues(raw: unknown): MemoQueuesWire | null {
     const r = readQueue(q);
     if (r) queues.push(r);
   }
-  return { tenantEnabled: raw.tenantEnabled === true, repoSettings: raw.repoSettings === true, queues };
+  const limit = readMemoRunLimit(raw.runLimit);
+  const open = raw.openRuns;
+  const runCapacity = typeof open === "number" && Number.isSafeInteger(open) && open >= 0 && limit ? { open, limit } : undefined;
+  return { tenantEnabled: raw.tenantEnabled === true, repoSettings: raw.repoSettings === true, queues, ...(runCapacity && { runCapacity }) };
+}
+
+export function readMemoRunLimit(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 10 ? v : undefined;
 }
 
 /** GET .../deliveries, normalised the same way. null = the read failed. */
@@ -264,7 +272,10 @@ export function waitingWords(
     case "usage_limit":
       return { key: "memo.waiting_usage_limit", params: { agent: agentName(w.detail?.agentKind ?? "") } };
     case "no_place":
-      return { key: w.detail?.by === "member" ? "memo.waiting_no_place_member" : "memo.waiting_no_place" };
+      if (w.detail?.by !== "member") return { key: "memo.waiting_no_place" };
+      return w.detail.runLimit
+        ? { key: "memo.waiting_run_limit", params: { limit: w.detail.runLimit } }
+        : { key: "memo.waiting_no_place_member" };
     case "tidying":
       return { key: "memo.waiting_tidying" };
     case "prerequisites":

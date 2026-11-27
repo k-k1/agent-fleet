@@ -192,7 +192,7 @@ type CP interface {
 	// control-plane/tenants_test.go's reflect check fails the build if the two drift.
 	ParseLimits(raw string) Limits
 	LimitsFor(ctx context.Context, tenantID string) Limits
-	StoreTenantLimits(ctx context.Context, tenantID string, l Limits) error
+	StoreTenantLimits(ctx context.Context, tenantID string, l Limits, memoRunLimit *int) error
 
 	// --- The caller's address (clientip.go, ADR 0047) ---------------------------
 	// TrustedProxyHops is AF_TRUSTED_PROXY_HOPS, read once at boot. It is a func on

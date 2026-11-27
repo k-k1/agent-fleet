@@ -280,7 +280,7 @@ export interface MemoQueueWaiting {
   reason: MemoWaitingReason;
   /** RFC 3339: when the Control Plane will act, only when it is known. */
   until?: string;
-  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member"; blocked?: number; deferred?: number; scheduled?: number };
+  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member"; runLimit?: number; blocked?: number; deferred?: number; scheduled?: number };
 }
 
 /** The PUT body: a PUT replaces the whole row, so every setting is sent, and nothing read-only. */
@@ -313,6 +313,7 @@ export interface MemoQueuesWire {
   tenantEnabled: boolean;
   /** The repository settings check, approval and export are on (#4881); false from an older Control Plane. */
   repoSettings: boolean;
+  runCapacity?: { open: number; limit: number };
   queues: MemoQueue[];
 }
 

@@ -11,7 +11,7 @@ import type { Session } from "../../types/session.ts";
 
 const opened = vi.fn();
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: (n: string) => opened(n) }));
-const memoQueueList = vi.fn(async () => ({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] }));
+const memoQueueList = vi.fn(async (): Promise<unknown> => ({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] }));
 const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean): Promise<unknown> => [
   { id: "d1", session: "run-a", state: "open" },
   { id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" },
@@ -55,12 +55,13 @@ let root: Root;
 let host: HTMLDivElement;
 const sess = (name: string, extra: Partial<Session>): Session => ({ name, title: name, kind: "claude", alive: true, ...extra });
 
-const mount = async (shown = true) => {
+const mount = async (shown = true, bar?: React.ReactNode) => {
   await act(async () =>
     root.render(
       <ViewShownContext.Provider value={shown}>
         <ConfirmProvider>
           <ToastProvider>
+            {bar}
             <AutoRunSection />
           </ToastProvider>
         </ConfirmProvider>
@@ -118,6 +119,63 @@ describe("AutoRunSection", () => {
     expect(row.querySelector(".autorun-run-main .autorun-title")!.textContent).toBe("#12 Fix it");
     expect(row.querySelector(".autorun-pr")!.textContent).toContain("#30");
     expect(row.querySelector(".autorun-elapsed")!.textContent).toBe("12m");
+  });
+
+  it("shows four open runs on both surfaces across working sets and filters, with reviewers and an ended run", async () => {
+    const { ActivityBar } = await import("../../app/ActivityBar.tsx");
+    const { setSetting } = await import("../../lib/settings.ts");
+    const roots = ["run-a", "run-b", "run-c", "run-d"];
+    useSessionsStore.setState({
+      sessions: [
+        ...roots.flatMap((name) => [
+          sess(name, { origin: "queue" }),
+          sess(`reviewer-${name}`, { origin: "session", originSession: name }),
+        ]),
+        sess("helper", { origin: "session", originSession: "reviewer-run-c" }),
+        sess("ended", { origin: "queue", alive: false }),
+      ],
+    });
+    memoQueueList.mockResolvedValue({
+      tenantEnabled: true,
+      openRuns: 4,
+      runLimit: 7,
+      queues: [
+        { categoryId: "c1", repo: "app", category: "implementation" },
+        { categoryId: "c2", repo: "other", category: "review" },
+      ],
+    });
+    memoQueueDeliveries.mockImplementation(async (id) => id === "c1" ? [
+      { id: "d-a", session: "run-a", state: "open", heldBy: "person" },
+      { id: "d-b", session: "run-b", state: "open" },
+      { id: "d-ended", session: "ended", state: "closed", outcome: "clean" },
+    ] : [
+      { id: "d-c", session: "run-c", state: "open" },
+      { id: "d-d", session: "run-d", state: "open", heldBy: "wakers" },
+    ]);
+    setSetting("workingSets", [{ id: "w1", name: "App", repos: ["app"], convs: [], sessions: [], schedules: [] }]);
+    setSetting("workingSetActive", "w1");
+    try {
+      await mount(true, <ActivityBar view="sessions" shown foldable schedulerEnabled />);
+      const icon = host.querySelector<HTMLButtonElement>('[data-rail-view="autorun"]')!;
+      const badge = icon.querySelector<HTMLElement>(".actbar-badge")!;
+      const header = host.querySelector(".ui-section-count");
+      expect(host.querySelectorAll("[data-autorun-run]")).toHaveLength(2);
+      expect(host.textContent).toContain("reviewer-run-a");
+      expect(header?.textContent).toBe("4 / 7");
+      expect(badge.textContent).toBe("4");
+      expect(badge.dataset.badge).toBe("waiting");
+      expect(icon.title).toContain("1 auto-run waiting for your answer");
+      const input = host.querySelector<HTMLInputElement>(".autorun-filter-bar input")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "no matches");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(host.querySelectorAll("[data-autorun-run]")).toHaveLength(0);
+      expect(header?.textContent).toBe("4 / 7");
+      expect(badge.textContent).toBe("4");
+    } finally {
+      setSetting("workingSetActive", "");
+    }
   });
 
   it.each([

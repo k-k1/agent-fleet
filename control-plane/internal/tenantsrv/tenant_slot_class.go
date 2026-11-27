@@ -90,7 +90,7 @@ func (a Admin) SetTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	// and must survive a tenant_admin changing only the class. The encode happens on
 	// the CP side (limits.go), so a field this package has never heard of is carried
 	// through — see Limits in deps.go.
-	if err := a.cp.StoreTenantLimits(r.Context(), t.ID, lim); err != nil {
+	if err := a.cp.StoreTenantLimits(r.Context(), t.ID, lim, nil); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}

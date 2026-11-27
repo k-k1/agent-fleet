@@ -62,7 +62,7 @@ export function runRootName(s: Session, byName: Map<string, Session>): string {
   return "";
 }
 
-/** Runs that wait for the member's answer: the Auto-run icon's count. */
+/** Runs that wait for the member's answer: the Auto-run icon's waiting cue. */
 export const waitingRunCount = (runs: RunRow[]): number => runs.filter((r) => r.state === "waiting").length;
 
 /** One key per failed run: the Auto-run icon's red dot, acknowledged by opening the view. */

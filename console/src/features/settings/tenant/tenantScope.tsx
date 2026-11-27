@@ -155,6 +155,7 @@ function TenantSummary({ tenant }: { tenant: Tenant | null }) {
       <p className="admin-hint">
         {tr("admin.tenant_limits", { ws: tenant.max_workspaces || "∞", ss: tenant.max_sessions || "∞" })}
       </p>
+      <p className="admin-hint">{tr("admin.memo_run_limit_effective", { n: tenant.memo_run_limit ?? 4 })}</p>
     </section>
   );
 }
@@ -177,6 +178,7 @@ export function TenantLimits({
   const toast = useToast();
   const [maxWs, setMaxWs] = useState<number | string>(tenant?.max_workspaces || 0);
   const [maxSs, setMaxSs] = useState<number | string>(tenant?.max_sessions || 0);
+  const [memoRunLimit, setMemoRunLimit] = useState<number | string>(tenant?.memo_run_limit ?? 4);
   const [maxRepos, setMaxRepos] = useState<number | string>(tenant?.max_git_repos || 0);
   // LFS cap is stored in bytes but edited in MB for usability.
   const [maxLfsMb, setMaxLfsMb] = useState<number | string>(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
@@ -209,6 +211,7 @@ export function TenantLimits({
   useEffect(() => {
     setMaxWs(tenant?.max_workspaces || 0);
     setMaxSs(tenant?.max_sessions || 0);
+    setMemoRunLimit(tenant?.memo_run_limit ?? 4);
     setMaxRepos(tenant?.max_git_repos || 0);
     setMaxLfsMb(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
     setMaxWsMemMb(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
@@ -229,9 +232,15 @@ export function TenantLimits({
   }, [slug, tenant]);
 
   const saveLimits = async () => {
+    const runLimit = Number(memoRunLimit);
+    if (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 10) {
+      toast(tr("admin.memo_run_limit_range"));
+      return;
+    }
     const res = await putTenantLimits(slug, {
       max_workspaces: +maxWs || 0,
       max_sessions: +maxSs || 0,
+      memo_run_limit: runLimit,
       max_git_repos: +maxRepos || 0,
       max_lfs_bytes: Math.round(+maxLfsMb || 0) * 1048576,
       max_workspace_mem: Math.round(+maxWsMemMb || 0) * 1048576,
@@ -282,6 +291,11 @@ export function TenantLimits({
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.max_session")}</span>
             <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
+          </label>
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.memo_run_limit_default")}</span>
+            <input type="number" min="1" max="10" value={memoRunLimit} onChange={(e) => setMemoRunLimit(e.target.value)} />
+            <span className="af-note">{tr("admin.memo_run_limit_range")}</span>
           </label>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.max_repos")}</span>

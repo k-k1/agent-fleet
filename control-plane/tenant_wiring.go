@@ -413,10 +413,13 @@ func (d cpTenant) LimitsFor(ctx context.Context, tenantID string) tenantsrv.Limi
 	return tenantLimitsOut(parseLimits(t.Limits))
 }
 
-func (d cpTenant) StoreTenantLimits(ctx context.Context, tenantID string, l tenantsrv.Limits) error {
+func (d cpTenant) StoreTenantLimits(ctx context.Context, tenantID string, l tenantsrv.Limits, memoRunLimit *int) error {
 	lj, err := json.Marshal(tenantLimitsIn(l))
 	if err != nil {
 		return err
+	}
+	if memoRunLimit != nil {
+		return d.m.store.SetTenantLimitsWithMemoRunLimit(ctx, tenantID, string(lj), *memoRunLimit)
 	}
 	return d.m.store.SetTenantLimits(ctx, tenantID, string(lj))
 }

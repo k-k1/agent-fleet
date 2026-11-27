@@ -13,7 +13,7 @@ interface SectionProps {
   id?: string;
   title?: ReactNode;
   icon?: string;
-  count?: number;
+  count?: number | string;
   /** Unread-notification dot, shown only while collapsed: like `count`, it is a signal
    *  about contents the fold has hidden. */
   unread?: boolean;
@@ -41,6 +41,7 @@ export function SoloSection({ children }: { children: ReactNode }) {
 
 export function Section({ id, title, icon, count, unread, actions, defaultOpen = true, open: openProp, onToggle, children }: SectionProps) {
   const tr = useT();
+  const showCount = typeof count === "string" || (count != null && count > 0);
   const [stored, setStored] = useFold(id ? storeKey(id) : undefined);
   const [localOpen, setLocalOpen] = useState(defaultOpen);
   const openState = id ? stored ?? defaultOpen : localOpen;
@@ -66,14 +67,14 @@ export function Section({ id, title, icon, count, unread, actions, defaultOpen =
           <div className="ui-section-toggle solo">
             {icon && <Icon name={icon} />}
             <span className="ui-section-title">{title}</span>
-            {count != null && count > 0 && <span className="ui-section-count">{count}</span>}
+            {showCount && <span className="ui-section-count">{count}</span>}
           </div>
         ) : (
           <button type="button" className="ui-section-toggle" onClick={toggle} aria-expanded={open}>
             <span className="ui-section-caret">{open ? "▾" : "▸"}</span>
             {icon && <Icon name={icon} />}
             <span className="ui-section-title">{title}</span>
-            {count != null && count > 0 && <span className="ui-section-count">{count}</span>}
+            {showCount && <span className="ui-section-count">{count}</span>}
             {!open && unread && <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} />}
           </button>
         )}

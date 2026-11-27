@@ -41,20 +41,22 @@ type UserQuota struct {
 type UserLimit struct {
 	MembershipID string
 	UserQuota
-	CreatedAt string
+	CreatedAt    string
+	MemoRunLimit int
 }
 
 // QuotaStore is the per-membership quota override (docs/16 P3-4).
 type QuotaStore interface {
 	GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error)
 	PutUserLimit(ctx context.Context, membershipID string, q UserQuota) error
+	PutUserLimitWithMemoRunLimit(ctx context.Context, membershipID string, q UserQuota, memoRunLimit *int) (int, error)
 }
 
 func (s *SQL) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
 	var u UserLimit
 	err := s.db.QueryRowContext(ctx,
-		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at FROM user_limit WHERE membership_id=?`, membershipID).
-		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CPULimit, &u.SlotClass, &u.CreatedAt)
+		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at, memo_run_limit FROM user_limit WHERE membership_id=?`, membershipID).
+		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CPULimit, &u.SlotClass, &u.CreatedAt, &u.MemoRunLimit)
 	if err == sql.ErrNoRows {
 		return UserLimit{}, false, nil
 	}
@@ -65,11 +67,39 @@ func (s *SQL) GetUserLimit(ctx context.Context, membershipID string) (UserLimit,
 }
 
 func (s *SQL) PutUserLimit(ctx context.Context, membershipID string, q UserQuota) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb,
-		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit, slot_class=excluded.slot_class`,
-		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass, NowTS())
+	_, err := putUserLimit(ctx, s.db, membershipID, q, nil)
 	return err
+}
+
+// PutUserLimitWithMemoRunLimit serializes policy changes with reservations for this member.
+func (s *SQL) PutUserLimitWithMemoRunLimit(ctx context.Context, membershipID string, q UserQuota, memoRunLimit *int) (int, error) {
+	if memoRunLimit == nil {
+		return putUserLimit(ctx, s.db, membershipID, q, nil)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if err := lockMemberships(ctx, tx, []string{membershipID}); err != nil {
+		return 0, err
+	}
+	saved, err := putUserLimit(ctx, tx, membershipID, q, memoRunLimit)
+	if err != nil {
+		return 0, err
+	}
+	return saved, tx.Commit()
+}
+
+func putUserLimit(ctx context.Context, db rowQuerier, membershipID string, q UserQuota, memoRunLimit *int) (int, error) {
+	var saved int
+	err := db.QueryRowContext(ctx,
+		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at, memo_run_limit)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, COALESCE(?,0))
+		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb,
+		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit, slot_class=excluded.slot_class,
+		   memo_run_limit=COALESCE(?,user_limit.memo_run_limit)
+		 RETURNING memo_run_limit`,
+		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass, NowTS(), memoRunLimit, memoRunLimit).Scan(&saved)
+	return saved, err
 }

@@ -317,6 +317,7 @@ export const memo = {
   "memo.waiting_backoff_at": "直前の実行を送れなかったため、{at} まで待ってからやり直します。",
   "memo.waiting_usage_limit": "{agent} の利用上限の解除を待っているセッションがあるため、新しい実行は始まりません。",
   "memo.waiting_no_place": "このカテゴリで同時に実行できる数に達しています。実行が終わると、次が始まります。",
+  "memo.waiting_run_limit": "すべてのカテゴリを合わせた自動実行の上限は {limit} 件です。進行中の件数が上限を下回ると、次を開始できます。",
   "memo.waiting_no_place_member": "自動実行の同時実行数が上限に達しています。実行が終わると、次が始まります。",
   "memo.d_held": "終わっていない理由: {why}",
   "memo.d_held_machine": "作業中",

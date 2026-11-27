@@ -252,12 +252,12 @@ func TestMemoWaitingNoPlace(t *testing.T) {
 	})
 	// The member's own limit, with places left in the queue itself.
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		agent, other := e.autoQueue("app", "other", map[string]any{"maxActive": 6}, memoQueueMemberLimit)
+		agent, other := e.autoQueue("app", "other", map[string]any{"maxActive": 6}, store.DefaultMemoRunLimit)
 		now := time.Now()
-		for i := 0; i < 4 && len(e.liveDeliveries(other)) < memoQueueMemberLimit; i++ {
+		for i := 0; i < 4 && len(e.liveDeliveries(other)) < store.DefaultMemoRunLimit; i++ {
 			e.autoTick(now)
 		}
-		if len(e.liveDeliveries(other)) != memoQueueMemberLimit {
+		if len(e.liveDeliveries(other)) != store.DefaultMemoRunLimit {
 			t.Fatalf("%d live", len(e.liveDeliveries(other)))
 		}
 		q := e.queueWith("app", "impl", map[string]any{"enabled": true, "maxActive": 6})

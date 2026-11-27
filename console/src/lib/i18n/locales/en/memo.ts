@@ -319,6 +319,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.waiting_backoff_at": "The last run could not be sent, so auto-run is waiting until {at} before it tries again.",
   "memo.waiting_usage_limit": "A session is waiting for the {agent} usage limit to lift, so no new run starts.",
   "memo.waiting_no_place": "This category is already running as many memos at once as it may. The next one starts when a run finishes.",
+  "memo.waiting_run_limit": "Your limit is {limit} open auto-runs across all categories. New runs can start when the open count drops below it.",
   "memo.waiting_no_place_member": "You already have the most runs going at once across your categories. The next one starts when a run finishes.",
   "memo.d_held": "Not finished: {why}",
   "memo.d_held_machine": "working",

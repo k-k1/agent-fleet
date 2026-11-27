@@ -127,15 +127,22 @@
 .actbar-badge.tone-news {
   background: var(--err);
 }
+.actbar-badge.tone-running {
+  background: var(--fg);
+  color: var(--bg);
+}
 .actbar-badge.tone-unread,
 .actbar-badge.tone-failed {
+  background: var(--err);
+}
+.actbar-badge.tone-unread,
+.actbar-badge.tone-failed:not(.has-count) {
   top: 7px;
   right: 8px;
   min-width: 8px;
   width: 8px;
   height: 8px;
   padding: 0;
-  background: var(--err);
 }
 /* The one dot for views whose icon is off but that wait on the member (ADR 0142): the same
    amber as a waiting count, without a number, on a button that opens the bar's menu. */

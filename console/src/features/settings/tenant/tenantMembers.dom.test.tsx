@@ -38,6 +38,9 @@ const MEMBER = {
   email: "a@x.com",
   role: "member",
   max_sessions: 2,
+  memo_run_limit: 0,
+  memo_run_limit_default: 7,
+  memo_run_limit_effective: 7,
   mem_limit: 4 * 1024 * 1024 * 1024,
   cpu_limit: 1024,
   disk_gb: 40,
@@ -104,8 +107,8 @@ describe("member limit editing", () => {
     await mount();
     await openEditor();
     // Current values in the order the two groups put them: memory (MB) / CPU (units) /
-    // disk (GB), then the session limit.
-    expect(numbers()).toEqual(["4096", "1024", "40", "2"]);
+    // disk (GB), then the session limit and the inherited auto-run limit.
+    expect(numbers()).toEqual(["4096", "1024", "40", "2", ""]);
 
     const save = buttonWith("保存");
     await act(async () => save!.click());
@@ -129,12 +132,31 @@ describe("member limit editing", () => {
     const xl = buttonWith("XL");
     await act(async () => xl!.click());
     // XL = 4 vCPU / 16 GiB / 80 GB, a combination Fargate actually accepts.
-    expect(numbers()).toEqual(["16384", "4096", "80", "2"]);
+    expect(numbers()).toEqual(["16384", "4096", "80", "2", ""]);
 
     const save = buttonWith("保存");
     await act(async () => save!.click());
     const [, , body] = apiJSON.mock.calls.find((c) => c[0] === "api/admin/user-limits")!;
     expect(body).toMatchObject({ mem_limit: 16384 * 1048576, cpu_limit: 4096, disk_gb: 80 });
+  });
+
+  it("clears an auto-run override and displays the effective tenant default", async () => {
+    await mount({ ...MEMBER, memo_run_limit: 5, memo_run_limit_effective: 5 });
+    expect(host?.textContent).toContain("自動実行の上限 5 件");
+    await openEditor();
+    const input = host!.querySelector<HTMLInputElement>("#md-memo-run-limit")!;
+    expect(input.value).toBe("5");
+    expect(host?.textContent).toContain("空欄にするとテナントの既定値（7 件）を使います。");
+    apiJSON.mockResolvedValue({ memo_run_limit: 0, memo_run_limit_effective: 7 });
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => buttonWith("保存")!.click());
+
+    const [, , body] = apiJSON.mock.calls.find((c) => c[0] === "api/admin/user-limits")!;
+    expect(body).toMatchObject({ memo_run_limit: 0, max_sessions: 2 });
+    expect(host?.textContent).toContain("自動実行の上限 7 件");
   });
 
   // A member's 0 falls back to the tenant's max sessions (sessionQuotaExceeded), so labelling
@@ -254,8 +276,8 @@ describe("member limit editing (ecs-ec2)", () => {
   it("hides the CPU field but still sends the stored cpu_limit back on save", async () => {
     await mount();
     await openEditor();
-    // Memory (MB) / disk (GB) / max sessions: the CPU field is gone.
-    expect(numbers()).toEqual(["4096", "40", "2"]);
+    // Memory (MB), disk (GB), max sessions, and the inherited auto-run limit.
+    expect(numbers()).toEqual(["4096", "40", "2", ""]);
 
     const save = buttonWith("保存");
     await act(async () => save!.click());
@@ -272,7 +294,7 @@ describe("member limit editing (ecs-ec2)", () => {
     expect(chips).toEqual(["8 GiB", "16 GiB", "32 GiB"]);
 
     await act(async () => buttonWith("16 GiB")!.click());
-    expect(numbers()).toEqual(["16384", "40", "2"]);
+    expect(numbers()).toEqual(["16384", "40", "2", ""]);
   });
 
   it("states the instance actually landed on, not a cap, in the memory field", async () => {

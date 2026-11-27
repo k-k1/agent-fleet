@@ -1263,3 +1263,15 @@ last answer. An overdue retire or an unsuccessful delivery still blocks its depe
 
 Older versions cleared approval when they held a dependent for a bad first turn. Reapproving
 that memo keeps its dependency and makes the prerequisite eligible for a snapshot check.
+
+## Addendum 2026-11-27: configurable open run limits (#5361)
+
+The member-wide limit in section 7 defaults to four. A deployment administrator can set the tenant default.
+A tenant administrator can give a member a limit of 1 to 10 or clear it to inherit. The settings writes preserve
+an omitted field. A claim or prerequisite wake checks the effective limit and the open delivery count under the
+reservation locks. Lowering the limit leaves existing deliveries open. The category limit of six and the
+independent session quota still apply.
+
+The queue list reports the member-wide open delivery count and the effective limit. The Auto-run header and
+activity bar use that count across filters and working sets. Each open delivery occupies one slot even when
+waiting for an answer or review. Its child sessions share that slot.

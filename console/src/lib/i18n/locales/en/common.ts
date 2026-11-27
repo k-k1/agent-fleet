@@ -390,6 +390,8 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "rail.badge.waiting_other": "{count} sessions waiting for your answer",
   "rail.badge.news_one": "{count} new update",
   "rail.badge.news_other": "{count} new updates",
+  "rail.badge.open_runs_one": "{count} open auto-run",
+  "rail.badge.open_runs_other": "{count} open auto-runs",
   "rail.badge.runs_one": "{count} auto-run waiting for your answer",
   "rail.badge.runs_other": "{count} auto-runs waiting for your answer",
   "rail.badge.run_failed": "a run failed",

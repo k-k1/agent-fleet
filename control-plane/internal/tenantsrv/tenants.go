@@ -144,6 +144,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			"slug": t.Slug, "name": t.Name, "status": t.Status, "isolation": t.Isolation,
 			"users": len(members), "running": running,
 			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
+			"memo_run_limit":        store.EffectiveMemoRunLimit(t.MemoRunLimit, 0),
 			"max_git_repos":         lim.MaxGitRepos,
 			"max_lfs_bytes":         lim.MaxLFSBytes,
 			"max_workspace_mem":     lim.MaxWorkspaceMem,
@@ -422,13 +423,18 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 			if ns, ok := a.cp.ResolveNextStart(r.Context(), store.Workspace{MembershipID: m.MembershipID, TenantID: t.ID}); ok {
 				row["next_start"] = ns
 			}
+			var memoRunLimit int
 			if ul, ok, _ := a.cp.Store().GetUserLimit(r.Context(), m.MembershipID); ok {
+				memoRunLimit = ul.MemoRunLimit
 				row["max_sessions"] = ul.MaxSessions
 				row["mem_limit"] = ul.MemLimit
 				row["cpu_limit"] = ul.CPULimit
 				row["disk_gb"] = ul.DiskGB
 				row["slot_class"] = ul.SlotClass
 			}
+			row["memo_run_limit"] = memoRunLimit
+			row["memo_run_limit_default"] = store.EffectiveMemoRunLimit(t.MemoRunLimit, 0)
+			row["memo_run_limit_effective"] = store.EffectiveMemoRunLimit(t.MemoRunLimit, memoRunLimit)
 			out = append(out, row)
 		}
 	}
@@ -1541,6 +1547,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 	var body struct {
 		MaxWorkspaces int   `json:"max_workspaces"`
 		MaxSessions   int   `json:"max_sessions"`
+		MemoRunLimit  *int  `json:"memo_run_limit"`
 		MaxGitRepos   int   `json:"max_git_repos"` // internal git repo cap (P2); 0 = unlimited
 		MaxLFSBytes   int64 `json:"max_lfs_bytes"` // internal git LFS byte cap (P3); 0 = unlimited
 		// Per-workspace RAM cap in BYTES (roadmap P3-4); 0 = no tenant cap. Bounds a
@@ -1627,6 +1634,9 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 			return
 		}
 	}
+	if !validMemoRunLimit(w, body.MemoRunLimit) {
+		return
+	}
 	// Reject unparseable durations up front (empty stays empty = use default).
 	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.BackgroundHoldMax, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery, body.ImageRefreshQuiet} {
 		if v != "" {
@@ -1683,7 +1693,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		AllowEngineLLM:               body.AllowEngineLLM,
 		AllowEngineImage:             body.AllowEngineImage,
 	}
-	if err := a.cp.StoreTenantLimits(r.Context(), t.ID, lim); err != nil {
+	if err := a.cp.StoreTenantLimits(r.Context(), t.ID, lim, body.MemoRunLimit); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -1698,10 +1708,12 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 	// this file does. A switch that can take image generation and self-hosted chat away
 	// from a whole tenant needs one; MaxWorkspaces etc. changing silently was already a
 	// gap, but this ADR is only fixing the capability-removal switches it is adding.
-	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
-		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
-		Action: "tenant.limits", Target: t.Slug, At: store.NowTS(),
-	})
+	memoRunLimit, detail := t.MemoRunLimit, ""
+	if body.MemoRunLimit != nil {
+		memoRunLimit = *body.MemoRunLimit
+		detail = fmt.Sprintf("memo_run_limit=%d", memoRunLimit)
+	}
+	a.auditAdmin(r, t.ID, ident.ID, "tenant.limits", t.Slug, detail)
 	// ⚠️ A WARNING, not a gate, and the save above has already happened. Three reasons:
 	//
 	//  1. It is not an invariant this endpoint can hold. Ec2MaxSlots is CP env and the
@@ -1719,6 +1731,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 	// state that now exists rather than a prediction about it.
 	resp := map[string]any{
 		"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions,
+		"memo_run_limit":        store.EffectiveMemoRunLimit(memoRunLimit, 0),
 		"max_workspace_mem":     body.MaxWorkspaceMem,
 		"max_workspace_cpu":     body.MaxWorkspaceCPU,
 		"max_workspace_disk_gb": body.MaxWorkspaceDiskGB,
@@ -1745,14 +1758,24 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func validMemoRunLimit(w http.ResponseWriter, limit *int) bool {
+	if limit == nil || (*limit >= 0 && *limit <= store.MaxMemoRunLimit) {
+		return true
+	}
+	writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_memo_run_limit",
+		fmt.Sprintf("memo_run_limit must be 1–%d (0 = use the default)", store.MaxMemoRunLimit)})
+	return false
+}
+
 // SetUserLimit (PUT /api/admin/user-limits) — per-membership override.
 func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Email       string `json:"email"`
-		UserKey     string `json:"user_key"`
-		TenantSlug  string `json:"tenant_slug"`
-		MaxSessions int    `json:"max_sessions"`
-		DiskGB      int    `json:"disk_gb"`
+		Email        string `json:"email"`
+		UserKey      string `json:"user_key"`
+		TenantSlug   string `json:"tenant_slug"`
+		MaxSessions  int    `json:"max_sessions"`
+		MemoRunLimit *int   `json:"memo_run_limit"`
+		DiskGB       int    `json:"disk_gb"`
 		// MemLimit is the per-workspace RAM cap in BYTES (0 = unset → deployment
 		// default). Clamped to the tenant cap + host ceiling at container start; the
 		// response echoes the effective (post-clamp) value so the admin sees it.
@@ -1798,6 +1821,9 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
 		return
 	}
+	if !validMemoRunLimit(w, body.MemoRunLimit) {
+		return
+	}
 	// Reject, rather than store and clamp later, what the deployment will never grant: the
 	// disk axis on ecs-ec2 grows a volume at once and cannot be shrunk, so the admin should
 	// hear "no" before the number is saved. Memory has no check here, its ceiling clamps.
@@ -1820,7 +1846,8 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 	// member gets (after the tenant cap and deployment ceiling), not on the number typed —
 	// raising 60 to 70 under a cap of 50 changes nothing, and lowering 70 to 60 neither.
 	_, _, prevDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
-	if err := a.cp.Store().PutUserLimit(r.Context(), mem.ID, q); err != nil {
+	memoRunLimit, err := a.cp.Store().PutUserLimitWithMemoRunLimit(r.Context(), mem.ID, q, body.MemoRunLimit)
+	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -1829,15 +1856,17 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 	// container start. Also compute the effective post-clamp values so the caller sees
 	// what will actually be applied rather than what they typed.
 	a.auditAdmin(r, t.ID, caller.ID, "member.limits", ident.UserKey,
-		fmt.Sprintf("max_sessions=%d disk_gb=%d mem_limit=%d cpu_limit=%d slot_class=%q",
-			q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass))
+		fmt.Sprintf("max_sessions=%d disk_gb=%d mem_limit=%d cpu_limit=%d slot_class=%q memo_run_limit=%d",
+			q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass, memoRunLimit))
 	a.cp.EvictMembershipCache(mem.ID)
 	effMem, effCPU, effDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	diskChanged := effDisk != prevDisk
 	effClass, classNote := a.cp.ResolveSlotClass(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	resp := map[string]any{
 		"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB,
-		"mem_limit": body.MemLimit, "mem_effective": effMem,
+		"memo_run_limit":           memoRunLimit,
+		"memo_run_limit_effective": store.EffectiveMemoRunLimit(t.MemoRunLimit, memoRunLimit),
+		"mem_limit":                body.MemLimit, "mem_effective": effMem,
 		"cpu_limit": body.CPULimit, "cpu_effective": effCPU, "disk_effective": effDisk,
 		// The class the member will actually land on, and why it is not what was asked
 		// for when it is not. A substituted class is otherwise invisible until the bill.

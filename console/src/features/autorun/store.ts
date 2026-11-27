@@ -1,12 +1,12 @@
 // What the Auto-run view and the activity bar's badge for it share: the auto-run queues and the
 // run each one reported for a session. The badge needs it while the view is off screen, so the
 // read is not the view's. One poll serves every consumer: it runs while at least one of them
-// asks for it (the view while shown, the bar while the workspace runs).
+// asks for it.
 import { useEffect } from "react";
 import { create } from "zustand";
 import { memoQueueDeliveries, memoQueueList } from "../memo/api.ts";
 import { readDeliveries, readMemoQueues } from "../memo/queues.ts";
-import type { MemoQueue } from "../../types/memo.ts";
+import type { MemoQueue, MemoQueuesWire } from "../../types/memo.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useQueueSettings, useQueueSettingsCache } from "../memo/queueSettingsCache.ts";
 import type { RunDelivery } from "./runs.ts";
@@ -196,7 +196,7 @@ export const reloadAutoRuns = (): void => loop?.reload();
 
 /** The runs read for the scope in force: another scope's data is never returned, even before a poll
  *  has replaced it. */
-export function useScopedAutoRuns(): { queues: MemoQueue[]; tenantEnabled: boolean; deliveries: Map<string, RunDelivery>; loaded: boolean } {
+export function useScopedAutoRuns(): Omit<AutoRunStore, "scope"> & Pick<MemoQueuesWire, "runCapacity"> {
   const tenant = useTenantStore((s) => s.tenant);
   const identity = useTenantStore((s) => s.identityRev);
   const scope = tenant + "\u0000" + identity;
@@ -204,7 +204,7 @@ export function useScopedAutoRuns(): { queues: MemoQueue[]; tenantEnabled: boole
   // The queues come from the cache the Memo queue view shares, so a settings change made there
   // (a save or a removal) reaches the view and the bar's badge together, whatever the next read does.
   const settings = useQueueSettings(scope);
-  return st.scope === scope ? { ...st, queues: settings.queues, tenantEnabled: settings.tenantEnabled } : EMPTY;
+  return st.scope === scope ? { ...st, queues: settings.queues, tenantEnabled: settings.tenantEnabled, runCapacity: settings.runCapacity } : EMPTY;
 }
 const EMPTY = { queues: [] as MemoQueue[], tenantEnabled: false, deliveries: new Map<string, RunDelivery>(), loaded: false };
 
