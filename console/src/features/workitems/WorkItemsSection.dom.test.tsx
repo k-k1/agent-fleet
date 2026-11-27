@@ -406,7 +406,7 @@ describe("WorkItemsSection", () => {
       [undefined, "unknown", "issues"],
     ] as const;
     workItemList.mockResolvedValue({
-      items: [item(), ...types.map(([type], i) => item({
+      items: [item({ type: "Bug" }), ...types.map(([type], i) => item({
         id: `j${i}`, provider: "jira", key: `PROJ-${i}`, type,
       }))],
       queries: [query], sessions: [], fetchedAt: query.fetchedAt, running: false,
@@ -436,7 +436,7 @@ describe("WorkItemsSection", () => {
     workItemList.mockResolvedValue({ ...payload, items: [task] });
     await render();
 
-    for (const [state, tone] of [["open", "grey"], ["in_progress", "blue"], ["done", "green"]] as const) {
+    for (const [state, tone] of [["open", "grey"], ["in_progress", "blue"], ["done", "green"], ["other", "grey"]] as const) {
       if (state !== "open") {
         workItemRefresh.mockResolvedValue({ ...payload, items: [{ ...task, state }] });
         const button = host.querySelector<HTMLButtonElement>(`button[aria-label="${t("wi.refresh")}"]`)!;
@@ -445,6 +445,7 @@ describe("WorkItemsSection", () => {
       const row = host.querySelector(".wi-row")!;
       expect(row.querySelector(".wi-jira-task .codicon-check")).not.toBeNull();
       expect(row.querySelector(`.wi-jira-state--${state}`)?.getAttribute("title")).toBe(t(`wi.state_${state}`));
+      expect(row.getAttribute("aria-label")).toContain(t(`wi.state_${state}`));
       await openRow();
       expect(document.querySelector(".wi-dhead .wi-jira-task .codicon-check")).not.toBeNull();
       expect(document.querySelector(`.wi-dstate.tone-${tone}`)?.textContent).toBe(t(`wi.state_${state}`));
@@ -722,9 +723,18 @@ describe("WorkItemsSection", () => {
     expect(host.querySelector(".wi-remote .wi-jira-bug .codicon-bug")).not.toBeNull();
 
     const { item: reference } = resolveWorkItemRef({ provider: "jira", key: "PROJ-123" }, []);
-    workItemDetail.mockResolvedValue({ ...bug, type: "Epic" });
+    workItemDetail.mockResolvedValue({ ...bug, provider: undefined, type: "Epic" });
     await act(async () => useWorkItemModal.getState().openDetail(reference, { reference: true }));
     expect(document.querySelector(".wi-dhead .wi-jira-epic .codicon-zap")).not.toBeNull();
+  });
+
+  it("shows the neutral Jira type for a direct reference when live detail is unavailable", async () => {
+    workItemList.mockResolvedValue({ items: [], queries: [query], sessions: [], fetchedAt: query.fetchedAt, running: false });
+    await render();
+    const { item: reference } = resolveWorkItemRef({ provider: "jira", key: "PROJ-123" }, []);
+    await act(async () => useWorkItemModal.getState().openDetail(reference, { reference: true }));
+    expect(document.querySelector(".wi-dhead .wi-jira-unknown .codicon-issues")).not.toBeNull();
+    expect(document.querySelector(".wi-dref")?.textContent).toBe(t("wi.detail_ref_note", { name: "Jira" }));
   });
 
   it("does not offer the tracker search as usable while the workspace is stopped", async () => {

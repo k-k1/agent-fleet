@@ -5,20 +5,20 @@ import { Icon } from "../../ui/Icon.tsx";
 function jiraWorkType(type?: string) {
   switch (type?.trim().toLowerCase()) {
     case "task":
-    case "タスク":
+    case "タスク": // i18n-exempt
       return { icon: "check", style: "wi-jira-task" };
     case "bug":
-    case "バグ":
+    case "バグ": // i18n-exempt
       return { icon: "bug", style: "wi-jira-bug" };
     case "story":
-    case "ストーリー":
+    case "ストーリー": // i18n-exempt
       return { icon: "bookmark", style: "wi-jira-story" };
     case "epic":
-    case "エピック":
+    case "エピック": // i18n-exempt
       return { icon: "zap", style: "wi-jira-epic" };
     case "subtask":
     case "sub-task":
-    case "サブタスク":
+    case "サブタスク": // i18n-exempt
       return { icon: "layers", style: "wi-jira-subtask" };
     default:
       return { icon: "issues", style: "wi-jira-unknown" };

@@ -586,7 +586,7 @@ export function WorkItemDetailModal({
           frame. */}
       <div className="ui-modal-body">
         <div className="wi-dhead">
-          {view.provider === "jira" ? <JiraWorkTypeIcon type={issueType} /> : (
+          {item.provider === "jira" ? <JiraWorkTypeIcon type={issueType} /> : (
             <span className={`wi-dot tone-${titleTone}`} title={stateText || undefined}>
               <WorkItemStateIcon name={kindKnown ? workItemIcon(view) : "link"} />
             </span>

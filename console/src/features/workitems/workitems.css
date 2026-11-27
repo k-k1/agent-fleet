@@ -119,7 +119,7 @@
 .wi-row:hover {
   background: var(--hover, rgba(127, 127, 127, 0.08));
 }
-/* Keep completed Jira glyphs at full contrast so they still identify the type. */
+/* Dim the title on completed Jira rows to keep both cues and row controls legible. */
 .wi-row--done:not(.wi-row--jira),
 .wi-row--done.wi-row--jira .wi-title {
   opacity: 0.55;
@@ -180,6 +180,9 @@
   border: 1px solid currentColor;
   border-radius: 50%;
   color: var(--muted);
+}
+.wi-jira-state--other {
+  border-style: dashed;
 }
 .wi-jira-state--in_progress {
   color: var(--accent);
