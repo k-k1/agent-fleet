@@ -212,7 +212,7 @@ install and a wrapper in `af-gcloud-exec`'s shape when MCP is in use and someone
   server id and the tool, its detail the choice and the session. A held call is attributed to the
   session named by `AF_SESSION_NAME` in the environment of the process holding the CLI's socket. That
   name only says where the card is shown: any session can set it, and it never decides an answer.
-  Calls from the shared codex and opencode daemons stay unattributed.
+  The shared daemons have no process-level session name.
 - **The card (#5174 part 3).** A held call files an outbox notification `mcp-elicitation` whose
   payload is the call's id alone (the outbox is writable by every agent); it targets the attributed
   session, or the workspace when there is none. The Console shows the call as a card above that
@@ -226,5 +226,20 @@ install and a wrapper in `af-gcloud-exec`'s shape when MCP is in use and someone
   elsewhere. Two options whose labels read the same also show their values, and are numbered if
   they still read the same (#5282). The time left comes from the Agent in milliseconds, counted
   from when the browser sent its read, so a browser clock that is off does not hide a card.
+- **Shared daemons (#5174 part 5, measured 2026-11-27).** With two sessions on one OpenCode 2.4.2
+  `serve` process and a loopback MCP server, both sessions completed a tool call in each of
+  direct-tool mode and default Code Mode. All four outbound `tools/call` requests used MCP
+  2026-07-28 and carried their invoking session's ID in
+  `params._meta["ai.opencode/sessionID"]`. The probe used a local model stub to issue the calls
+  and checked that each result came back to the session that requested it.
+  [OpenCode's MCP context documentation](https://opencode.ai/docs/mcp-servers/#context)
+  describes that field.
+  When such a call is held and the process has no session name, the Agent checks that the
+  caller is the shared OpenCode daemon and resolves the ID to one mapped, unarchived Managed or
+  Terminal slot on that daemon. If the lookup fails or the ID is unmapped or ambiguous, the
+  notification targets the workspace. Attribution only selects where to show the card.
+  On Codex 0.172.0, two `mcpServer/tool/call` requests from distinct threads on one `app-server`
+  carried matching `params._meta.threadId` values using MCP 2025-06-18. The relay's hold path
+  requires the newer protocol metadata (#5282).
 - **Not verified:** whether Google accepts or ignores RFC 8707 `resource`; the setup guide's line
   that the Developer Preview Program is required, which may predate GA.

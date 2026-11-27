@@ -210,6 +210,7 @@ func serve() {
 	// servers are simply not written, as before the relay existed.
 	// Set before the relay serves: a CLI from the last boot reconnects as soon as it listens.
 	mcpreg.CallerPID = routegw.LoopbackPeerPID
+	mcpreg.SharedOpenCodeCaller = opencode.SharedMCPCaller
 	if stopRelay, err := mcpreg.StartRelay(); err != nil {
 		log.Printf("mcp relay: not started: %v (OAuth MCP servers are left out of sessions)", err)
 	} else {

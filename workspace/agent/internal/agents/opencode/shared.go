@@ -99,6 +99,40 @@ var terminalSlots = func() []session.Meta {
 // and let the idle stop pull the server out from under them.
 func sharedTerminals() int { return len(terminalSlots()) }
 
+// SharedMCPCaller resolves a call from the shared server to its unique Fleet slot. The native
+// ID only selects a slot already mapped by the Agent, and the peer PID rules out other clients
+// supplying that ID. This is a display label, so a failed lookup can fall back to the workspace.
+func SharedMCPCaller(ctx context.Context, pid int, id string) string {
+	if pid <= 0 || id == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, v2StateTimeout)
+	defer cancel()
+	addr := serveAddr()
+	var info daemonInfo
+	if err := apiJSONCtx(ctx, serveClient, http.MethodGet, addr+"/api/info", nil, &info); err != nil || info.PID != pid {
+		return ""
+	}
+	var name string
+	for _, m := range session.ListMetas() {
+		if m.Kind != session.KindOpencode || m.Archived || !session.ValidName(m.Name) {
+			continue
+		}
+		if SlotSessionID(m) != id {
+			continue
+		}
+		target := v2TargetFor(m)
+		if target.offline || target.Addr != addr {
+			continue
+		}
+		if name != "" {
+			return ""
+		}
+		name = m.Name
+	}
+	return name
+}
+
 // sharedDaemonWanted is whether the daemon has to be started the shared way (a stable password,
 // the plugins' shared mode): a launch that will attach to it, or a pane that already is.
 func sharedDaemonWanted() bool { return sharedTUI() || sharedTerminals() > 0 }

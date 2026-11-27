@@ -27,7 +27,7 @@ const mcpCallerSIDArg = "_af_caller_sid"
 // opencode 2 cannot use the stamp: its client drops arguments a closed inputSchema does not
 // declare after the plugin hook has run, and af's schemas are closed. The model cannot write
 // `_meta`, so unlike the stamped argument it needs no plugin to be believed.
-const mcpCallerSIDMetaKey = "ai.opencode/sessionID"
+const mcpCallerSIDMetaKey = mcpreg.OpenCodeSessionIDMetaKey
 
 // mcpCallerSID is mcpCallerSIDArg's value for the tools/call being handled, "" outside one.
 // One variable is enough because RunStdio dispatches serially — but only the dispatch goroutine

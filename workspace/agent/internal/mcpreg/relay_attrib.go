@@ -1,6 +1,7 @@
 package mcpreg
 
 import (
+	"context"
 	"net"
 	"net/http"
 
@@ -13,18 +14,23 @@ import (
 // that imports this one; nil attributes nothing.
 var CallerPID func(local, remote *net.TCPAddr) (int, bool)
 
+// OpenCodeSessionIDMetaKey is OpenCode 2's per-call native session ID in params._meta.
+const OpenCodeSessionIDMetaKey = "ai.opencode/sessionID"
+
+// SharedOpenCodeCaller resolves a native ID for the peer PID against the Agent's slot mapping.
+// Like CallerPID, it is set by main before the relay starts.
+var SharedOpenCodeCaller func(ctx context.Context, pid int, id string) string
+
 // procRoot is where callerSession reads a process's environment; a test points it elsewhere.
 var procRoot = "/proc"
 
-// callerSession attributes r's call to the session named in its CLI's environment
-// (AF_SESSION_NAME, which every launch route hands down), "" when it cannot be told. The shared
-// managed daemons (codex app-server, opencode serve) serve every session and name none, so their
-// calls stay unattributed.
+// callerSession prefers the CLI's process environment. The shared OpenCode daemon has no
+// AF_SESSION_NAME, so its native ID is a lookup key for the Agent's own mapping.
 //
 // The name is a label for where a held call is shown, not a decision: every session runs as the
 // same user and can put any name in its environment. Whether a call may be answered is decided
 // by the member's signed request alone (the answer route requires the member-origin mark).
-func callerSession(r *http.Request) string {
+func callerSession(r *http.Request, openCodeID string) string {
 	if CallerPID == nil || r == nil {
 		return ""
 	}
@@ -39,6 +45,9 @@ func callerSession(r *http.Request) string {
 	}
 	if name := listenports.SessionOfPID(procRoot, pid); session.ValidName(name) {
 		return name
+	}
+	if openCodeID != "" && SharedOpenCodeCaller != nil {
+		return SharedOpenCodeCaller(r.Context(), pid, openCodeID)
 	}
 	return ""
 }

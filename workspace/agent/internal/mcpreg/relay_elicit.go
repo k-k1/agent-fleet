@@ -100,6 +100,7 @@ type elicitCall struct {
 	params map[string]json.RawMessage
 	// progressToken is the CLI's own token, nil when it sent none.
 	progressToken json.RawMessage
+	openCodeID    string
 	body          []byte
 	// session is the session the call is attributed to (callerSession), "" when none.
 	session string
@@ -188,6 +189,7 @@ func readFlagged(body []byte) (elicitCall, flaggedVerdict, string) {
 	params["_meta"] = rawObject(meta)
 	top["params"] = rawObject(params)
 	c.progressToken = meta["progressToken"]
+	c.openCodeID, _ = jsonString(meta[OpenCodeSessionIDMetaKey])
 	c.body = rawObject(top)
 	return c, flaggedElicit, ""
 }
@@ -1301,7 +1303,7 @@ func cut(s string, n int) string {
 // CLI going away. ok=false means the call is over (the CLI left, or was told why not).
 func holdForAnswer(ctx context.Context, out *elicitOut, def ServerDef, target *url.URL, call elicitCall, ir inputRequired) (json.RawMessage, bool) {
 	if !out.attributed {
-		out.session, out.attributed = callerSession(out.r), true
+		out.session, out.attributed = callerSession(out.r, call.openCodeID), true
 	}
 	call.session = out.session
 	p, err := elicitations.add(ctx, def, originOf(target), call, ir)
@@ -1388,8 +1390,8 @@ type PendingElicitation struct {
 	// the member's own text and any session can change it, so the card shows this beside it.
 	Origin string `json:"origin,omitempty"`
 	Tool   string `json:"tool"`
-	// Session is the session whose process made the call, "" when it cannot be told
-	// (callerSession). It says where to show the call, never whether it may be answered.
+	// Session is the Agent Fleet session that made the call, "" when it cannot be told.
+	// It says where to show the call, never whether it may be answered.
 	Session string `json:"session,omitempty"`
 	// Arguments are the call's arguments exactly as the server will run them.
 	Arguments json.RawMessage `json:"arguments,omitempty"`
