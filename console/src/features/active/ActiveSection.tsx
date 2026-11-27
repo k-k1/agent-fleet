@@ -94,7 +94,7 @@ export const ActiveSection = memo(function ActiveSection() {
     if (g.hint) return tr("active.queue_group", { category: g.label, repo: g.hint });
     return g.label || tr("memo.autorun");
   };
-  // Headings are sorted with the locale's collation, so the order is the locale's too.
+  // Headings and checkout choices are sorted with the locale's collation.
   const locale = useLocale();
   const launchCopies = useMemo(() => activeLaunchCopies(repos), [repos, locale]);
 
@@ -140,7 +140,7 @@ export const ActiveSection = memo(function ActiveSection() {
                     )}
                   </button>
                 </h3>
-                {g.kind === "repo" && <ActiveRepoLaunch label={g.label} copies={launchCopies.get(g.key) ?? []} running={running} />}
+                {g.kind === "repo" && <ActiveRepoLaunch label={g.hint} copies={launchCopies.get(g.key) ?? []} running={running} />}
               </div>
               {!isFolded(g) && (
               <div className="act-cards" role="list">
