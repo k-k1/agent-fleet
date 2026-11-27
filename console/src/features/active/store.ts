@@ -29,16 +29,19 @@ export const ACTIVE_GROUPS_FOLDED_KEY = "af-active-groups-folded";
  *  screen can be the previous tenant's for a moment), so the cap alone bounds it. */
 export const ACTIVE_GROUPS_FOLDED_MAX = 200;
 
-/** The unattended groups (Auto-run, Schedules) the member OPENED. They start folded, so the
+/** The unattended groups the member OPENED. They start folded, so the
  *  stored value is the opposite of ACTIVE_GROUPS_FOLDED_KEY's: a group nobody touched is
  *  folded without anything recorded. */
 export const ACTIVE_GROUPS_OPENED_KEY = "af-active-groups-opened";
 
-/** The opened unattended groups, and the toggle. At most two keys exist, so no cap is needed. */
+/** The opened unattended headings. Bound the list as queue categories come and go. */
 export function useActiveOpenedGroups(): [string[], (key: string) => void] {
   const [raw, setRaw] = useFoldValue(ACTIVE_GROUPS_OPENED_KEY);
   const opened = useMemo(() => parse(raw), [raw]);
-  const toggle = (key: string) => setRaw(JSON.stringify(opened.includes(key) ? opened.filter((k) => k !== key) : [...opened, key]));
+  const toggle = (key: string) => {
+    const next = opened.includes(key) ? opened.filter((k) => k !== key) : [...opened, key];
+    setRaw(JSON.stringify(next.slice(-ACTIVE_GROUPS_FOLDED_MAX)));
+  };
   return [opened, toggle];
 }
 

@@ -336,6 +336,7 @@ describe("ActiveSection", () => {
         sess("run-b", { origin: "queue", queueCategoryId: "b" }),
       ];
       await render(runs);
+      expect(heads()).toEqual(["Auto-run", "Auto-run"]);
       expect(headBtn("u:autorun:a").getAttribute("aria-expanded")).toBe("false");
       expect(headBtn("u:autorun:b").getAttribute("aria-expanded")).toBe("false");
       await act(async () => headBtn("u:autorun:a").click());
@@ -352,6 +353,10 @@ describe("ActiveSection", () => {
       expect(headBtn("u:autorun:b").getAttribute("aria-expanded")).toBe("false");
       expect(cards()).toEqual(["run-a"]);
       expect(JSON.parse(readFoldValue(ACTIVE_GROUPS_OPENED_KEY) || "[]")).toEqual(["u:autorun:a"]);
+      await act(async () => cache.applyRemoved(queueScope(), "a"));
+      expect(heads()).toEqual(["Builds (app)", "Auto-run"]);
+      expect(headBtn("u:autorun:a").getAttribute("aria-expanded")).toBe("true");
+      expect(cards()).toEqual(["run-a"]);
     });
 
     it("Schedules folds, opens and is stored like Auto-run, and a shown schedule worktree child is listed once", async () => {

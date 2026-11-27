@@ -121,6 +121,7 @@ export const ActiveSection = memo(function ActiveSection() {
         <div className="act-list">
           {groups.map((g) => (
             <section className="act-group" key={g.key} data-active-group={g.key}>
+              {/* The full queue heading is available when its text is truncated. */}
               <h3 className="ovw-gtitle act-gtitle" title={(g.kind === "autorun" ? groupName(g) : g.hint) || undefined}>
                 {/* The heading is a disclosure button: Enter / Space fold it, and a screen reader says which way it is. */}
                 <button type="button" className="act-gfold" aria-expanded={!isFolded(g)}

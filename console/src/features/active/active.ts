@@ -272,7 +272,7 @@ export function activeGroups(
     const category = autorun ? root.queueCategoryId : undefined;
     const key = autorun ? (category ? AUTORUN_GROUP + ":" + category : AUTORUN_GROUP) : SCHEDULE_GROUP;
     const q = queueOrder.get(key)?.q;
-    const id: GroupId = { key, kind: autorun ? "autorun" : "schedule", label: q?.category || category || "", hint: q?.repo || "" };
+    const id: GroupId = { key, kind: autorun ? "autorun" : "schedule", label: q?.category || "", hint: q?.repo || "" };
     const g = members.get(id.key) || { id, sessions: [] };
     g.sessions.push(s);
     members.set(id.key, g);
