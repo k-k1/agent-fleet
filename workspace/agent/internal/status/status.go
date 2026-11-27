@@ -343,10 +343,7 @@ func RecordTurnEndFailure(sid, rev, failure string) {
 	}
 	now := time.Now()
 	if rec.At == "" {
-		rec.Rev, rec.At = rev, now.Format(time.RFC3339)
-		if failure != "" {
-			rec.At = now.Format(time.RFC3339Nano)
-		}
+		rec.Rev, rec.At = rev, now.Format(time.RFC3339Nano)
 	}
 	if failure != "" {
 		rec.Reason, rec.Failure = TurnEndReasonFailed, failure
@@ -354,7 +351,7 @@ func RecordTurnEndFailure(sid, rev, failure string) {
 	if err := observedEnds.Write(sid, rec); err != nil {
 		return
 	}
-	noteObservedFirstTurnEnd(sid, now.Format(time.RFC3339Nano), rec.Reason)
+	noteObservedFirstTurnEnd(sid, rev, rec.At, rec.Reason)
 }
 
 // ObservedTurnEnd returns the end a poll observed for the turn the status record is CURRENTLY

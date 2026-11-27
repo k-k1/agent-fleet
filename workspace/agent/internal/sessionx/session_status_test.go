@@ -652,3 +652,21 @@ func TestCodexCompactHooksMarkWithoutTouchingState(t *testing.T) {
 		t.Fatal("UserPromptSubmit left a stale compaction mark open")
 	}
 }
+
+func TestQueuedPolledFailuresAfterContinuationHaveDistinctOutboxIDs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-queue-failures", Dir: t.TempDir(), Kind: session.KindAgy, QueueDelivery: "delivery"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+	for i := 0; i < 2; i++ {
+		rev := status.PersistRev(sid, "working")
+		status.RecordTurnEnd(sid)
+		status.RecordTurnEndFailure(sid, rev, "executor failure")
+		at, _ := status.SettleObservedFailure(sid, rev)
+		RecordSessionNotificationWithTurnEnd(sid, "working", agents.StateFailed, "executor failure", at)
+	}
+	events := notice.List()
+	if len(events) != 2 || events[0].Kind != "turn-failed" || events[1].Kind != "turn-failed" || events[0].ID == events[1].ID {
+		t.Fatalf("outbox events = %+v", events)
+	}
+}

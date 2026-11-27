@@ -318,3 +318,24 @@ func TestStatusStoresStayUnderTheTestHome(t *testing.T) {
 		}
 	}
 }
+
+func TestPolledCompletionsInSameSecondHaveDistinctKeys(t *testing.T) {
+	const sid = "same-second"
+	inFlight(t, sid, false)
+	RecordTurnEnd(sid)
+	first := ObservedTurnEnd(sid)
+	rev, _ := Read(sid)
+	RecordTurnEndFailure(sid, rev.Rev, "failure")
+	if got := ObservedTurnEnd(sid); got != first {
+		t.Fatalf("upgrade moved end %q to %q", first, got)
+	}
+	PersistTurnEnd(sid, "idle")
+	key1, _ := ReadCompletionKey(sid)
+	Persist(sid, "working")
+	RecordTurnEnd(sid)
+	PersistTurnEnd(sid, "idle")
+	key2, _ := ReadCompletionKey(sid)
+	if key1 == "" || key1 == key2 {
+		t.Fatalf("completion keys = %q, %q", key1, key2)
+	}
+}

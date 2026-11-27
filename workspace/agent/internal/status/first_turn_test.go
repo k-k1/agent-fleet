@@ -232,3 +232,25 @@ func TestSweepOrphanFirstTurnsKeepsALedgerItCannotLock(t *testing.T) {
 		t.Errorf("unlocked sweep removed %d, want 1", n)
 	}
 }
+
+func TestFirstTurnLateObservedFailureAndLaterTurn(t *testing.T) {
+	const sid = "ft-late-failure"
+	armed(t, sid, true)
+	rev := PersistRev(sid, "working")
+	RecordTurnEnd(sid)
+	before, ok := ReadFirstTurn(sid)
+	if !ok || before.Outcome != "" {
+		t.Fatalf("initial ledger: %+v, %v", before, ok)
+	}
+	RecordTurnEndFailure(sid, rev, "executor failure")
+	after, ok := ReadFirstTurn(sid)
+	if !ok || after.Outcome != TurnEndReasonFailed || after.EndedAt != before.EndedAt || after.Ms != before.Ms {
+		t.Fatalf("upgraded ledger: %+v, %v", after, ok)
+	}
+	PersistTurnEnd(sid, "idle")
+	rev = PersistRev(sid, "working")
+	RecordTurnEndFailure(sid, rev, "later failure")
+	if got, _ := ReadFirstTurn(sid); got != after {
+		t.Fatalf("later turn changed ledger: %+v", got)
+	}
+}
