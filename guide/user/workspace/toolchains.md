@@ -126,31 +126,31 @@ How your administrator turns it on is in [Start the workspace at sign-in](../../
 
 When Agent Fleet is updated, a running workspace keeps its old image and the workspace bar shows **Restart needed**
 ([Stop the workspace at the end of the day](../start/end-of-day.md#a-new-version-is-available-and-restart-needed)).
-With **Restart automatically onto a new image when idle** under **Automatic image refresh** turned on, the workspace
-does that restart by itself once nobody is using it.
+In **⚙ Settings → Toolchains**, look under **Automatic image refresh** for **Restart automatically onto a new image when idle**.
+Members can change this setting for their own workspace even while it is stopped.
 
 | | What happens |
 |---|---|
-| Off (the default) | The workspace keeps its image until you restart it |
-| On | When the image is outdated and the workspace has been quiet for a while, it is stopped and started again |
+| Off (the default) | The workspace gets the new image the next time it starts |
+| On | When the image is outdated and all the conditions below are met, the workspace stops and starts again automatically |
 
-- Quiet means all of these at once:
-  - No session is running a turn or background work, and none is pinned with **Keep awake** ([Stop when done, or keep a session awake](../sessions/auto-stop.md)). No repository import or
-    image job is running
-  - Nobody is using it: no typing in a terminal and no use of the browser pane recently (30 minutes unless the
-    deployment changed it)
-  - No request (the Console, a preview) has reached the workspace for the quiet time
-- A session waiting on your answer does not hold it off, and neither does a terminal left open without typing
-- The quiet time is set per tenant. Empty takes the deployment default, which is 15 minutes unless the deployment
-  changed it; `0` turns the refresh off
+The workspace restarts automatically when all these conditions hold:
+
+- No turn is running, no background work is within its hold limit, and no live session is pinned with **Keep awake** ([Stop when done, or keep a session awake](../sessions/auto-stop.md))
+- No repository import or image job is running
+- Nobody has typed in a terminal or used the browser pane in the last 30 minutes, unless the deployment changed that window
+- The **Quiet time before an automatic image refresh** has elapsed since the last activity, such as starting the workspace or a request from the Console or a preview
+
+A session waiting on your answer or a terminal left open without typing does not by itself delay the restart.
+
 - When idle auto-stop is due first, the workspace is stopped instead. The next start takes the new image anyway
-- It is a restart, never a recreate: your files and repositories stay. Sessions can be resumed afterwards
+- As with stopping and starting, your home directory is kept and you can resume sessions afterwards. On deployments with a working disk, the contents of `/scratch` are deleted ([What stays and what goes](recreate.md#what-stays-and-what-goes))
 - You get one notification, "**Your workspace was updated automatically**"
 - Each new image is tried automatically only once. If the start fails, the workspace stays stopped and you get
   "**Automatic update failed; your workspace is stopped**". Start it yourself; it comes up on the new image
-- It can be changed while the workspace is stopped, and is available to every member
 
-The tenant side is in [Stop workspaces left idle](../../admin/resources/idle-stop.md#restart-onto-a-new-image-automatically).
+The deployment administrator sets the quiet time. It defaults to 15 minutes unless the deployment changes it, and a tenant setting of `0` disables automatic refresh.
+See [Stop workspaces left idle](../../admin/resources/idle-stop.md#restart-onto-a-new-image-automatically) for the tenant controls.
 
 ## Update Agent Fleet
 

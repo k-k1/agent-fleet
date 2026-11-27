@@ -43,17 +43,7 @@ To use a new image you do not need to recreate anything. Stop the workspace from
 it then runs on the latest image.
 
 - When a new image is out, the workspace bar shows **Restart needed**. Press it, then **Restart now**, to stop and start
-- With **Restart automatically onto a new image when idle** turned on under **⚙ Settings → Toolchains**, the Control
-  Plane restarts the workspace for you once nothing has been happening for a while. It is off by default
-
-The automatic restart waits while a session is running a turn or background work or is pinned with Keep awake, while
-someone is typing in a terminal or using the browser pane, or when a request came in recently. A session waiting for
-your answer, or a terminal left open without typing, does not hold it off. Unless the deployment set another value,
-"nothing has been happening" means 15 minutes. The details are in
-[Choose your toolchains](toolchains.md#restart-onto-a-new-image-automatically).
-
-- You get one notification when it restarts. You can resume your sessions afterwards
-- It tries the same image once. If the start fails, the workspace stays stopped and the badge stays
+- To update automatically, set up [Automatic image refresh in Toolchains](toolchains.md#restart-onto-a-new-image-automatically)
 
 ## Recreate
 

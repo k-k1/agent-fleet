@@ -40,10 +40,6 @@ can carry are in [Icons, badges and menus](../../ref/console-ui.md#session-state
 - A Managed session opens straight on its conversation. A Terminal (CLI) session shows a **Chat** / **Terminal** switch at the top, and "Chat" shows the conversation tidied up turn by turn
 - Opening a stopped session shows "**Viewing history (resume to type)**", and it is read-only
 
-> [!NOTE]
-> If you are only watching, do not answer a question or a permission request meant for someone else. Tell the person in
-> charge, or write it into the memo queue for them.
-
 ## Get notifications
 
 When a state changes while you are not looking, a browser notification appears with the session's name in it. It does not

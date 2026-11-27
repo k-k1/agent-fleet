@@ -7,15 +7,15 @@ source_of_truth: "The Console's session ⋯ menu \"Hand off to a member…\" and
 
 English | [日本語](hand-over.ja.md)
 
-You can ask a member of the same tenant to carry on a session. When they accept, a new session starts in their workspace
-and continues from the branch you pushed.
+You can ask a member of the same tenant to carry on a session. When they launch from the handoff, a new session starts in their workspace.
+For a repository handoff, they can continue from the branch you pushed.
 
 ## How it works
 
 | What you do | What your teammate and the agent do |
 |---|---|
 | Share the session with them, then send a handoff text with "**Hand off to a member…**" | The handoff reaches their inbox, their notifications and the shared conversation |
-| If there are commits not pushed yet, choose "**Push, then send**" | When they press "**Take it over**", a new session starts in their workspace and receives the handoff text as its first instruction |
+| If there are commits not pushed yet, choose "**Push, then send**" | When they launch from the launch dialog, the new session receives the handoff text as its first instruction |
 | Check the outcome on the card's status line | If they never answer, the offer expires after 7 days |
 
 > [!NOTE]
@@ -71,30 +71,8 @@ in your home and never reach the recipient. They get the handoff text and nothin
 - The dialog says so and asks you to tick "**Send anyway; I understand the space's files are not handed over**" before
   "**Send handoff**" is enabled. The tick is for that warning alone: if the dialog's state changes to another warning
   while it is open, it starts unticked again. Put what the recipient needs into the handoff text
-- The recipient's offer shows no repository, branch or commit and no working copy to choose. It says the files stay in
-  your home, and "**Take it over**" opens the launch dialog for **a new space of their own**, never a repository and
-  never home
 - A space that is also a git working copy is still checked like a repository: unpushed commits block the send, and
-  "**Push, then send**" is offered. Even then the recipient starts in a new space, not in a clone
-
-## Take over a handoff you received
-
-A handoff shows up for the recipient in three places.
-
-- At the top of the inbox's "**Received**" tab ("**Handoffs from members**"). It counts on the inbox badge until you take it or decline it ([inbox](inbox.md))
-- Notifications
-- A banner above the shared conversation ("**Review and take it over**")
-
-To take it:
-
-1. Press "**Take it over**" and choose a working copy. If your workspace has none yet, clone the source repository first.
-   A handoff from a space has no working copy to choose: the offer says the sender's files stay behind
-2. The usual launch dialog opens with everything filled in. Check it and launch. For a handoff from a space it is the
-   new-space dialog, and the session starts in a new space under `~/spaces`. It first asks your workspace whether it can
-   start in a space; if the workspace is stopped or does not answer, nothing starts and you are told to start it and
-   take the handoff again
-
-The session runs in the recipient's workspace and its cost is theirs. To refuse, press "**Decline**".
+  "**Push, then send**" is offered
 
 ## After you send
 
@@ -116,8 +94,6 @@ There is no button just for withdrawing. While the offer waits, press "**Start n
 
 To change the text, withdraw this way and send again.
 
-## When it goes wrong
-
 ### "Hand off to a member…" is not in the menu
 
 The workspace is stopped, or the session's working folder is gone. Start the workspace and open the menu again.
@@ -126,6 +102,25 @@ Shell and SSM terminal sessions cannot be handed off.
 ### The person is not in "Hand off to"
 
 The session is not shared with them yet. Share it from "**Share this session**".
+
+## Take over a handoff you received
+
+A handoff shows up for the recipient in three places.
+
+- At the top of the inbox's "**Received**" tab ("**Handoffs from members**"). It counts on the inbox badge until you take it or decline it ([inbox](inbox.md))
+- Notifications
+- A banner above the shared conversation ("**Review and take it over**")
+
+To take it:
+
+1. For a repository handoff, select a "**Working copy**" and press "**Take it over**". If your workspace has no working copy yet, clone the source repository first.
+   For a space handoff, read the handoff text and the note about the files staying with the sender, then press "**Take it over**"
+2. The usual launch dialog opens with everything filled in. Check it and launch. For a handoff from a space it is the
+   new-space dialog, and the session starts in a new space under `~/spaces`. It first asks your workspace whether it can
+   start in a space; if the workspace is stopped or does not answer, nothing starts and you are told to start it and
+   take the handoff again
+
+The session runs in the recipient's workspace and its cost is theirs. To refuse, press "**Decline**".
 
 ### Taking it says no session was started
 

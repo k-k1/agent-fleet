@@ -84,21 +84,14 @@ When something needs fixing on the host, such as a broken container that a resta
 
 ## Restart onto a new image automatically
 
-When Agent Fleet is updated, running workspaces keep the old image. If a member has switched it on in their own settings, their workspace restarts onto the new image while nobody is using it.
+Members choose whether to update their own workspaces automatically. The deployment administrator sets the quiet time before a restart for each tenant.
 
 | Setting | Where | Who decides |
 |---|---|---|
 | **Automatic image refresh** ("Restart automatically onto a new image when idle") | Settings → Toolchains | The member. Off by default |
 | **Quiet time before an automatic image refresh** | The tenant's idle auto-stop | The deployment administrator. Empty takes the deployment default, 15 minutes unless the deployment changed it; `0` never |
 
-- It restarts once none of the following has happened for the quiet time:
-  - a session ran a turn or background work, or is pinned with Keep awake
-  - a repository import or image job ran
-  - someone typed in a terminal or used the browser pane recently (within 30 minutes unless the deployment changed it)
-  - a request (the Console, a preview) reached the workspace
-- A session waiting on a person and a terminal left open without typing do not hold it off. When **Workspace stop after** is due first, the workspace is stopped instead, and its next start takes the new image
-- It is never recreated, so files stay. Sessions can be resumed, and the member gets one notification
-- Each image is tried automatically only once. If the start fails, the workspace stays stopped
+See [Choose your toolchains](../../user/workspace/toolchains.md#restart-onto-a-new-image-automatically) for the conditions that delay a restart and the notification members receive.
 
 ## Related
 

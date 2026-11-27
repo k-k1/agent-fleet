@@ -162,7 +162,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | ページ | できること |
 |---|---|
 | [アシスタントに質問する](chat/assistant.ja.md) | リポジトリなしで質問する。長い会話を圧縮し、作業計画を残す |
-| [翻訳や専用のアシスタントを使う](chat/purpose-assistants.ja.md) | ファイルを翻訳・要約する。自分用のアシスタントを作り、AI 補助を設定する |
+| [翻訳や専用のアシスタントを使う](chat/purpose-assistants.ja.md) | ファイルを翻訳・要約する。自分用のアシスタントを作り、[設定 › AI 補助](chat/purpose-assistants.ja.md#ai-補助を設定する) で機能を選ぶ |
 | [メモをためて渡す](chat/memos.ja.md) | 思いついた指示をためて整理し、まとめてセッションに送る |
 | [メモを自動で実行する](chat/memo-auto-run.ja.md) | カテゴリのメモを、あなたの指示でセッションとして実行させる。「今すぐ実行」でも自動でも |
 | [自動実行の設定をリポジトリに置く](chat/memo-auto-run-repo-file.ja.md) | カテゴリの自動実行の設定を `.agent-fleet/autorun.yaml` に置き、違いを Console で承認する |

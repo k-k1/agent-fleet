@@ -8,7 +8,8 @@ source_of_truth: "the input box and Stop in the Console's chat view of a session
 English | [日本語](queue.ja.md)
 
 While a turn runs, you can hold follow-ups in a waiting list and send them in order once the turn ends.
-This page also covers what Stop ends and what it keeps when something is queued.
+**Stop** in the chat input area acts on the running turn. To stop the session and resume it later,
+choose **Stop (resumable later)** in the session row's ⋯ menu ([Stop and resume a session](stop-resume.md)).
 
 ## How it works
 
@@ -16,7 +17,7 @@ This page also covers what Stop ends and what it keeps when something is queued.
 |---|---|
 | Hold follow-ups in "Waiting to send" | Receives nothing. When the turn ends, it gets them one at a time |
 | Send normally during a turn | Gets it at once. Depending on the kind, it takes it into the running turn or queues it |
-| Press **Stop** | Stops the running turn. What happens to the queue depends on the execution method |
+| Press **Stop** in the chat input area | Sends an interrupt to the running turn. The session stays open, and what happens to the queue depends on the execution method |
 
 The waiting list and the queue are different things.
 
@@ -52,7 +53,7 @@ Two rows never go out at once.
 After the actions below the list pauses, so your held follow-ups do not start on their own.
 The list header says **"Auto-send is paused because you stopped the turn."**; press **"Resume"** to go on.
 
-- You pressed **Stop**
+- You pressed **Stop** in the chat input area
 - You rejected a plan, or sent it to **"Review in another session"** or **"Review again in …"**
 - You cancelled a question with Esc on a Terminal session
 - The agent refused a send (that row stays where it was)
