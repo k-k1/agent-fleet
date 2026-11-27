@@ -43,10 +43,11 @@ const (
 
 // lastStepRow is the newest steps row plus where the newest finished turn stopped.
 type lastStepRow struct {
-	conv    string
-	status  int
-	payload []byte
-	idx     int
+	conv     string
+	stepType int
+	status   int
+	payload  []byte
+	idx      int
 	// turnEnd is the step idx the newest executor_metadata row ended at, -1 when no turn has
 	// ended yet; meaningful only when turnLog is turnLogRead.
 	turnEnd int
@@ -83,8 +84,8 @@ func lastStep(m session.Meta) (lastStepRow, bool) {
 	}
 	defer db.Close()
 	r := lastStepRow{conv: conv, turnEnd: -1}
-	if err := db.QueryRow(`SELECT idx, status, step_payload FROM steps ORDER BY idx DESC LIMIT 1`).
-		Scan(&r.idx, &r.status, &r.payload); err != nil {
+	if err := db.QueryRow(`SELECT idx, step_type, status, step_payload FROM steps ORDER BY idx DESC LIMIT 1`).
+		Scan(&r.idx, &r.stepType, &r.status, &r.payload); err != nil {
 		return lastStepRow{}, false
 	}
 	r.turnEnd, r.turnLog = turnEnd(db)
@@ -130,44 +131,60 @@ func turnEnd(db *sql.DB) (int, turnLogState) {
 // walking the whole message so a malformed one is reported (ok=false) rather than read as
 // "field absent" (found=false).
 func protoVarintField(b []byte, num uint64) (v uint64, found, ok bool) {
+	v, _, found, ok = protoField(b, num, 0)
+	return
+}
+
+func protoBytesField(b []byte, num uint64) []byte {
+	_, data, _, ok := protoField(b, num, 2)
+	if !ok {
+		return nil
+	}
+	return data
+}
+
+func protoField(b []byte, num uint64, wire uint64) (v uint64, data []byte, found, ok bool) {
 	for len(b) > 0 {
 		key, n := binary.Uvarint(b)
 		// Field numbers run 1..2^29-1; a zero tag is how garbage most often decodes.
 		if n <= 0 || key>>3 == 0 || key>>3 > 1<<29-1 {
-			return 0, false, false
+			return 0, nil, false, false
 		}
 		b = b[n:]
 		switch key & 7 {
 		case 0:
 			x, n := binary.Uvarint(b)
 			if n <= 0 {
-				return 0, false, false
+				return 0, nil, false, false
 			}
-			if key>>3 == num && !found {
+			if wire == 0 && key>>3 == num && !found {
 				v, found = x, true
 			}
 			b = b[n:]
 		case 1:
 			if len(b) < 8 {
-				return 0, false, false
+				return 0, nil, false, false
 			}
 			b = b[8:]
 		case 2:
 			l, n := binary.Uvarint(b)
 			if n <= 0 || uint64(len(b)-n) < l {
-				return 0, false, false
+				return 0, nil, false, false
+			}
+			if wire == 2 && key>>3 == num && !found {
+				data, found = b[n:n+int(l)], true
 			}
 			b = b[n+int(l):]
 		case 5:
 			if len(b) < 4 {
-				return 0, false, false
+				return 0, nil, false, false
 			}
 			b = b[4:]
 		default:
-			return 0, false, false
+			return 0, nil, false, false
 		}
 	}
-	return v, found, true
+	return v, data, found, true
 }
 
 // LiveState is agy's session state derived from the conversation DB, mirroring
@@ -394,7 +411,7 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 		return false, false
 	}
 	r, ok := lastStep(m)
-	if !ok || r.turnLog != turnLogRead || r.idx < at {
+	if !ok || r.idx < at {
 		return false, false
 	}
 	// The previous run can close after the mark too (its own last steps were still landing), so
@@ -402,6 +419,12 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	// cannot prove the pairing (a table or column that cannot be read is unknown, below).
 	first, found, ok := firstUserStepAfter(r.conv, at)
 	if !ok {
+		return false, false
+	}
+	if failure, ok := hookExecutorFailure(m, r.conv); found && ok && failure.index == r.idx && failure.index >= first {
+		return true, true
+	}
+	if r.turnLog != turnLogRead {
 		return false, false
 	}
 	// A readable steps table with no user step after the mark is a denial (the input has not

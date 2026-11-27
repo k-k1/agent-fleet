@@ -1152,7 +1152,8 @@ type sessionWire struct {
 	LastTurnStartAt string `json:"lastTurnStartAt,omitempty"`
 	// LastTurnEndAt is when the session's newest turn ended (RFC 3339, the Agent's clock), "" while
 	// mid-turn or when no end was seen. No DB-mirror column.
-	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
+	LastTurnEndAt     string `json:"lastTurnEndAt,omitempty"`
+	LastTurnEndReason string `json:"lastTurnEndReason,omitempty"`
 }
 
 // sessionWakers is the Agent's count of the subscriptions a session owns that can start it: the

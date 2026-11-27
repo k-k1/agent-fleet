@@ -37,12 +37,10 @@ func (agentImpl) SkillsLayout() agents.SkillsLayout {
 // ConnectionStatus is agents.ConnectionStatuser: this package's Status().
 func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return Status() }
 
-// LiveStateTraits is agents.LiveStater: its conversation DB (LiveState, the last step's status).
-// agy has no hooks, and its question/permission widget replaces the idle footer, so no pane heal
-// clears the optimistic "working" /input stored: that poll is where a turn ends, and a stale
-// "working" reads idle.
+// LiveStateTraits reads the lifecycle hooks and conversation DB. The status
+// store's working marker is settled by a poll of those sources.
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
-	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 45 * time.Second}
+	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 45 * time.Second, TurnFailure: turnFailure, QueueTurnFailure: true}
 }
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.

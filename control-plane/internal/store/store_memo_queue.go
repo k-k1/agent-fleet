@@ -178,6 +178,7 @@ type MemoTxOps interface {
 	// queue. False means no such message: it is gone, claimed, sent, or not in a queue.
 	SetMemoRunNext(id string, on bool) (bool, error)
 	ConfirmMemoDelivery(id, deliveryID string) (bool, error)
+	InsertNotification(n Notification) error
 	// CountQueueIntakeSince counts the creates into a queue from inside the workspace or
 	// /mcp logged at or after since, dropping older entries. Moving or deleting a message
 	// does not take its create off the log.
@@ -266,13 +267,22 @@ func (s *SQL) MemoTx(ctx context.Context, membershipID string, f func(MemoTxOps)
 	if err := sweepStaleMemoSends(ctx, tx, membershipID); err != nil {
 		return err
 	}
-	if err := f(memoTx{ctx: ctx, q: tx, mid: membershipID}); err != nil {
+	var notifications []Notification
+	if err := f(memoTx{ctx: ctx, q: tx, mid: membershipID, notifications: &notifications}); err != nil {
 		return err
 	}
 	if err := endEmptyDrains(ctx, tx, membershipID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if s.onNotification != nil {
+		for _, n := range notifications {
+			s.onNotification(n)
+		}
+	}
+	return nil
 }
 
 // endEmptyDrains ends the draining of a queue of the member that has no pending message left, in
@@ -311,9 +321,19 @@ func sweepStaleMemoSends(ctx context.Context, q memoQuerier, membershipID string
 }
 
 type memoTx struct {
-	ctx context.Context
-	q   memoQuerier
-	mid string
+	ctx           context.Context
+	q             memoQuerier
+	mid           string
+	notifications *[]Notification
+}
+
+func (t memoTx) InsertNotification(n Notification) error {
+	n.MembershipID = t.mid
+	inserted, err := insertNotification(t.ctx, t.q, n)
+	if inserted {
+		*t.notifications = append(*t.notifications, n)
+	}
+	return err
 }
 
 func (t memoTx) GetMemo(id string) (Memo, bool, error) {

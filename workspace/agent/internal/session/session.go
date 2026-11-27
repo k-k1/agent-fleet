@@ -492,6 +492,9 @@ type Session struct {
 	// "the turn ended" apart from "an idle we cannot explain" (status.SessionStatus.TurnEnd,
 	// docs/log/51), and a fabricated time would be read as evidence of completion.
 	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
+	// LastTurnEndReason qualifies LastTurnEndAt for Terminal kinds that expose
+	// their failure evidence to auto-run.
+	LastTurnEndReason string `json:"lastTurnEndReason,omitempty"`
 	// LastTurnStartAt is when this session's newest turn STARTED (RFC 3339, this host's clock),
 	// "" when none was seen (status.TurnStart). It survives a stop. The Control Plane drops a
 	// queue run's hand-back (defer_queue_item) when a turn of the run's tree started after the

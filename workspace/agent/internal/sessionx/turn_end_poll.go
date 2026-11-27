@@ -43,16 +43,28 @@ import (
 // already fired it and the persisted state is idle — no double fire.
 func notifyPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
-	if state != "idle" || status.LiveState(sid) != "working" || !idleEndsThisTurn(m, sid) || turnEndHeld(m) {
+	st, _ := status.Read(sid)
+	if state != "idle" || st.State != "working" || turnEndHeld(m) {
+		return
+	}
+	if _, reason := status.LatestTurnEnd(sid); reason == status.TurnEndReasonFailed {
+		agents.MarkObservedTurnFailed(sid, st.Rev)
+		return
+	}
+	if !idleEndsThisTurn(m, sid) {
 		return
 	}
 	if t := liveStateTraits(m.Kind); t.TurnFailure != nil {
 		if mark, ok := status.TurnMarkOf(sid); ok {
 			if failure := t.TurnFailure(m, mark); failure != "" {
-				agents.MarkTurnEndErr(sid, agents.TurnFailed, failure)
+				status.RecordTurnEndFailure(sid, st.Rev, failure)
+				agents.MarkObservedTurnFailed(sid, st.Rev)
 				return
 			}
 		}
+	}
+	if current, _ := status.Read(sid); current.Rev != st.Rev {
+		return
 	}
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)
 }
@@ -143,20 +155,28 @@ func turnJustStarted(sid string) bool {
 // this one's end already stamped, there is nothing to learn.
 func recordPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
-	if !status.TurnEndUnrecorded(sid) {
+	st, _ := status.Read(sid)
+	if st.State != "working" || !status.TurnEndUnrecorded(sid) {
 		return
 	}
 	// Only a PolledTurnEnd kind: WireLive already read the same source DriveState reads. Every
 	// other kind has a hook (or a managed driver) that reports its own end of turn, so an idle
 	// here is not evidence that a turn ended — for claude it is exactly the "idle we cannot
 	// explain" the TurnEnd bit exists to keep out.
-	if !liveStateTraits(m.Kind).PolledTurnEnd {
+	traits := liveStateTraits(m.Kind)
+	if !traits.PolledTurnEnd {
 		return
 	}
 	if state != "idle" || !idleEndsThisTurn(m, sid) || turnEndHeld(m) {
 		return
 	}
-	status.RecordTurnEnd(sid)
+	failure := ""
+	if traits.TurnFailure != nil {
+		if mark, ok := status.TurnMarkOf(sid); ok {
+			failure = traits.TurnFailure(m, mark)
+		}
+	}
+	status.RecordTurnEndFailure(sid, st.Rev, failure)
 }
 
 // seenInputRev remembers, per sid, the status Rev whose input was already seen in the source, so

@@ -53,21 +53,18 @@ func scanNotification(row scanner) (Notification, error) {
 }
 
 func (s *SQL) InsertNotification(ctx context.Context, n Notification) error {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at, origin_root, origin_child)
+	inserted, err := insertNotification(ctx, s.db, n)
+	if inserted && s.onNotification != nil {
+		s.onNotification(n)
+	}
+	return err
+}
+
+func insertNotification(ctx context.Context, q memoQuerier, n Notification) (bool, error) {
+	return affected(q.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at, origin_root, origin_child)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(membership_id, event_id) DO NOTHING`, n.EventID, n.MembershipID,
 		n.Kind, n.TargetType, n.TargetID, n.TargetKind, n.DisplayName, n.Payload, n.CreatedAt, n.SeenAt,
-		originRootOrOwn(n.OriginRoot), b2i(n.OriginChild))
-	if err != nil {
-		return err
-	}
-	// Only a row this call created is announced: the Agent's outbox is re-sent until acked, and
-	// a duplicate must not push the member's phone a second time.
-	if fn := s.onNotification; fn != nil {
-		if rows, rerr := res.RowsAffected(); rerr == nil && rows > 0 {
-			fn(n)
-		}
-	}
-	return nil
+		originRootOrOwn(n.OriginRoot), b2i(n.OriginChild)))
 }
 
 // SetNotificationHook registers fn to be called, after the insert has committed, for every

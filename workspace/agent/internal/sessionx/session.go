@@ -141,6 +141,10 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	if alive {
 		recordPolledTurnEnd(m, li.State)
 	}
+	turnEndAt, turnEndReason := status.LatestTurnEnd(session.UUID(m.Dir, m.Name))
+	if m.QueueDelivery == "" || m.DriverKind() == session.DriverManaged || !liveStateTraits(m.Kind).QueueTurnFailure {
+		turnEndReason = ""
+	}
 	s := session.Session{
 		Route: m.Route.Clone(), LaunchRoute: m.LaunchRoute.Clone(),
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
@@ -155,7 +159,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		Locked: m.Locked, Archived: m.Archived,
 		KeepAwakeUntil: m.KeepAwakeUntil, StopAfterTurnAt: stopArmVisible(m),
 		SpendCapUSD: m.SpendCapUSD, SpendCapHitAt: m.SpendCapHitAt,
-		LastTurnEndAt: lastTurnEndAt(m),
+		LastTurnEndAt: turnEndAt, LastTurnEndReason: turnEndReason,
 		// A queue run's hand-back is dropped when a turn of its tree started after the call
 		// (ADR 0137, addendum 2026-11-19, part B).
 		LastTurnStartAt: status.LastTurnStart(session.UUID(m.Dir, m.Name)),
@@ -285,22 +289,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 // therefore means "nothing here ended a turn since it last started", never "it never
 // finished".
 func lastTurnEndAt(m session.Meta) string {
-	sid := session.UUID(m.Dir, m.Name)
-	st, ok := status.Read(sid)
-	if !ok {
-		return ""
-	}
-	if st.TurnEnd {
-		return st.TurnEndAt // settled by the route that notifies; it adopted the time below
-	}
-	// Not settled yet: on the four hook-less TUI kinds a poll of this very listing may have
-	// seen the end first, and until something calls DriveState nothing settles it. The
-	// observation counts only while a turn was in flight and only while it is newer than the
-	// status record it was taken against (status.ObservedTurnEnd).
-	if st.State != "working" {
-		return ""
-	}
-	return status.ObservedTurnEnd(sid)
+	at, _ := status.LatestTurnEnd(session.UUID(m.Dir, m.Name))
+	return at
 }
 
 // remoteSessionURL (deriving the claude.ai Remote Control URL) lives in

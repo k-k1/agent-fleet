@@ -62,6 +62,8 @@ func (m Message) headline(en bool) string {
 		switch m.Kind {
 		case "answer-ready":
 			return "Session is awaiting your input"
+		case "turn-failed":
+			return "A session turn failed"
 		case "question":
 			return "A question is awaiting your answer"
 		case "plan-approval":
@@ -85,6 +87,8 @@ func (m Message) headline(en bool) string {
 	switch m.Kind {
 	case "answer-ready":
 		return "セッションが入力待ちになりました"
+	case "turn-failed":
+		return "セッションのターンが失敗しました"
 	case "question":
 		return "質問への回答待ちです"
 	case "plan-approval":

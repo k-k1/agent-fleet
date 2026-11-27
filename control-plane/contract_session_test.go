@@ -131,6 +131,7 @@ var sessionWireBinding = map[string]string{
 	"QueueTurn":            "queueTurn",
 	"LastTurnStartAt":      "lastTurnStartAt",
 	"LastTurnEndAt":        "lastTurnEndAt",
+	"LastTurnEndReason":    "lastTurnEndReason",
 }
 
 // --- 2. exemption tables for the correspondence check (the family list itself is
@@ -178,7 +179,8 @@ var goOnlyExempt = map[string]string{
 	"lastTurnStartAt": "read only by the Control Plane's queue hand-back (#4541); the Console does not draw it",
 	// Read by the Control Plane alone: a queue run is not closed while a child's finished turn is
 	// unread by its idle parent (#4643). The Console draws nothing from it.
-	"lastTurnEndAt": "read only by the Control Plane's queue close rule (#4643); the Console does not draw it",
+	"lastTurnEndAt":     "read only by the Control Plane's queue close rule (#4643); the Console does not draw it",
+	"lastTurnEndReason": "read by the queue runner to close a failed turn; the Console uses the delivery outcome",
 	// Read by the Control Plane alone: a queue run is not closed while a peer message to a member
 	// of its tree is in transit (#5270). The Console draws nothing from it.
 	"pendingPeers": "read only by the Control Plane's queue hold (#5270); the Console does not draw it",

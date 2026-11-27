@@ -51,6 +51,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "pr-feedback": "noti.kind_pr_feedback",
   "pr-conflict": "noti.kind_pr_conflict",
   "memo-delivery-overdue": "noti.kind_memo_delivery_overdue",
+  "turn-failed": "noti.kind_turn_failed",
   "memo-queue-paused": "noti.kind_memo_queue_paused",
   "memo-queue-waiting": "noti.kind_memo_queue_waiting",
   "memo-queue-blocked": "noti.kind_memo_queue_blocked",
@@ -206,6 +207,7 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       speech: t(`notif.memo_${which}.speech`, { name: label }),
     };
   }
+  if (n.kind === "turn-failed") return { title: t("notif.turn_failed.title"), body: name, speech: t("notif.turn_failed.speech", { name }) };
   if (n.kind === "answer-ready") return { title: t("notif.answer_ready.title"), body: name, speech: t("notif.answer_ready.speech", { name }) };
   if (n.kind === "question") return { title: t("notif.question.title"), body: name, speech: t("notif.question.speech", { name }) };
   if (n.kind === "plan-approval") return { title: t("notif.plan_approval.title"), body: name, speech: t("notif.plan_approval.speech", { name }) };
