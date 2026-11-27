@@ -28,7 +28,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[watch]** Watch service recovery on GitHub and Atlassian cloud status pages ([#5204](https://github.com/k-k1/agent-fleet/issues/5204))
 - **[mirror]** Fleet watch names and branches, and timer due times in the browser time zone ([#5305](https://github.com/k-k1/agent-fleet/issues/5305), [#5324](https://github.com/k-k1/agent-fleet/issues/5324))
 - **[guide]** Search keywords and updated Console guidance in both languages ([#5064](https://github.com/k-k1/agent-fleet/issues/5064), [#5321](https://github.com/k-k1/agent-fleet/issues/5321))
-- **[workspace]** AWS CLI 2.42.4, GitHub CLI 2.106.0 and bkt 0.41.1 alongside the agent CLI updates ([#5211](https://github.com/k-k1/agent-fleet/issues/5211))
+- **[workspace]** Bundled tools updated to AWS CLI 2.42.4, GitHub CLI 2.106.0 and bkt 0.41.1 ([#5211](https://github.com/k-k1/agent-fleet/issues/5211))
 
 **Fixed**
 
