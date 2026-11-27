@@ -12,8 +12,9 @@ import (
 var settingsMu sync.Mutex
 
 // The write path into agy's settings.json (~/.gemini/antigravity-cli/settings.json), used to
-// pre-add trustedWorkspaces and to pin enableTelemetry. agy writes the same file itself, so
-// unknown keys are preserved and updates go through an atomic rename.
+// pre-add trustedWorkspaces, pin enableTelemetry, and default showFeedbackSurvey.
+// agy writes the same file itself, so unknown keys are preserved and updates go through
+// an atomic rename.
 
 // readSettings returns the parsed settings.json (empty map when absent/corrupt).
 func readSettings() map[string]any {
@@ -75,5 +76,18 @@ func enforceTelemetryOff() {
 		return
 	}
 	m["enableTelemetry"] = false
+	writeSettings(m)
+}
+
+// defaultFeedbackSurveyOff leaves the member's /config choice in place on later launches.
+func defaultFeedbackSurveyOff() {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	m := readSettings()
+	const key = "showFeedbackSurvey"
+	if _, exists := m[key]; exists {
+		return
+	}
+	m[key] = false
 	writeSettings(m)
 }

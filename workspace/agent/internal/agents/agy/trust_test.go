@@ -3,6 +3,7 @@ package agy
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -17,6 +18,30 @@ func readSettingsRaw(t *testing.T) map[string]any {
 		t.Fatalf("parse settings.json: %v", err)
 	}
 	return m
+}
+
+func TestDefaultFeedbackSurveyOff(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		initial map[string]any
+		want    map[string]any
+	}{
+		{"fresh", nil, map[string]any{"showFeedbackSurvey": false}},
+		{"missing", map[string]any{"showTips": true}, map[string]any{"showTips": true, "showFeedbackSurvey": false}},
+		{"on", map[string]any{"showFeedbackSurvey": true}, map[string]any{"showFeedbackSurvey": true}},
+		{"off", map[string]any{"showFeedbackSurvey": false}, map[string]any{"showFeedbackSurvey": false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if tc.initial != nil {
+				writeSettings(tc.initial)
+			}
+			defaultFeedbackSurveyOff()
+			if got := readSettingsRaw(t); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("settings = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func trusted(t *testing.T) []string {

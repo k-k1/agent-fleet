@@ -43,6 +43,9 @@ func TestBuildLaunchCarriesMaskInEnv(t *testing.T) {
 		// Unsupported host (no agy binary, or a mask that does not help): nothing to assert.
 		t.Skipf("BuildLaunch refused on this host: %v", err)
 	}
+	if got := readSettingsRaw(t)["showFeedbackSurvey"]; got != false {
+		t.Errorf("showFeedbackSurvey = %v, want false", got)
+	}
 	// The launch generation rides the same env; a record of an earlier launch is gone.
 	sid := session.UUID(dir, "s")
 	if _, ok := hookRecords.Read(sid); ok {
