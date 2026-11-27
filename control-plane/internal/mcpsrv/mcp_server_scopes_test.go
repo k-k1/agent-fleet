@@ -66,9 +66,31 @@ func TestValidateMCPBodyRefusesScopesWithoutOAuth(t *testing.T) {
 	}
 }
 
-// Scopes round-trip through the admin API and the store, come back in the list, and are cleared
-// when an edit sends none or takes OAuth off.
-func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
+func TestValidateMCPBodyElicitation(t *testing.T) {
+	for _, tc := range []struct {
+		name, auth, elicitation, code string
+	}{
+		{name: "off by default", auth: mcpAuthOAuth},
+		{name: "OAuth opt-in", auth: mcpAuthOAuth, elicitation: mcpElicitationRelay},
+		{name: "static server", elicitation: mcpElicitationRelay, code: codeMCPElicitOAuth},
+		{name: "unknown mode", auth: mcpAuthOAuth, elicitation: "other", code: codeMCPElicitUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := mcpServerBody{Name: "wiki", URL: "https://wiki.example/mcp", Auth: tc.auth, Elicitation: tc.elicitation}
+			err := validateMCPBody(b)
+			if tc.code == "" {
+				if err != nil {
+					t.Fatalf("validate = %+v, want success", err)
+				}
+			} else if err == nil || err.Status != http.StatusBadRequest || err.Code != tc.code {
+				t.Fatalf("validate = %+v, want 400 %s", err, tc.code)
+			}
+		})
+	}
+}
+
+// Scopes and tool confirmations round-trip through the admin API, store and distribution.
+func TestAdminUpsertStoresAndDistributesOAuthOptions(t *testing.T) {
 	a, ctx := newMCPServerAPITest(t, true)
 	tn := store.Tenant{ID: "tenant-a", Slug: "a"}
 	cp := a.cp.(testCP)
@@ -97,15 +119,15 @@ func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
 	}
 	scopes := []string{"https://www.googleapis.com/auth/gmail.readonly", "openid"}
 	gmail := mcpServerBody{Name: "gmail", URL: "https://gmailmcp.googleapis.com/mcp/v1self", Auth: mcpAuthOAuth,
-		Scopes: scopes, Targets: mcpTargets{Session: true}, Enabled: true}
+		Scopes: scopes, Elicitation: mcpElicitationRelay, Targets: mcpTargets{Session: true}, Enabled: true}
 	w := upsert(http.MethodPost, "", gmail)
 	if w.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", w.Code, w.Body)
 	}
 	var created mcpServerBody
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
-	if !reflect.DeepEqual(created.Scopes, scopes) {
-		t.Fatalf("upsert answered scopes %q", created.Scopes)
+	if !reflect.DeepEqual(created.Scopes, scopes) || created.Elicitation != mcpElicitationRelay {
+		t.Fatalf("upsert answered scopes %q and elicitation %q", created.Scopes, created.Elicitation)
 	}
 	row, ok, err := a.store.GetMCPServer(ctx, tn.ID, created.ID)
 	if err != nil || !ok || row.OAuthScopes != strings.Join(scopes, " ") {
@@ -113,10 +135,11 @@ func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	a.AdminList(rec, httptest.NewRequest(http.MethodGet, "/api/admin/mcp-servers?tenant=a", nil))
-	if !strings.Contains(rec.Body.String(), `"scopes":["https://www.googleapis.com/auth/gmail.readonly","openid"]`) {
+	if !strings.Contains(rec.Body.String(), `"scopes":["https://www.googleapis.com/auth/gmail.readonly","openid"]`) ||
+		!strings.Contains(rec.Body.String(), `"elicitation":"relay"`) {
 		t.Fatalf("list: %s", rec.Body)
 	}
-	if d := distribute(); len(d) != 1 || !reflect.DeepEqual(d[0].Scopes, scopes) {
+	if d := distribute(); len(d) != 1 || !reflect.DeepEqual(d[0].Scopes, scopes) || d[0].Elicitation != mcpElicitationRelay {
 		t.Fatalf("distributed %+v", d)
 	}
 
@@ -135,7 +158,7 @@ func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"scopes":["openid","https://www.googleapis.com/auth/drive.readonly","email"]`) {
 		t.Fatalf("list after change: %s", rec.Body)
 	}
-	if d := distribute(); len(d) != 1 || !reflect.DeepEqual(d[0].Scopes, other) {
+	if d := distribute(); len(d) != 1 || !reflect.DeepEqual(d[0].Scopes, other) || d[0].Elicitation != mcpElicitationRelay {
 		t.Fatalf("distributed after change %+v", d)
 	}
 	scopes = other
@@ -151,13 +174,14 @@ func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
 		t.Fatalf("after a refused edit: %+v", d)
 	}
 
-	// The admin API replaces the definition: an edit without scopes clears them.
+	// Replacing the definition with these options omitted clears them while keeping OAuth.
 	none := gmail
 	none.Scopes = nil
+	none.Elicitation = ""
 	if w := upsert(http.MethodPut, created.ID, none); w.Code != http.StatusOK {
 		t.Fatalf("clear: %d %s", w.Code, w.Body)
 	}
-	if d := distribute(); len(d) != 1 || d[0].Scopes != nil {
+	if d := distribute(); len(d) != 1 || d[0].Scopes != nil || d[0].Elicitation != "" || d[0].Auth != mcpAuthOAuth {
 		t.Fatalf("after clearing: %+v", d)
 	}
 
@@ -169,13 +193,13 @@ func TestAdminUpsertStoresAndDistributesScopes(t *testing.T) {
 		t.Fatalf("after restoring scopes to an empty list: %q (%v %v)", row.OAuthScopes, ok, err)
 	}
 	static := gmail
-	static.Auth, static.Scopes = "", nil
+	static.Auth, static.Scopes, static.Elicitation = "", nil, ""
 	if w := upsert(http.MethodPut, created.ID, static); w.Code != http.StatusOK {
 		t.Fatalf("to static: %d %s", w.Code, w.Body)
 	}
 	row, ok, err = a.store.GetMCPServer(ctx, tn.ID, created.ID)
-	if err != nil || !ok || row.Name != "gmail" || row.OAuthScopes != "" || row.Auth != "" {
-		t.Fatalf("after leaving OAuth: auth=%q scopes=%q (%v %v)", row.Auth, row.OAuthScopes, ok, err)
+	if err != nil || !ok || row.Name != "gmail" || row.OAuthScopes != "" || row.Auth != "" || row.Elicitation != "" {
+		t.Fatalf("after leaving OAuth: auth=%q scopes=%q elicitation=%q (%v %v)", row.Auth, row.OAuthScopes, row.Elicitation, ok, err)
 	}
 }
 
@@ -208,9 +232,9 @@ func TestDistributeSendsScopesOnlyForOAuth(t *testing.T) {
 	}
 }
 
-// TestDistributeMatchesTheAgentFixture renders Distribute for an OAuth row with a confidential
-// tenant client and scopes, next to a static-header row, and compares it with the file the Agent's
-// TestFetchTenantKeepsDistributedScopes feeds to FetchTenant. A field renamed or dropped on either
+// TestDistributeMatchesTheAgentFixture renders Distribute for an OAuth row next to a static-header
+// row and compares it with the file the Agent's TestFetchTenantKeepsDistributedOAuthOptions feeds
+// to FetchTenant. A field renamed or dropped on either
 // side fails one of the two.
 func TestDistributeMatchesTheAgentFixture(t *testing.T) {
 	a, ctx := newMCPServerAPITest(t, false)
@@ -226,7 +250,7 @@ func TestDistributeMatchesTheAgentFixture(t *testing.T) {
 		{ID: "t-gmail", TenantID: "t", Name: "gmail", Label: "Gmail", Transport: "http",
 			URL: "https://gmailmcp.googleapis.com/mcp/v1self", Targets: "assistant,session", Enabled: true,
 			Auth: mcpAuthOAuth, OAuthIssuer: "https://accounts.google.com", OAuthClientID: "corp-agent",
-			OAuthSecretEnc: secretEnc, OAuthScopes: "https://www.googleapis.com/auth/gmail.readonly openid"},
+			OAuthSecretEnc: secretEnc, OAuthScopes: "https://www.googleapis.com/auth/gmail.readonly openid", Elicitation: mcpElicitationRelay},
 		{ID: "t-wiki", TenantID: "t", Name: "wiki", Transport: "http", URL: "https://wiki.corp.example/mcp",
 			HeadersEnc: headersEnc, Targets: "session", Kinds: "claude,codex", TimeoutMS: 30000, Enabled: true},
 	}
@@ -258,6 +282,6 @@ func TestDistributeMatchesTheAgentFixture(t *testing.T) {
 	}
 	if string(want) != got {
 		t.Fatalf("Distribute no longer matches %s (rerun with -update-tenant-dist-fixture, then run the Agent's "+
-			"TestFetchTenantKeepsDistributedScopes):\n got: %s\nwant: %s", agentTenantDistPath, got, want)
+			"TestFetchTenantKeepsDistributedOAuthOptions):\n got: %s\nwant: %s", agentTenantDistPath, got, want)
 	}
 }

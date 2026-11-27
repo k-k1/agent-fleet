@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { McpAdminForm } from "./mcpAdmin.tsx";
-import { bodyOfTenant, emptyTenantForm } from "./mcpWire.ts";
+import { bodyOfTenant, emptyTenantForm, tenantFormOf } from "./mcpWire.ts";
 import type { TenantForm } from "./mcpWire.ts";
 import { setLocale } from "../../../lib/i18n/index.ts";
 
@@ -72,5 +72,39 @@ describe("tenant form: Scopes", () => {
     expect(button("Distribute")!.disabled).toBe(true);
     await type(scopesBox()!, "read archive");
     expect(button("Distribute")!.disabled).toBe(false);
+  });
+});
+
+describe("tenant form: Tool confirmations", () => {
+  const base = { ...emptyTenantForm(), name: "wiki", url: "https://wiki.example/mcp" };
+  const confirmationBox = () =>
+    Array.from(host!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+      .find((box) => box.labels?.[0]?.textContent?.trim() === "Show confirmation cards in the Console");
+
+  it("starts off and sends the mode only when an OAuth server opts in", async () => {
+    await mount(base);
+    expect(confirmationBox()).toBeUndefined();
+    await click(button("OAuth"));
+    expect(confirmationBox()?.checked).toBe(false);
+    await click(confirmationBox());
+    await click(button("Distribute"));
+    expect(bodyOfTenant(saved[0], "sales").elicitation).toBe("relay");
+
+    await click(button("None"));
+    expect(confirmationBox()).toBeUndefined();
+    await click(button("Distribute"));
+    expect(bodyOfTenant(saved[1], "sales")).not.toHaveProperty("elicitation");
+  });
+
+  it("restores the saved setting and lets an admin turn it off", async () => {
+    await mount(tenantFormOf({
+      id: "tenant-wiki", name: base.name, url: base.url, transport: "http", enabled: true,
+      targets: { assistant: false, session: true }, auth: "oauth", elicitation: "relay",
+    }));
+    expect(confirmationBox()?.checked).toBe(true);
+    await click(confirmationBox());
+    await click(button("Save"));
+    expect(bodyOfTenant(saved[0], "sales")).toMatchObject({ auth: "oauth" });
+    expect(bodyOfTenant(saved[0], "sales")).not.toHaveProperty("elicitation");
   });
 });

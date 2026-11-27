@@ -124,6 +124,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
     "Optional. The scopes each member's sign-in requests, separated by spaces or new lines. Leave it empty to request what the server asks for, which for a server whose tool list is public can be every scope it supports.",
   "admin.mcp_oauth_scopes_bad":
     "Enter each scope without quotes, backslashes or commas. Together they must fit in 1024 bytes with offline_access added.",
+  "admin.mcp_elicitation": "Tool confirmations",
+  "admin.mcp_elicitation_on": "Show confirmation cards in the Console",
+  "admin.mcp_elicitation_hint":
+    "Enable for servers that use MCP confirmation forms. Members review the tool call and answer in the Console.",
   "admin.mcp_headers_host_moved": "The URL points at a different host, so the stored header values were cleared. Enter them again for the new host.",
   "admin.mcp_oauth_secret_reenter": "The issuer or client ID changed, so the stored secret no longer applies. Enter the secret again, or remove it to make this a public client.",
   "admin.mcp_oauth_note":

@@ -421,8 +421,19 @@ export function McpAdminForm({
             oauthNote={tr("admin.mcp_oauth_note")}
             headersHint={form.userSecret ? tr("admin.mcp_headers_names_hint") : tr("admin.mcp_headers_hint")}
           />
-          {form.auth === "oauth" && <TenantClientFields form={form} patch={patch} />}
-          {form.auth === "oauth" && <TenantScopesField form={form} patch={patch} />}
+          {form.auth === "oauth" && (
+            <>
+              <TenantClientFields form={form} patch={patch} />
+              <TenantScopesField form={form} patch={patch} />
+              <Field label={tr("admin.mcp_elicitation")} wide hint={tr("admin.mcp_elicitation_hint")}>
+                <CheckRow>
+                  <Check checked={form.relayElicitation} onChange={(v) => patch({ relayElicitation: v })}>
+                    {tr("admin.mcp_elicitation_on")}
+                  </Check>
+                </CheckRow>
+              </Field>
+            </>
+          )}
 
           <AdvancedSection
             defaultOpen={advOpen}

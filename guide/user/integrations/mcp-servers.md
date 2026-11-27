@@ -105,6 +105,24 @@ A list of more than 12 scopes, here or in a connection test, is folded into "**S
 - "**Disconnect**" deletes the saved sign-in, and revokes it at the authorization server when that supports it
 - Servers your administrator distributed with one client can share one sign-in; the row names the others. Signing in on any of them connects all of them that are switched on, and "**Disconnect**" on any of them disconnects all of them
 
+## Answer an MCP confirmation card
+
+A tenant administrator can turn on Console confirmation cards for a distributed OAuth server.
+If that server asks for confirmation during a supported tool call, the call waits for your answer.
+This works in both Managed and Terminal (CLI) sessions.
+
+1. Look for the card above the session's message box. If the session's conversation is out of view or
+   the Console cannot identify the session, the card appears in a pop-up notification.
+2. Check the server, the tool, and **What the server will run**. Read the server's message and choose
+   an option for each required field. When options have the same label, the card also shows their
+   values so you can tell them apart.
+3. Press **Send answer** to send your choices to the server. If the server offers an option to
+   always allow a tool, choosing it can let future calls run without another card.
+
+Press **Decline** or close the pop-up notification to decline the call. Agent Fleet also declines
+it at the time shown on the card. The card can disappear sooner if the agent cancels the call or
+stops waiting for the server.
+
 ## What you can change, by origin
 
 Each row carries a label saying who registered it.

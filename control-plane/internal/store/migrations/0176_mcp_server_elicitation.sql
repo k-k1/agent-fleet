@@ -1,0 +1,1 @@
+ALTER TABLE mcp_server ADD COLUMN elicitation TEXT NOT NULL DEFAULT ''
