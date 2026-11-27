@@ -275,7 +275,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # Versions are pinned by ARG through versioned URLs (docs/log/35 §35.9-7(c)); bump the ARGs
 # below and rebuild.
-ARG AWSCLI_VERSION=2.42.4
+ARG AWSCLI_VERSION=2.42.5
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \

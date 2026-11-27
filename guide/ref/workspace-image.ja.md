@@ -42,7 +42,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira の課題を扱う。課題管理の接続でサインイン済み | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
 | [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence のページを扱う。Jira と同じ Atlassian 接続でサインイン済み | `2.31.3` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.3/LICENSE) |
 | [Apache Subversion (`svn`)](https://subversion.apache.org/) | Subversion のリポジトリを、接続の認証情報で扱う | Debian 13 (trixie) のパッケージ | [Apache-2.0](https://github.com/apache/subversion/blob/trunk/LICENSE) |
-| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS をコマンドラインから使う。`af-aws-exec` を通して実行する | `2.42.4` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.42.4/LICENSE.txt) |
+| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS をコマンドラインから使う。`af-aws-exec` を通して実行する | `2.42.5` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.42.5/LICENSE.txt) |
 | [Session Manager plugin](https://github.com/aws/session-manager-plugin) | AWS CLI から SSM のセッションを開く | `1.2.835.0` | [Apache-2.0](https://github.com/aws/session-manager-plugin/blob/1.2.835.0/LICENSE) |
 | [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud をコマンドラインから使う。`af-gcloud-exec` を通して実行する | `594.0.1` | [Apache-2.0](https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-594.0.1-linux-x86_64.tar.gz) |
 
