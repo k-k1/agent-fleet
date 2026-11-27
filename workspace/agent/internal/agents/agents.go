@@ -314,6 +314,9 @@ type TranscriptData struct {
 	Turns []transcript.Turn
 	Path  string
 	Tasks []transcript.Task
+	// StepIndexed opts into paging by stable Turn.Idx when turns can materialize
+	// between already published turns. Other readers use a turn-count cursor.
+	StepIndexed bool
 	// Mode is the agent's current permission/collaboration mode, normalized to "plan"
 	// (plan mode) or "normal", so the Console can show the plan indicator and drive the
 	// plan-mode toggle. "" when unknown.

@@ -44,30 +44,40 @@ type executorErrorStep struct {
 	text  string
 }
 
-func executorErrorSteps(conv string, first, last int) []executorErrorStep {
+// transcriptDatabaseSteps reads the turn boundaries that can be absent from a
+// checkpointed transcript, alongside the executor errors that can be absent
+// even from the full log. Only error rows need their payloads read.
+func transcriptDatabaseSteps(conv string) ([]int, []executorErrorStep) {
 	db, err := sql.Open("sqlite", "file:"+conversationDBPath(conv)+"?mode=ro&_pragma=busy_timeout(1000)")
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT idx, step_payload FROM steps
-		WHERE step_type=? AND status=? AND idx BETWEEN ? AND ? AND instr(step_payload, ?) > 0 ORDER BY idx`,
-		stepTypeError, stepStatusDone, first, last, []byte(executorErrorPrefix))
+	rows, err := db.Query(`SELECT idx, step_type, CASE WHEN step_type=? THEN step_payload END FROM steps
+		WHERE step_type=? OR (step_type=? AND status=? AND instr(step_payload, ?) > 0) ORDER BY idx`,
+		stepTypeError, stepTypeUser, stepTypeError, stepStatusDone, []byte(executorErrorPrefix))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer rows.Close()
-	var result []executorErrorStep
+	var users []int
+	var failures []executorErrorStep
 	for rows.Next() {
-		var index int
+		var index, kind int
 		var payload []byte
-		if rows.Scan(&index, &payload) == nil {
-			if message := executorErrorPayload(payload); message != "" {
-				result = append(result, executorErrorStep{index, message})
-			}
+		if err := rows.Scan(&index, &kind, &payload); err != nil {
+			return nil, nil
+		}
+		if kind == stepTypeUser {
+			users = append(users, index)
+		} else if message := executorErrorPayload(payload); message != "" {
+			failures = append(failures, executorErrorStep{index, message})
 		}
 	}
-	return result
+	if rows.Err() != nil {
+		return nil, nil
+	}
+	return users, failures
 }
 
 func hookExecutorFailure(m session.Meta, conv string) (executorErrorStep, bool) {

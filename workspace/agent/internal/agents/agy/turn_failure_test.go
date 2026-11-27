@@ -2,11 +2,13 @@ package agy
 
 import (
 	"encoding/binary"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 const canceledStepFailure = "expected pending tool step at index 3, got status CORTEX_STEP_STATUS_CANCELED"
@@ -101,5 +103,90 @@ func TestTranscriptShowsExecutorFailureOmittedFromJSONL(t *testing.T) {
 	}
 	if next := td.Turns[3].Parts; len(next) != 1 || next[0].Kind != "text" {
 		t.Fatalf("continuation parts = %+v", next)
+	}
+}
+
+func TestTranscriptBackfillsFailureWithStableIdentity(t *testing.T) {
+	for _, promptPresent := range []bool{true, false} {
+		t.Run("prompt-present="+strconv.FormatBool(promptPresent), func(t *testing.T) {
+			m, sid := hookFixture(t, "checkpoint-failure")
+			const conv = "conv-checkpoint"
+			sids.Write(sid, conv)
+			mkConvDB(t, conv, [][3]any{
+				{stepTypeUser, stepStatusDone, []byte("first")},
+				{15, stepStatusDone, []byte("answered")},
+				{stepTypeUser, stepStatusDone, []byte("failed prompt")},
+				{21, stepStatusDone, []byte("tool")},
+				{stepTypeError, stepStatusDone, failurePayload(canceledStepFailure)},
+				{stepTypeUser, stepStatusDone, []byte("continue")},
+				{15, stepStatusDone, []byte("continued")},
+			})
+			const prompt = `{"step_index":2,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"failed prompt"}` + "\n"
+			log := `{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"first"}
+{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","content":"answered"}
+{"step_index":5,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"continue"}
+{"step_index":6,"source":"MODEL","type":"PLANNER_RESPONSE","content":"continued"}
+`
+			if promptPresent {
+				log += prompt
+			}
+			writeTranscript(t, conv, "transcript.jsonl", log)
+			before, _ := agentImpl{}.Transcript(m)
+			want := []int{0, 1, 5, 10, 11}
+			if promptPresent {
+				want = []int{0, 1, 4, 5, 10, 11}
+			}
+			check := func(turns []transcript.Turn, indexes []int, kinds ...string) {
+				t.Helper()
+				var got []int
+				var parts []transcript.Part
+				for _, turn := range turns {
+					got = append(got, turn.Idx)
+					if turn.Idx == 5 && turn.Role == "assistant" {
+						parts = turn.Parts
+					}
+				}
+				if !slices.Equal(got, indexes) || len(parts) != len(kinds) {
+					t.Fatalf("indexes = %v, want %v, failure parts = %+v", got, indexes, parts)
+				}
+				for i, kind := range kinds {
+					if parts[i].Kind != kind || (kind == "error" && parts[i].Text != canceledStepFailure) {
+						t.Fatalf("failure parts = %+v, want %v", parts, kinds)
+					}
+				}
+			}
+			check(before.Turns, want, "error")
+
+			// A later read has both sources for the error and an earlier tool row.
+			if !promptPresent {
+				log += prompt
+			}
+			writeTranscript(t, conv, "transcript_full.jsonl", log+`{"step_index":3,"source":"MODEL","type":"RUN_COMMAND","content":"tool"}
+{"step_index":4,"source":"SYSTEM","type":"ERROR_MESSAGE","content":"unredacted CLI error"}
+`)
+			after, _ := agentImpl{}.Transcript(m)
+			check(after.Turns, []int{0, 1, 4, 5, 10, 11}, "tool", "error")
+		})
+	}
+}
+
+func TestTranscriptShowsSeparateDatabaseFailuresWithoutJSONL(t *testing.T) {
+	m, sid := hookFixture(t, "database-only-failures")
+	const conv = "conv-database-only"
+	sids.Write(sid, conv)
+	mkConvDB(t, conv, [][3]any{
+		{stepTypeUser, stepStatusDone, []byte("first")},
+		{stepTypeError, stepStatusDone, failurePayload(canceledStepFailure)},
+		{stepTypeUser, stepStatusDone, []byte("second")},
+		{stepTypeError, stepStatusDone, failurePayload(canceledStepFailure)},
+	})
+	td, _ := agentImpl{}.Transcript(m)
+	if len(td.Turns) != 2 || td.Turns[0].Idx != 1 || td.Turns[1].Idx != 5 {
+		t.Fatalf("database-only turns = %+v", td.Turns)
+	}
+	for _, turn := range td.Turns {
+		if turn.Role != "assistant" || len(turn.Parts) != 1 || turn.Parts[0].Text != canceledStepFailure {
+			t.Fatalf("database-only turn = %+v", turn)
+		}
 	}
 }

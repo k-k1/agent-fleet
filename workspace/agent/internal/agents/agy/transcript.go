@@ -4,9 +4,8 @@ package agy
 // brain/<conversation-uuid>/.system_generated/logs/transcript_full.jsonl per conversation,
 // LIVE while a turn is still running (verified on real hardware: the brain directory and
 // the jsonl appear right after the first prompt, and the PLANNER_RESPONSE line is readable
-// by the time the answer completes). Unlike conversation_summaries.db (written lazily) or
-// the conversation DB (whose step payloads are protobuf on an undocumented schema), this is
-// plain JSONL, so it is the single transcript source. One line = one step:
+// by the time the answer completes). The conversation DB supplies missing turn
+// boundaries and executor failure details. One JSONL line records one step:
 //
 //	{"step_index":N,"source":"USER_EXPLICIT|MODEL|SYSTEM","type":"USER_INPUT|
 //	 PLANNER_RESPONSE|<TOOL_NAME>|…","status":"DONE","created_at":…,"content":…}
@@ -14,16 +13,17 @@ package agy
 // The mapping: USER_INPUT → a user turn (only the inside of <USER_REQUEST> is extracted);
 // MODEL/PLANNER_RESPONSE → assistant text; MODEL/anything else → a tool part (the type IS
 // the tool name: RUN_COMMAND / VIEW_FILE / LIST_DIRECTORY / …); SYSTEM/ERROR_MESSAGE →
-// surfaced as a tool part. The remaining SYSTEM lines (CONVERSATION_HISTORY / CHECKPOINT /
-// SYSTEM_MESSAGE, context aids meant for the model) are not displayed.
+// an error part when matched to the DB, otherwise a tool part. Other SYSTEM
+// lines (such as checkpoints) are context aids meant for the model.
 
 import (
 	"bufio"
 	"encoding/json"
-	"math"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -51,11 +51,12 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	// while alive, cwd-map on graceful exit). Before the first prompt lands
 	// there is no conversation yet — an empty transcript is the truth.
 	conv := sids.Read(session.UUID(m.Dir, m.Name))
+	td := agents.TranscriptData{StepIndexed: true}
 	if conv == "" {
-		return agents.TranscriptData{}, true
+		return td, true
 	}
 	path := transcriptPath(conv)
-	td := agents.TranscriptData{Path: path}
+	td.Path = path
 	// A pending ASK_QUESTION / permission prompt never reaches the jsonl (measured:
 	// nothing is recorded while it is pending), so the interactive card's payload
 	// comes from the conversation-DB probe: real options for questions, a synthesized menu for
@@ -65,17 +66,17 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	if _, qs := Probe(m); len(qs) > 0 {
 		td.Pending = qs
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return td, true
+	var log io.Reader = strings.NewReader("")
+	if f, err := os.Open(path); err == nil {
+		defer f.Close()
+		log = f
 	}
-	defer f.Close()
-	failures := executorErrorSteps(conv, 0, math.MaxInt)
+	users, failures := transcriptDatabaseSteps(conv)
 	if failure, ok := hookExecutorFailure(m, conv); ok &&
 		(len(failures) == 0 || failures[len(failures)-1].index < failure.index) {
 		failures = append(failures, failure)
 	}
-	td.Turns = parseTranscript(f, failures)
+	td.Turns = parseTranscript(log, users, failures)
 	// A conversation that never switched models records none, so its turns carry the model
 	// the session was launched (or last resumed) with.
 	stampModel(td.Turns, modelLabel(m.Model))
@@ -140,7 +141,81 @@ var commandIndentRe = regexp.MustCompile(`(?m)^\t{4}`)
 
 func stripCommandIndent(s string) string { return commandIndentRe.ReplaceAllString(s, "") }
 
-func parseTranscript(f *os.File, failures []executorErrorStep) []transcript.Turn {
+type mirrorStep struct {
+	index    int
+	user     bool
+	from, to string
+	part     transcript.Part
+}
+
+func readMirrorSteps(log io.Reader, failures []executorErrorStep) []mirrorStep {
+	knownErrors := make(map[int]bool, len(failures))
+	for _, failure := range failures {
+		knownErrors[failure.index] = true
+	}
+	var steps []mirrorStep
+	sc := bufio.NewScanner(log)
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // steps can carry large tool output
+	nextIndex := 0
+	for sc.Scan() {
+		var s stepLine
+		if json.Unmarshal(sc.Bytes(), &s) != nil {
+			continue
+		}
+		step := mirrorStep{index: nextIndex}
+		if s.Index != nil {
+			step.index = *s.Index
+		}
+		nextIndex = max(nextIndex, step.index+1)
+		switch {
+		case s.Type == "USER_INPUT":
+			step.user = true
+			step.from, step.to, _ = modelSwitch(s.Content)
+			text := s.Content
+			if m := userRequestRe.FindStringSubmatch(text); m != nil {
+				text = m[1]
+			}
+			step.part = transcript.Part{Kind: "text", Text: strings.TrimSpace(text)}
+		case s.Source == "MODEL" && s.Type == "PLANNER_RESPONSE":
+			text := strings.TrimSpace(s.Content)
+			if text == "" {
+				continue
+			}
+			step.part = transcript.Part{Kind: "text", Text: text}
+		case s.Type == "ERROR_MESSAGE" && s.Index != nil && knownErrors[step.index]:
+			continue // The DB supplies the sanitized error at this step, even if this line arrived late.
+		case s.Source == "MODEL", s.Type == "ERROR_MESSAGE":
+			step.part = toolPart(s)
+		default:
+			continue // System bookkeeping is model-facing context management.
+		}
+		steps = append(steps, step)
+	}
+	// A late line can be written after later turns. Keep only normalized parts in
+	// memory so sorting never retains the full, potentially large tool payloads.
+	sort.SliceStable(steps, func(i, j int) bool { return steps[i].index < steps[j].index })
+	return steps
+}
+
+func toolPart(s stepLine) transcript.Part {
+	body := strings.TrimSpace(stepMetaLineRe.ReplaceAllString(s.Content, ""))
+	out := body
+	if s.Type == "RUN_COMMAND" {
+		out = stripCommandIndent(out)
+	}
+	if len(out) > toolOutputMax {
+		out = out[:toolOutputMax] + "…"
+	}
+	p := transcript.Part{Kind: "tool", Tool: s.Type, Output: out}
+	// A step that wrote a file records its path in its prose. A diff in the
+	// same body may sit past toolOutputMax.
+	if f, verb, es := stepEdit(body); f != "" {
+		p.File, p.Verb, p.Edits = f, verb, es
+	}
+	return p
+}
+
+func parseTranscript(log io.Reader, users []int, failures []executorErrorStep) []transcript.Turn {
 	var turns []transcript.Turn
 	var cur *transcript.Turn // open assistant turn
 	flush := func() {
@@ -156,98 +231,77 @@ func parseTranscript(f *os.File, failures []executorErrorStep) []transcript.Turn
 			cur = nil
 		}
 	}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // steps can carry large tool output
-	// Idx is the source line index (codex's semantics): a stable render key that also
-	// has to be strictly increasing — the Console drops polled turns whose idx is not
-	// greater than the newest one it holds, and clears a prompt's pending echo only on
-	// a matching user turn with idx > the idx at send time. Leaving every agy turn at
-	// the zero value stalled both (docs/log/32).
-	line := -1
+	userIndex := -1
 	model := "" // the model named by the latest switch note
-	addFailures := func(before int) {
-		for len(failures) > 0 && failures[0].index < before {
-			if cur != nil {
-				cur.Parts = append(cur.Parts, transcript.Part{Kind: "error", Text: failures[0].text})
-			}
-			failures = failures[1:]
+	startTurn := func(index int) {
+		if userIndex != index {
+			flush()
+			userIndex = index
 		}
 	}
-	for sc.Scan() {
-		line++
-		var s stepLine
-		if json.Unmarshal(sc.Bytes(), &s) != nil {
-			continue
+	addPart := func(index int, part transcript.Part) {
+		if cur == nil {
+			// Reserve the odd index after the prompt for its response, including
+			// when the first available part comes from the DB or a checkpoint.
+			anchor := index
+			if userIndex >= 0 {
+				anchor = userIndex
+			}
+			cur = &transcript.Turn{Role: "assistant", Idx: 2*anchor + 1, Model: model}
 		}
-		if s.Index != nil {
-			addFailures(*s.Index)
+		cur.Parts = append(cur.Parts, part)
+	}
+	addFailure := func() {
+		failure := failures[0]
+		// The Console may see this failure after the user sends a newer prompt.
+		addPart(failure.index, transcript.Part{Kind: "error", Text: failure.text, Cause: "agy_executor_failure"})
+		failures = failures[1:]
+	}
+	advance := func(before int) {
+		for len(users) > 0 && users[0] <= before {
+			for len(failures) > 0 && failures[0].index < users[0] {
+				addFailure()
+			}
+			startTurn(users[0])
+			users = users[1:]
 		}
-		persistedFailure := s.Type == "ERROR_MESSAGE" && s.Index != nil &&
-			len(failures) > 0 && failures[0].index == *s.Index
-		switch {
-		case s.Type == "USER_INPUT":
-			flush()
+		for len(failures) > 0 && failures[0].index < before {
+			addFailure()
+		}
+	}
+	steps := readMirrorSteps(log, failures)
+	for i, step := range steps {
+		if i+1 < len(steps) && steps[i+1].index == step.index {
+			continue // The last write for this step supersedes earlier copies.
+		}
+		advance(step.index)
+		if step.user {
+			startTurn(step.index)
 			// agy writes no model on its own steps; the only record is the switch note it
 			// prefixes to the next prompt. The note's "from" is what answered every turn
 			// before it, so the first note also labels the turns already parsed.
-			if from, to, ok := modelSwitch(s.Content); ok {
-				if model == "" && from != "None" {
-					stampModel(turns, from)
+			if step.to != "" {
+				if model == "" && step.from != "None" {
+					stampModel(turns, step.from)
 				}
-				model = to
+				model = step.to
 			}
-			text := s.Content
-			if m := userRequestRe.FindStringSubmatch(text); m != nil {
-				text = m[1]
+			if step.part.Text != "" {
+				turns = append(turns, transcript.Turn{
+					Role: "user", Text: step.part.Text, Idx: 2 * step.index,
+					Parts: []transcript.Part{step.part},
+				})
 			}
-			text = strings.TrimSpace(text)
-			if text == "" {
-				continue
-			}
-			turns = append(turns, transcript.Turn{
-				Role: "user", Text: text, Idx: line,
-				Parts: []transcript.Part{{Kind: "text", Text: text}},
-			})
-		case s.Source == "MODEL" && s.Type == "PLANNER_RESPONSE":
-			if text := strings.TrimSpace(s.Content); text != "" {
-				if cur == nil {
-					cur = &transcript.Turn{Role: "assistant", Idx: line, Model: model}
-				}
-				cur.Parts = append(cur.Parts, transcript.Part{Kind: "text", Text: text})
-			}
-		case persistedFailure:
-			if cur == nil {
-				cur = &transcript.Turn{Role: "assistant", Idx: line, Model: model}
-			}
-			cur.Parts = append(cur.Parts, transcript.Part{Kind: "error", Text: failures[0].text})
-			failures = failures[1:]
-		case s.Source == "MODEL", s.Type == "ERROR_MESSAGE":
-			// A tool step (type = tool name), or a surfaced SYSTEM error.
-			body := strings.TrimSpace(stepMetaLineRe.ReplaceAllString(s.Content, ""))
-			out := body
-			if s.Type == "RUN_COMMAND" {
-				out = stripCommandIndent(out)
-			}
-			if len(out) > toolOutputMax {
-				out = out[:toolOutputMax] + "…"
-			}
-			if cur == nil {
-				cur = &transcript.Turn{Role: "assistant", Idx: line, Model: model}
-			}
-			p := transcript.Part{Kind: "tool", Tool: s.Type, Output: out}
-			// A step that wrote a file says so in its own prose, which is the only
-			// coordinate agy records (fileedits.go). Read from the untruncated body: the
-			// diff it carries can sit past toolOutputMax.
-			if f, verb, es := stepEdit(body); f != "" {
-				p.File, p.Verb, p.Edits = f, verb, es
-			}
-			cur.Parts = append(cur.Parts, p)
-		default:
-			// SYSTEM bookkeeping (CONVERSATION_HISTORY / CHECKPOINT / SYSTEM_MESSAGE):
-			// model-facing context management, not conversation content.
+		} else {
+			addPart(step.index, step.part)
 		}
 	}
-	addFailures(math.MaxInt)
+	for len(users) > 0 {
+		advance(users[0])
+	}
+	for len(failures) > 0 {
+		addFailure()
+	}
 	flush()
 	return turns
 }

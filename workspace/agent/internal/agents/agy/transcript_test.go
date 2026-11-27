@@ -1,6 +1,7 @@
 package agy
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,9 +71,7 @@ func TestTranscriptParsesBrainJSONL(t *testing.T) {
 	}
 }
 
-// Idx must be a strictly increasing line number. While it was left at 0, the Console dropped
-// polled turns on idx > lastIdx and the submitted prompt's 反映待ち echo never cleared on
-// idx > sinceIdx either, which froze the mirror.
+// The Console reconciles the prompt echo and merges live turns by their indexes.
 func TestTranscriptAssignsIncreasingIdx(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"
@@ -153,7 +152,20 @@ func TestTranscriptStampsModelPerTurn(t *testing.T) {
 			slot := "slot-model-" + tc.name
 			conv := "conv-model-" + tc.name
 			sids.Write(session.UUID(dir, slot), conv)
-			writeTranscript(t, conv, "transcript_full.jsonl", strings.Join(tc.lines, "\n")+"\n")
+			lines := make([]string, len(tc.lines))
+			for i, row := range tc.lines {
+				var step stepLine
+				if err := json.Unmarshal([]byte(row), &step); err != nil {
+					t.Fatal(err)
+				}
+				step.Index = &i
+				indexed, err := json.Marshal(step)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lines[i] = string(indexed)
+			}
+			writeTranscript(t, conv, "transcript_full.jsonl", strings.Join(lines, "\n")+"\n")
 			td, _ := agentImpl{}.Transcript(session.Meta{Dir: dir, Name: slot, Kind: session.KindAgy, Model: tc.launch})
 			var got []string
 			for _, turn := range td.Turns {

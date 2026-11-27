@@ -78,6 +78,17 @@ describe("coalesceUserActions", () => {
 });
 
 describe("groupTurns", () => {
+  it("keeps a saved Antigravity failure separate when its prompt is missing", () => {
+    const error = { kind: "error", cause: "agy_executor_failure", text: "executor failed" };
+    const failed = asst("", { idx: 5, parts: [error] });
+    const neighbors = [asst("first", { idx: 1 }), asst("later", { idx: 9 })];
+    const before = groupTurns([neighbors[0], failed, neighbors[1]]);
+    const after = groupTurns([neighbors[0], { ...failed, parts: [{ kind: "tool", tool: "RUN_COMMAND" }, error] }, neighbors[1]]);
+    expect(before.map((group) => group.idx)).toEqual([1, 5, 9]);
+    expect(after.map((group) => group.idx)).toEqual([1, 5, 9]);
+    expect(after[1].parts).toEqual([{ kind: "tool", tool: "RUN_COMMAND" }, error]);
+  });
+
   it("folds consecutive same-role turns into one block, merging text and tokens", () => {
     const groups = groupTurns([
       asst("前半", { ts: "2026-08-13T10:00:00Z", outTok: 10, idx: 1 }),

@@ -14,6 +14,7 @@ import { type InteractionAnswerWire, patchAnswers } from "../interactionAnswers.
 import { emptyDiscardNotices } from "../stopQueue.ts";
 import type { Turn } from "../transcript/types.ts";
 import { isPendingApproval } from "../transcript/types.ts";
+import { mergeTurns } from "../transcript/model.ts";
 import { parsePendingPeers } from "./PendingPeersNotice.tsx";
 import { parseBackgroundShells } from "./BackgroundShellsPanel.tsx";
 import { parseWatches, sameWatches } from "./WatchesPanel.tsx";
@@ -151,6 +152,7 @@ export function useTranscriptPoll({
   useEffect(() => {
     if (!session) return;
     let alive = true;
+    let stepIndexed = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       // Hidden tab: skip the fetch entirely (mobile data / battery); the
@@ -172,9 +174,10 @@ export function useTranscriptPoll({
         // live=1 asks for the reply still being written. Left off when the setting is, so the
         // request and its response stay exactly what they were before the setting existed.
         const live = liveOnRef.current ? "&live=1" : "";
+        const from = stepIndexed ? `&from=${firstLineRef.current}` : "";
         const url = first
           ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}${live}`
-          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}${agg}${live}`;
+          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}${from}${agg}${live}`;
         const d = await api(url);
         if (!alive) return;
         // Refreshing marks rides the transcript poll rather than adding a cycle of its own;
@@ -194,6 +197,7 @@ export function useTranscriptPoll({
           } else {
             lastPayloadRef.current = payload;
             unchangedRef.current = 0;
+            stepIndexed = d.stepIndexed === true;
             if (typeof d.cursor === "number") cursorRef.current = d.cursor;
             setLogId(typeof d.jsonlPath === "string" ? d.jsonlPath : "");
             // reset: the server's jsonl shrank or was replaced (compaction, or a
@@ -217,13 +221,15 @@ export function useTranscriptPoll({
               // (notably OpenCode) also update the parts of their current assistant turn
               // while its stable idx stays the same, so replace that overlapping turn.
               // A quick re-poll after sending can likewise overlap safely.
+              const incomingTurns = d.messages as Turn[];
               setTurns((t) => {
+                if (d.stepIndexed === true) return patchAnswers(mergeTurns(t, incomingTurns), answers);
                 const byIdx = new Map<number, number>();
                 for (let i = 0; i < t.length; i++) {
                   if (t[i].idx !== undefined) byIdx.set(t[i].idx as number, i);
                 }
                 let next = t;
-                for (const incoming of d.messages as Turn[]) {
+                for (const incoming of incomingTurns) {
                   const at = incoming.idx === undefined ? undefined : byIdx.get(incoming.idx);
                   if (at === undefined) {
                     if (next === t) next = [...t];
