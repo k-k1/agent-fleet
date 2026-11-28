@@ -1578,25 +1578,41 @@ func outputTurnCursor(turns []transcript.Turn, state string) int {
 	return n
 }
 
+// stepCursorBase tags an /output cursor as a source index (Turn.Idx) instead of a turn count.
+// The MCP client keeps the cursor on disk across Agent upgrades, so a bare integer from before
+// this format would be read as an index and replay finished turns; below the base a cursor keeps
+// its count meaning. 2^40 stays exact as a JSON number.
+const stepCursorBase = 1 << 40
+
 // stepOutputCursor is outputTurnCursor in source coordinates, for a transcript whose turns can
 // materialize between already-read ones (TranscriptData.StepIndexed): a count would shift under
-// such an insertion and re-send a finished turn. The cursor is the next Turn.Idx to read, and
-// the held-back growing assistant turn keeps its own Idx.
+// such an insertion and re-send a finished turn. The cursor is stepCursorBase plus the next
+// Turn.Idx to read; the held-back growing assistant turn keeps its own Idx.
 func stepOutputCursor(turns []transcript.Turn, state string) int {
 	n := len(turns)
 	if n == 0 {
-		return 0
+		return stepCursorBase
 	}
 	if turns[n-1].Role == "assistant" && state == "working" {
-		return turns[n-1].Idx
+		return stepCursorBase + turns[n-1].Idx
 	}
-	return turns[n-1].Idx + 1
+	return stepCursorBase + turns[n-1].Idx + 1
+}
+
+// stepOutputFirst is the position of the first turn a step-indexed read at since has not sent.
+func stepOutputFirst(turns []transcript.Turn, since int) int {
+	if since < stepCursorBase {
+		return since // a count cursor saved before the index format
+	}
+	idx := since - stepCursorBase
+	return sort.Search(len(turns), func(i int) bool { return turns[i].Idx >= idx })
 }
 
 // HandleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the
 // session's assistant text appended since the cursor, plus a new cursor and the
 // current status. cursor is a line index into claude's jsonl transcript, or a count of
-// completed turns for the other transcript-capable kinds (see outputTurnCursor).
+// completed turns for the other transcript-capable kinds (see outputTurnCursor), or
+// stepCursorBase plus a Turn.Idx for a step-indexed kind (see stepOutputCursor).
 //
 // peek_from=<session> makes it a peer peek (session_peek.go): the policy, the caps, the
 // rate limit and the audit record are all applied here, not by the caller.
@@ -1672,7 +1688,7 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		// the others read from the since-th turn.
 		first := since
 		if td.StepIndexed {
-			first = sort.Search(len(td.Turns), func(i int) bool { return td.Turns[i].Idx >= since })
+			first = stepOutputFirst(td.Turns, since)
 		}
 		for i := first; i < len(td.Turns); i++ {
 			t := td.Turns[i]
@@ -1685,8 +1701,10 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		}
 		raw, cursor = gb.String(), outputTurnCursor(td.Turns, state)
 		if td.StepIndexed {
-			// An empty or briefly shrunken read must not rewind a cursor the caller holds.
-			cursor = max(since, stepOutputCursor(td.Turns, state))
+			cursor = stepOutputCursor(td.Turns, state)
+			if len(td.Turns) == 0 && since > 0 {
+				cursor = since // an empty read must not rewind a cursor the caller holds
+			}
 		}
 	} else {
 		sid := session.UUID(meta.Dir, name)

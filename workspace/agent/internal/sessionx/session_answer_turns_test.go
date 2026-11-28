@@ -412,3 +412,24 @@ func TestAnswerTurnsPagesStepIndexedAcrossInsertedTurn(t *testing.T) {
 		t.Fatalf("older = %v %+v, want %v ending at the start", got, older, want)
 	}
 }
+
+// The step-indexed window is not capped at the 1 MiB /messages cuts a window to: the Control
+// Plane has a few requests to walk back through, and the slim payload bounds the text anyway.
+func TestAnswerTurnsStepIndexedWindowIsNotCappedAtOneMiB(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	big := strings.Repeat("z", 1100<<10)
+	turns := []transcript.Turn{{Role: "assistant", Idx: 1, Parts: []transcript.Part{{Kind: "text", Text: "the answer"}}}}
+	for i := 0; i < 6; i++ {
+		turns = append(turns, transcript.Turn{Role: "user", Idx: 10 + 2*i, Text: big})
+	}
+	t.Cleanup(agentreg.SwapForTest(session.KindAgy, stepIndexedAnswerAgent{AgentOf(session.KindAgy), &turns}))
+	session.WriteMeta(session.Meta{Name: "answer-turns-step-big", Dir: t.TempDir(), Kind: session.KindAgy})
+	code, body := getAnswerTurns(t, "answer-turns-step-big", "limit=50")
+	var reply answerTurnsReply
+	if code != http.StatusOK || json.Unmarshal(body, &reply) != nil {
+		t.Fatalf("status %d body %.200s", code, body)
+	}
+	if len(reply.Messages) != 7 || reply.HasMore || reply.FirstLine != 0 || reply.Messages[0].Parts[0].Text != "the answer" {
+		t.Fatalf("reply = %d turns hasMore=%v firstLine=%d, want all 7 turns from the answer", len(reply.Messages), reply.HasMore, reply.FirstLine)
+	}
+}

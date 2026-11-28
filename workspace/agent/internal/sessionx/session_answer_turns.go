@@ -2,7 +2,6 @@ package sessionx
 
 import (
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -174,14 +173,17 @@ func HandleSessionAnswerTurns(w http.ResponseWriter, r *http.Request) {
 		td, _ := AgentOf(meta.Kind).Transcript(meta)
 		if td.StepIndexed {
 			// before and firstLine are Turn.Idx here, as on /messages: a count would shift
-			// when a late turn lands between two pages, repeating or skipping a turn.
-			query := url.Values{"tail": {"1"}, "limit": {strconv.Itoa(limit)}}
-			if before > 0 {
-				query.Set("before", strconv.Itoa(before))
+			// when a late turn lands between two pages, repeating or skipping a turn. The
+			// window is not capped at 1 MiB as /messages caps it: the slim payload already
+			// bounds the text, and a cap would shrink a page the Control Plane has only a
+			// few requests to walk back through.
+			from, to := stepIndexedPageBounds(td.Turns, before, limit)
+			first := 0
+			if from > 0 {
+				first = td.Turns[from].Idx
 			}
-			page, _, first, _, more := stepIndexedMessageWindow(td.Turns, query, false)
 			httpx.WriteJSON(w, http.StatusOK, answerTurnsReply{
-				Name: name, Messages: slimTurns(page), Status: state, FirstLine: max(first, 0), HasMore: more,
+				Name: name, Messages: slimTurns(td.Turns[from:to]), Status: state, FirstLine: first, HasMore: from > 0,
 			})
 			return
 		}

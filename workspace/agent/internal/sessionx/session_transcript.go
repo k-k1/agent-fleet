@@ -616,11 +616,8 @@ func stepIndexedMessageWindow(all []transcript.Turn, query url.Values, alive boo
 	}
 	reset = before <= 0 && since > cursor
 	if before > 0 || reset || (since == 0 && query.Get("tail") != "") {
-		hi := total
-		if before > 0 {
-			hi = position(before)
-		}
-		page := capTurnsNewest(all[max(0, hi-clampWindowLimit(query.Get("limit"))):hi])
+		lo, hi := stepIndexedPageBounds(all, before, clampWindowLimit(query.Get("limit")))
+		page := capTurnsNewest(all[lo:hi])
 		if len(page) > 0 && page[0].Idx > all[0].Idx {
 			return page, cursor, page[0].Idx, reset, true
 		}
@@ -640,6 +637,16 @@ func stepIndexedMessageWindow(all []transcript.Turn, query url.Values, alive boo
 		}
 	}
 	return append(turns, capTurnsNewest(all[lo:])...), cursor, firstLine, false, false
+}
+
+// stepIndexedPageBounds is the half-open range of the newest limit turns whose Idx is below
+// before (all of them when before <= 0). Idx ascends within all.
+func stepIndexedPageBounds(all []transcript.Turn, before, limit int) (lo, hi int) {
+	hi = len(all)
+	if before > 0 {
+		hi = sort.Search(len(all), func(i int) bool { return all[i].Idx >= before })
+	}
+	return max(0, hi-limit), hi
 }
 
 func turnHasError(turn transcript.Turn) bool {
