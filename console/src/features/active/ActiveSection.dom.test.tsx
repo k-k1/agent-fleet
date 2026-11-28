@@ -461,9 +461,10 @@ describe("ActiveSection", () => {
       expect(quickLaunch).not.toHaveBeenCalled();
     });
 
-    it.each(["main", "caret"] as const)("closes the %s's clone menu when no agent is left to launch, and does not bring it back with the agents", async (part) => {
+    // ▷ needs an agent that runs in a directory (a shell does not count); ▼ lists whatever kinds are left.
+    it.each([["main", ["shell"]], ["caret", []]] as const)("closes the %s's clone menu when its own condition is lost (kinds %j), and does not bring it back", async (part, left) => {
       const button = await openCloneMenu(part);
-      rail.launchKinds = [];
+      rail.launchKinds = [...left];
       await render([sess("wt", { repo: worktree.name, worktree: true })]);
       expect(anyMenu()).toBe(0);
       expect(button.disabled).toBe(true);
@@ -472,6 +473,27 @@ describe("ActiveSection", () => {
       await render([sess("wt", { repo: worktree.name, worktree: true })]);
       expect(anyMenu()).toBe(0);
       expect(button.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("keeps the caret's clone menu while only a shell is left, because ▼ still lists it", async () => {
+      await openCloneMenu("caret");
+      rail.launchKinds = ["shell"];
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      expect(cloneItems()).toHaveLength(2);
+      await act(async () => cloneItems()[0].click());
+      expect(kindItems().map((i) => i.textContent?.trim())).toEqual(["Shell"]);
+    });
+
+    it("returns focus to ▷ when the dialog is opened from it after a ▼ menu was opened and closed", async () => {
+      useReposStore.setState({ repos: [worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      await act(async () => caretButton().click());
+      await act(async () => kindItems()[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      expect(anyMenu()).toBe(0);
+      mainButton().focus();
+      await act(async () => mainButton().click());
+      expect(useLaunchTarget.getState().target).toEqual(base);
+      expect(document.activeElement).toBe(mainButton());
     });
 
     it("moves focus into the menu when the other part is pressed, and returns to the part that is current when the chosen clone goes away", async () => {

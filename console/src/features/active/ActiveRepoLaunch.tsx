@@ -87,6 +87,9 @@ export function ActiveRepoLaunch({ label, copies, running, kinds, hasAgents, qui
   useMenuRoving(kindMenu, kindsOpen);
 
   const openDialog = (copy: Repo) => {
+    // The dialog is opened from ▷ whatever menu was open before: its focus-trap records the element
+    // focused now as its opener, and a stale ▼ from an earlier menu would be where focus returns.
+    opener.current = mainBtn.current;
     close();
     useLaunchTarget.getState().open(copy);
   };
