@@ -1614,6 +1614,12 @@ func stepOutputFirst(turns []transcript.Turn, since int) int {
 		return since // a count cursor saved before the index format
 	}
 	idx := since - stepCursorBase
+	// A cursor is at most one past the newest turn it was taken from. Beyond that the transcript
+	// is not the one the cursor came from (a managed resume that adopted a new conversation, or a
+	// re-anchored turn), so read it whole rather than skip unread output.
+	if n := len(turns); n > 0 && idx > turns[n-1].Idx+1 {
+		return 0
+	}
 	return sort.Search(len(turns), func(i int) bool { return turns[i].Idx >= idx })
 }
 

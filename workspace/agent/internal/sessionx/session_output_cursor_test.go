@@ -223,7 +223,7 @@ func TestOutputStepIndexedGrowingTurnResumesAtItsIndex(t *testing.T) {
 	state = "idle"
 	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
 	if out != "part one and two and three" || cur != stepCursorBase+42 {
-		t.Fatalf("idle read = %q cursor %d, want the final text and index 82", out, cur)
+		t.Fatalf("idle read = %q cursor %d, want the final text and index 42", out, cur)
 	}
 	if out, _ = outputRead(t, m.Name, "since="+strconv.Itoa(cur)); out != "" {
 		t.Fatalf("a finished turn was re-sent: %q", out)
@@ -253,6 +253,37 @@ func TestOutputStepIndexedDeliversAReanchoredTurnFinishedBeforeTheNextPoll(t *te
 	}
 	if out, _ = outputRead(t, m.Name, "since="+strconv.Itoa(cur)); out != "" {
 		t.Fatalf("a finished turn was re-sent: %q", out)
+	}
+}
+
+// A cursor beyond the newest turn belongs to another transcript (a managed resume that adopted a
+// replacement conversation keeps the session name, and with it the saved cursor): the new
+// conversation is read from its start instead of being skipped.
+func TestOutputStepIndexedReadsAReplacedTranscriptFromItsStart(t *testing.T) {
+	turns := []transcript.Turn{
+		{Role: "user", Idx: 0, Text: "go"},
+		{Role: "assistant", Idx: 1, Text: "old"},
+		{Role: "user", Idx: 100, Text: "more"},
+		{Role: "assistant", Idx: 101, Text: "old second"},
+	}
+	state := "idle"
+	m := stepFixture(t, "agy_step_replaced", &turns, &state)
+
+	_, cur := outputRead(t, m.Name, "")
+	if cur != stepCursorBase+102 {
+		t.Fatalf("cursor = %d", cur)
+	}
+	turns = []transcript.Turn{
+		{Role: "assistant", Idx: 1, Text: "new one"},
+		{Role: "assistant", Idx: 7, Text: "new two"},
+		{Role: "assistant", Idx: 13, Text: "new three"},
+	}
+	out, cur := outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "new one\n\nnew two\n\nnew three" || cur != stepCursorBase+14 {
+		t.Fatalf("replacement read = %q cursor %d, want the whole new transcript and index 14", out, cur)
+	}
+	if out, _ = outputRead(t, m.Name, "since="+strconv.Itoa(cur)); out != "" {
+		t.Fatalf("a consumed turn was re-sent: %q", out)
 	}
 }
 
