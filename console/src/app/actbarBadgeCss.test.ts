@@ -17,4 +17,15 @@ describe("activity-bar badge tones", () => {
     expect(rule(".actbar-badge")).toContain("color: var(--on-err)");
     expect(css).not.toMatch(/\.actbar-badge[^{]*\{[^}]*var\(--accent\)/);
   });
+
+  it("places the cue dot at the lower left, outranking the lone-dot position", () => {
+    const cue = rule(".actbar-btn > .actbar-badge.actbar-cue");
+    expect(cue).toContain("left: 6px");
+    expect(cue).toContain("bottom: 6px");
+    expect(cue).toContain("top: auto");
+    expect(cue).toContain("right: auto");
+    expect(cue).toContain("width: 8px");
+    // It keeps the waiting / failed colours, which come from the tone class.
+    expect(rule(".actbar-badge.tone-running")).toContain("var(--fg)");
+  });
 });

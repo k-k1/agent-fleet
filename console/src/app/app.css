@@ -144,6 +144,19 @@
   height: 8px;
   padding: 0;
 }
+/* The waiting / failed cue that rides beside a neutral open-run count: the same amber or red as
+   the lone dot. It sits at the lower left, clear of the count at the upper right (even "99+")
+   and of the mark at the lower right. */
+.actbar-btn > .actbar-badge.actbar-cue {
+  top: auto;
+  bottom: 6px;
+  left: 6px;
+  right: auto;
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+}
 /* The one dot for views whose icon is off but that wait on the member (ADR 0142): the same
    amber as a waiting count, without a number, on a button that opens the bar's menu. */
 .actbar-hidden > .actbar-badge.tone-waiting {

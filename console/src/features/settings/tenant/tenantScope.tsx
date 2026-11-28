@@ -11,7 +11,7 @@
 // is switched here is presentation only.
 import { FieldLabel } from "../../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import { deleteTenant, putTenantLimits } from "./tenantApi.ts";
@@ -155,7 +155,7 @@ function TenantSummary({ tenant }: { tenant: Tenant | null }) {
       <p className="admin-hint">
         {tr("admin.tenant_limits", { ws: tenant.max_workspaces || "∞", ss: tenant.max_sessions || "∞" })}
       </p>
-      <p className="admin-hint">{tr("admin.memo_run_limit_effective", { n: tenant.memo_run_limit ?? 4 })}</p>
+      {tenant.memo_run_limit !== undefined && <p className="admin-hint">{tr("admin.memo_run_limit_effective", { n: tenant.memo_run_limit })}</p>}
     </section>
   );
 }
@@ -178,7 +178,8 @@ export function TenantLimits({
   const toast = useToast();
   const [maxWs, setMaxWs] = useState<number | string>(tenant?.max_workspaces || 0);
   const [maxSs, setMaxSs] = useState<number | string>(tenant?.max_sessions || 0);
-  const [memoRunLimit, setMemoRunLimit] = useState<number | string>(tenant?.memo_run_limit ?? 4);
+  const [memoRunLimit, setMemoRunLimit] = useState<number | string>(tenant?.memo_run_limit ?? "");
+  const runLimitRef = useRef<HTMLInputElement>(null);
   const [maxRepos, setMaxRepos] = useState<number | string>(tenant?.max_git_repos || 0);
   // LFS cap is stored in bytes but edited in MB for usability.
   const [maxLfsMb, setMaxLfsMb] = useState<number | string>(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
@@ -211,7 +212,7 @@ export function TenantLimits({
   useEffect(() => {
     setMaxWs(tenant?.max_workspaces || 0);
     setMaxSs(tenant?.max_sessions || 0);
-    setMemoRunLimit(tenant?.memo_run_limit ?? 4);
+    setMemoRunLimit(tenant?.memo_run_limit ?? "");
     setMaxRepos(tenant?.max_git_repos || 0);
     setMaxLfsMb(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
     setMaxWsMemMb(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
@@ -232,8 +233,12 @@ export function TenantLimits({
   }, [slug, tenant]);
 
   const saveLimits = async () => {
-    const runLimit = Number(memoRunLimit);
-    if (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 10) {
+    // The server always reports the effective default, so a blank field is an error (as 0 is).
+    // Only when no value was ever reported is blank "not read yet": the field is left out and the
+    // stored value is kept. A number input holding "1e" reads "" too, but is never intentional.
+    const unread = tenant?.memo_run_limit === undefined && !runLimitRef.current?.validity.badInput;
+    const runLimit = memoRunLimit === "" && unread ? undefined : Number(memoRunLimit);
+    if (runLimit !== undefined && (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 10)) {
       toast(tr("admin.memo_run_limit_range"));
       return;
     }
@@ -293,11 +298,6 @@ export function TenantLimits({
             <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
           </label>
           <label className="admin-fld">
-            <span className="af-cap">{tr("admin.memo_run_limit_default")}</span>
-            <input type="number" min="1" max="10" value={memoRunLimit} onChange={(e) => setMemoRunLimit(e.target.value)} />
-            <span className="af-note">{tr("admin.memo_run_limit_range")}</span>
-          </label>
-          <label className="admin-fld">
             <span className="af-cap">{tr("admin.max_repos")}</span>
             <input type="number" min="0" value={maxRepos} onChange={(e) => setMaxRepos(e.target.value)} />
           </label>
@@ -326,6 +326,18 @@ export function TenantLimits({
           </label>
         </div>
         <p className="admin-hint">{tr("admin.pat_max_days_hint")}</p>
+      </div>
+
+      {/* Its own group: unlike the limits above, 0 is not "unlimited" here. */}
+      <div className="admin-fgroup">
+        <h4>{tr("admin.memo_run_group")}</h4>
+        <div className="admin-fgrid">
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.memo_run_limit_default")}</span>
+            <input ref={runLimitRef} type="number" min="1" max="10" value={memoRunLimit} onChange={(e) => setMemoRunLimit(e.target.value)} />
+            <span className="af-note">{tr("admin.memo_run_limit_range")}</span>
+          </label>
+        </div>
       </div>
 
       <div className="admin-fgroup">
