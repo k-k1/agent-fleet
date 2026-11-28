@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -346,37 +347,63 @@ func TestPolledCompletionsInSameSecondHaveDistinctKeys(t *testing.T) {
 
 // A turn end no poll observed (the Stop hook, MarkTurnEnd) is stamped with sub-second
 // precision: TurnEndAt is the answer-ready completion key, and two turns that end within one
-// second on the hook / Managed path must not share a notification id.
+// second on the hook / Managed path must not share a notification id. The virtual clock puts both
+// ends in the same wall-clock second for certain, so this fails on a whole-second stamp.
 func TestPersistTurnEndStampsDistinctKeysForTwoTurnsInOneSecond(t *testing.T) {
-	const sid = "slot-hook-precision"
-	t.Setenv("HOME", t.TempDir())
+	synctest.Test(t, func(t *testing.T) {
+		const sid = "slot-hook-precision"
+		t.Setenv("HOME", t.TempDir())
 
-	end := func() string {
+		end := func() string {
+			Persist(sid, "working") // the next turn's start retires the previous key
+			PersistTurnEnd(sid, "idle")
+			st, _ := Read(sid)
+			key, ok := ReadCompletionKey(sid)
+			if !ok || key != st.TurnEndAt {
+				t.Fatalf("completion key %q (ok=%v) must equal TurnEndAt %q", key, ok, st.TurnEndAt)
+			}
+			return st.TurnEndAt
+		}
+		first := end()
+		time.Sleep(200 * time.Millisecond)
+		second := end()
+
+		a, errA := time.Parse(time.RFC3339Nano, first)
+		b, errB := time.Parse(time.RFC3339Nano, second)
+		if errA != nil || errB != nil {
+			t.Fatalf("stamps must stay parseable as RFC 3339: %q (%v), %q (%v)", first, errA, second, errB)
+		}
+		if a.Unix() != b.Unix() {
+			t.Fatalf("the two ends fell in different seconds (%q, %q): the test lost its premise", first, second)
+		}
+		if first == second || !b.After(a) {
+			t.Fatalf("two turn ends in one second must get distinct, ordered stamps: %q then %q", first, second)
+		}
+	})
+}
+
+// A Stop that arrives again for the same turn (no working write between) is the same end: it
+// must not move TurnEndAt, which watchers and the stalled-tree signature read as "a turn ended".
+// A working write in between is a new turn and stamps afresh.
+func TestPersistTurnEndRepeatedStopKeepsTheStamp(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const sid = "slot-hook-repeat"
+		t.Setenv("HOME", t.TempDir())
+
 		Persist(sid, "working")
 		PersistTurnEnd(sid, "idle")
-		st, _ := Read(sid)
-		key, ok := ReadCompletionKey(sid)
-		if !ok || key != st.TurnEndAt {
-			t.Fatalf("completion key %q (ok=%v) must equal TurnEndAt %q", key, ok, st.TurnEndAt)
+		first, _ := LatestTurnEnd(sid)
+		time.Sleep(200 * time.Millisecond)
+		PersistTurnEnd(sid, "idle") // the duplicate Stop
+		if again, _ := LatestTurnEnd(sid); again != first {
+			t.Fatalf("a repeated Stop moved the end from %q to %q", first, again)
 		}
-		RemoveCompletionKey(sid) // what the next UserPromptSubmit does
-		return st.TurnEndAt
-	}
-	first := end()
-	second := end()
 
-	if first == second {
-		t.Fatalf("two turn ends share one stamp %q", first)
-	}
-	for _, at := range []string{first, second} {
-		if _, err := time.Parse(time.RFC3339Nano, at); err != nil {
-			t.Fatalf("stamp %q must stay parseable as RFC 3339: %v", at, err)
+		time.Sleep(200 * time.Millisecond)
+		Persist(sid, "working")
+		PersistTurnEnd(sid, "idle")
+		if next, _ := LatestTurnEnd(sid); next == first {
+			t.Fatalf("a new turn reused the previous end %q", first)
 		}
-	}
-	// Time can step back only by a clock fault; the ordering of two stamps is what readers use.
-	a, _ := time.Parse(time.RFC3339Nano, first)
-	b, _ := time.Parse(time.RFC3339Nano, second)
-	if !b.After(a) {
-		t.Fatalf("second stamp %q is not after first %q", second, first)
-	}
+	})
 }

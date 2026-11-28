@@ -269,10 +269,7 @@ func PersistTurnEndReason(sid, state, reason string) {
 // PersistTurnEndFor is PersistTurnEndReason that also closes turn promptID in the ledger
 // (SessionStatus.PromptID). An empty promptID writes no ledger entry.
 func PersistTurnEndFor(sid, state, reason, promptID string) {
-	at := ObservedTurnEnd(sid)
-	if at == "" {
-		at = time.Now().Format(time.RFC3339Nano)
-	}
+	observed := ObservedTurnEnd(sid)
 	// The key goes first, and in the same critical section: the record is what a reconciler sweep
 	// settles a scheduled run on, and it stores what the late hook for this end must raise under
 	// this key. A key written after the record leaves a window where the sweep finds none, stores
@@ -281,6 +278,18 @@ func PersistTurnEndFor(sid, state, reason, promptID string) {
 	// and the closed turn would be left without one.
 	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
 	defer unlock()
+	at := observed
+	if at == "" {
+		// A repeated Stop for the same turn (no working write between) must not move TurnEndAt:
+		// the completion key is already the turn's identity, and a watch or the stalled-tree
+		// signature would read a newer stamp as a second turn ending. A working write removes the
+		// key, so the next turn stamps afresh.
+		if key, ok := completionKeys.Read(sid); ok {
+			at = key
+		} else {
+			at = time.Now().Format(time.RFC3339Nano)
+		}
+	}
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
 	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
 }
