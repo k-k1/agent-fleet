@@ -41,6 +41,8 @@ const owner = { tenant: "first", whoami: { email: "first@example.com" }, resolve
 const draftKey = () => launchDraftOwner(useTenantStore.getState()).prefix + "s1";
 const reviewButton = () => document.querySelector<HTMLButtonElement>(".ui-toast-msg button");
 const recoveryDialog = () => document.querySelector<HTMLFormElement>("form[role=dialog]");
+const chips = (dialog: Element) => dialog.querySelectorAll(".ma-chip");
+const pendingNotes = (dialog: Element) => [...dialog.querySelectorAll(".ma-note")].map((n) => n.textContent);
 const focusTarget = () => document.querySelector<HTMLButtonElement>("[data-launch-delivery-focus]");
 const submit = (dialog: HTMLFormElement) => dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 const dialogButton = (label: string) => [...recoveryDialog()!.querySelectorAll("button")].find((button) => button.textContent === label);
@@ -148,18 +150,21 @@ describe("partial draft delivery", () => {
     await act(async () => review.click());
     let dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
     expect(dialog.querySelector("textarea")?.value).toBe("look at these");
-    expect(dialog.textContent).toContain("b.png");
+    expect(chips(dialog)).toHaveLength(2);
+    expect(pendingNotes(dialog)).toEqual([t("rp.delivery_pending")]);
     pasteImage.mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large" } });
     await submitRetry(dialog);
-    expect(dialog.textContent).toContain("b.png");
+    expect(chips(dialog)).toHaveLength(2);
+    expect(pendingNotes(dialog)).toEqual([t("rp.delivery_pending")]);
     expect(apiJSON).toHaveBeenCalledTimes(1);
 
     await act(async () => dialog.querySelector<HTMLButtonElement>("header button")!.click());
     expect(dialog.isConnected).toBe(false);
     await act(async () => review.click());
     dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
-    expect(dialog.textContent).toContain("b.png");
-    await act(async () => dialog.querySelectorAll<HTMLButtonElement>("li button")[1].click());
+    expect(chips(dialog)).toHaveLength(2);
+    expect(pendingNotes(dialog)).toEqual([t("rp.delivery_pending")]);
+    await act(async () => dialog.querySelectorAll<HTMLButtonElement>(".ma-del")[1].click());
     const picker = dialog.querySelector<HTMLInputElement>('input[type="file"]')!;
     Object.defineProperty(picker, "files", { value: [file("smaller.png")] });
     await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
@@ -178,6 +183,48 @@ describe("partial draft delivery", () => {
     expect(review.isConnected).toBe(false);
   });
 
+  it("shows the held draft as an update-style toast and edits files through the launch form's controls", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" }).mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large" } });
+    await launch([file("a.png"), file("b.png")]);
+    const toast = document.querySelector(".ui-toast-msg .update-toast")!;
+    expect(toast.querySelector(".update-toast-txt")?.textContent).toBe(t("rp.delivery_held", { session: "s1" }));
+    expect(toast.querySelector("button.update-toast-btn")?.textContent).toBe(t("rp.delivery_review"));
+
+    await act(async () => reviewButton()!.click());
+    const dialog = recoveryDialog()!;
+    // The picker is the launch form's hidden input behind a + button, not a visible native input.
+    const picker = dialog.querySelector<HTMLInputElement>('input[type="file"]')!;
+    expect(picker.hidden).toBe(true);
+    const plus = dialog.querySelector<HTMLButtonElement>("button.launch-attach-btn")!;
+    const clicked = vi.spyOn(picker, "click");
+    await act(async () => plus.click());
+    expect(clicked).toHaveBeenCalledTimes(1);
+
+    const prompt = dialog.querySelector("textarea")!;
+    const pasted = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasted, "clipboardData", { value: { files: [file("pasted.png")] } });
+    await act(async () => prompt.dispatchEvent(pasted));
+    expect(pasted.defaultPrevented).toBe(true);
+    expect(chips(dialog)).toHaveLength(3);
+
+    const dropped = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropped, "dataTransfer", { value: { types: ["Files"], files: [file("dropped.png")] } });
+    await act(async () => prompt.dispatchEvent(dropped));
+    expect(dropped.defaultPrevented).toBe(true);
+    expect(chips(dialog)).toHaveLength(4);
+    expect(pendingNotes(dialog)).toEqual(Array(3).fill(t("rp.delivery_pending")));
+
+    const textPaste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(textPaste, "clipboardData", { value: { files: [] } });
+    await act(async () => prompt.dispatchEvent(textPaste));
+    expect(textPaste.defaultPrevented).toBe(false);
+    expect(chips(dialog)).toHaveLength(4);
+
+    await act(async () => dialog.querySelectorAll<HTMLButtonElement>(".ma-del")[3].click());
+    expect(chips(dialog)).toHaveLength(3);
+  });
+
   it("restores edits and unsent bytes after reload, then sends to the original session", async () => {
     apiJSON.mockImplementation((p: string) => created(p));
     pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" }).mockResolvedValueOnce({ status: 413 });
@@ -186,7 +233,7 @@ describe("partial draft delivery", () => {
     const dialog = recoveryDialog()!;
     const picker = dialog.querySelector<HTMLInputElement>('input[type="file"]')!;
     await editPrompt("edited after refusal");
-    await act(async () => dialog.querySelectorAll<HTMLButtonElement>("li button")[1].click());
+    await act(async () => dialog.querySelectorAll<HTMLButtonElement>(".ma-del")[1].click());
     Object.defineProperty(picker, "files", { value: [file("new.png", "new file bytes")] });
     await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
     await settleAttachDraft(draftKey());
@@ -198,9 +245,8 @@ describe("partial draft delivery", () => {
     await act(async () => review.click());
     const restored = recoveryDialog()!;
     expect(restored.querySelector("textarea")?.value).toBe("edited after refusal");
-    expect([...restored.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
-      expect.stringContaining("a.png"), expect.stringContaining("new.png"),
-    ]);
+    expect(chips(restored)).toHaveLength(2);
+    expect(pendingNotes(restored)).toEqual([t("rp.delivery_pending")]);
     expect(apiJSON).toHaveBeenCalledTimes(1);
     pasteImage.mockImplementationOnce(async (_session: string, uploaded: File) => {
       expect(uploaded.type).toBe("image/png");
@@ -337,8 +383,8 @@ describe("partial draft delivery", () => {
     const restored = recoveryDialog()!;
     expect(restored.querySelector("textarea")?.value).toBe("look at these");
     expect(restored.querySelector("textarea")?.readOnly).toBe(true);
-    expect(restored.textContent).toContain("a.png");
-    expect(restored.querySelector("li button, input[type=file]")).toBeNull();
+    expect(chips(restored)).toHaveLength(1);
+    expect(restored.querySelector(".ma-del, input[type=file]")).toBeNull();
     expect(dialogButton(t("rp.delivery_send"))).toBeUndefined();
     await submitRetry(restored);
     expect(apiJSON).toHaveBeenCalledTimes(2);
@@ -494,7 +540,7 @@ describe("partial draft delivery", () => {
     const refusedCall = apiJSON.mock.lastCall?.slice(0, 3);
     expect(dialog.isConnected).toBe(true);
     expect(dialog.querySelector("textarea")?.value).toBe("look at these");
-    expect(dialog.textContent).toContain("b.png");
+    expect(chips(dialog)).toHaveLength(1);
     expect(readPromptHistory("x")).toEqual([]);
 
     const onSeed = vi.fn(() => takeLaunchSeed("s1"));

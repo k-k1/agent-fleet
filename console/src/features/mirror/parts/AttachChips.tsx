@@ -13,12 +13,18 @@ export function AttachChips({
   pasting,
   onRemove,
   onOpen,
+  note,
+  readOnly,
 }: {
   attachments: Attachment[];
   pasting: boolean;
   onRemove: (i: number) => void;
   /** Opens an image chip in the host's lightbox; the host owns that state (and Back). */
   onOpen?: (url: string) => void;
+  /** A short status line shown on a chip (e.g. "Upload pending"); nothing when it returns "". */
+  note?: (attachment: Attachment) => string | undefined;
+  /** Hides the × buttons: the list is shown but cannot be edited right now. */
+  readOnly?: boolean;
 }) {
   if (!attachments.length && !pasting) return null;
   return (
@@ -37,9 +43,12 @@ export function AttachChips({
               <span className="ma-fname-text">{a.name}</span>
             </span>
           )}
-          <button type="button" className="ma-del" title={tr("chat.remove")} onClick={() => onRemove(i)}>
-            <Icon name="close" />
-          </button>
+          {note?.(a) && <span className="ma-note">{note(a)}</span>}
+          {!readOnly && (
+            <button type="button" className="ma-del" title={tr("chat.remove")} onClick={() => onRemove(i)}>
+              <Icon name="close" />
+            </button>
+          )}
         </div>
       ))}
       {pasting && (
