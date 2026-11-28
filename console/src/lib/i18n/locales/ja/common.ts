@@ -387,7 +387,6 @@ export const common = {
   "active.launch_missing": "このリポジトリで使えるローカルの作業コピーがありません。",
   "active.hidden_waiting_hint_one": "畳んだ子セッションのうち {count} 本があなたの回答を待っています",
   "active.hidden_waiting_hint_other": "畳んだ子セッションのうち {count} 本があなたの回答を待っています",
-  "active.queue_group": "{category}（{repo}）",
   "active.group_waiting_hint_one": "このグループの {count} 本があなたの回答を待っています",
   "active.group_waiting_hint_other": "このグループの {count} 本があなたの回答を待っています",
   "active.older_stopped_one": "ほかに停止中のセッション {count} 本（24 時間より前、または停止時刻が不明）",

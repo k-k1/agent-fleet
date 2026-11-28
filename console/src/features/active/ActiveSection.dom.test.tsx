@@ -607,7 +607,7 @@ describe("ActiveSection", () => {
 
     it("come last, start folded with their counts, and open on the heading, remembered per tenant", async () => {
       await render(list);
-      expect(heads()).toEqual(["Other sessions", "Auto-run", "Schedules"]);
+      expect(heads()).toEqual(["Other sessions", "Other runs", "Schedules"]);
       expect(cards()).toEqual(["home"]);
       expect(headBtn("u:autorun").getAttribute("aria-expanded")).toBe("false");
       expect(headBtn("u:autorun").querySelector(".ovw-gcount")?.textContent).toBe("2 running / 2 total");
@@ -630,10 +630,8 @@ describe("ActiveSection", () => {
         sess("run-b", { origin: "queue", queueCategoryId: "b" }),
       ];
       await render(runs);
-      expect(heads()).toEqual(["Auto-run", "Auto-run"]);
-      expect(headBtn("u:autorun:a").getAttribute("aria-expanded")).toBe("false");
-      expect(headBtn("u:autorun:b").getAttribute("aria-expanded")).toBe("false");
-      await act(async () => headBtn("u:autorun:a").click());
+      // Until the queue list loads, no category is known: one "Other runs" group, as in the Auto-run view.
+      expect(heads()).toEqual(["Other runs"]);
       const cache = useQueueSettingsCache.getState();
       await act(async () => cache.publish(queueScope(), cache.begin(), readMemoQueues({
         queues: [
@@ -641,16 +639,17 @@ describe("ActiveSection", () => {
           { categoryId: "b", category: "Builds", repo: "app", categoryPosition: 1 },
         ],
       })!));
-      expect(heads()).toEqual(["Builds (app)", "Reviews (app)"]);
-      expect(headBtn("u:autorun:a").getAttribute("aria-label")).toBe("Reviews (app), 2 running / 2 total");
-      expect(headBtn("u:autorun:a").getAttribute("aria-expanded")).toBe("true");
+      expect(heads()).toEqual(["app / Builds", "app / Reviews"]);
+      expect(headBtn("u:autorun:a").getAttribute("aria-label")).toBe("app / Reviews, 2 running / 2 total");
+      expect(headBtn("u:autorun:a").getAttribute("aria-expanded")).toBe("false");
       expect(headBtn("u:autorun:b").getAttribute("aria-expanded")).toBe("false");
+      await act(async () => headBtn("u:autorun:a").click());
       expect(cards()).toEqual(["run-a"]);
       expect(JSON.parse(readFoldValue(ACTIVE_GROUPS_OPENED_KEY) || "[]")).toEqual(["u:autorun:a"]);
+      // Its queue settings vanish: the run folds into the one "Other runs" group.
       await act(async () => cache.applyRemoved(queueScope(), "a"));
-      expect(heads()).toEqual(["Builds (app)", "Auto-run"]);
-      expect(headBtn("u:autorun:a").getAttribute("aria-expanded")).toBe("true");
-      expect(cards()).toEqual(["run-a"]);
+      expect(heads()).toEqual(["app / Builds", "Other runs"]);
+      expect(cards()).toEqual([]);
     });
 
     it("Schedules folds, opens and is stored like Auto-run, and a shown schedule worktree child is listed once", async () => {
