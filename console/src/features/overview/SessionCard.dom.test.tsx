@@ -28,13 +28,13 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 const actions = {} as SessionActions;
 
-const render = async (over: Partial<Session>, beside = true, waitingAt = 0, opens: { ordinal: number; id: string }[] = [], rail = false): Promise<void> => {
+const render = async (over: Partial<Session>, beside = true, waitingAt = 0, opens: { ordinal: number; id: string }[] = [], rail = false, selected = false): Promise<void> => {
   const s: Session = { name: "s1", kind: "claude", alive: true, state: "working", title: "決済の修正", ...over };
   await act(async () => {
     root!.render(
       <ToastProvider>
         <PaneHoverProvider>
-          <SessionCard s={s} opens={opens} rail={rail} beside={beside} running waitingAt={waitingAt} actions={actions} />
+          <SessionCard s={s} opens={opens} rail={rail} selected={selected} beside={beside} running waitingAt={waitingAt} actions={actions} />
         </PaneHoverProvider>
       </ToastProvider>,
     );
@@ -360,6 +360,17 @@ describe("SessionCard", () => {
     expect(menuItems()).toEqual([]);
   });
 
+  // The menu is portal'd but still a React child of the card: its right-clicks bubble to the
+  // card's handler, which must leave them to the browser.
+  it("a right-click inside the open menu is not taken by the card", async () => {
+    await render({});
+    await act(async () => host.querySelector<HTMLElement>(".ovw-menu-btn")!.click());
+    const item = document.querySelector<HTMLElement>(".ui-menu .ui-menu-item")!;
+    const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 3, clientY: 3 });
+    await act(async () => void item.dispatchEvent(ev));
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
   it("Escape on the ⋯ button closes the menu it opened", async () => {
     await render({});
     const btn = host.querySelector<HTMLElement>(".ovw-menu-btn")!;
@@ -381,6 +392,12 @@ describe("SessionCard", () => {
     await act(async () => handoff!.click());
     const field = document.querySelector<HTMLElement>(".ui-modal textarea, .ui-modal input, .ui-modal button")!;
     expect(field).toBeTruthy();
+    // A right-click in the dialog bubbles through the React tree to the card: it must stay the
+    // browser's (paste menu) and must not open the card's menu.
+    const ctx = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 3, clientY: 3 });
+    await act(async () => void field.dispatchEvent(ctx));
+    expect(ctx.defaultPrevented).toBe(false);
+    expect(menuItems()).toEqual([]);
     await act(async () => {
       field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
@@ -453,5 +470,17 @@ describe("SessionCard", () => {
     expect(openBtn().tagName).toBe("BUTTON");
     expect(openBtn().tabIndex).toBe(0);
     expect(card().getAttribute("tabindex")).toBeNull();
+    expect(openBtn().getAttribute("aria-current")).toBeNull();
+    await render({}, true, 0, [], true, true);
+    expect(openBtn().getAttribute("aria-current")).toBe("true");
+    expect(card().getAttribute("aria-current")).toBeNull();
+  });
+
+  it("a click on the name focuses the open button (so the Menu key works) and the name keeps the full tooltip", async () => {
+    await render({});
+    const title = host.querySelector<HTMLElement>(".ovw-title")!;
+    await act(async () => title.click());
+    expect(document.activeElement).toBe(openBtn());
+    expect(card().getAttribute("title")).toBe(openBtn().getAttribute("title"));
   });
 });

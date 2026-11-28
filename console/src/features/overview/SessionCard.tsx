@@ -164,9 +164,21 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
     setMenuAt({ x: e.clientX, y: e.clientY });
   };
 
+  // The tooltip of the card's plain content (the name); the open button and the article carry it.
+  const tip =
+    displayName(s) +
+    "\n" +
+    (inert
+      ? tr("srow.cant_resume")
+      : s.alive
+        ? tr(beside ? "ovw.open_hint" : "ovw.open_hint_here")
+        : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
+    `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`;
+
   return (
     <article
       ref={cardRef}
+      title={tip}
       className={
         stateClass("ovw-card", st.cls) +
         (open ? " open" : "") +
@@ -179,7 +191,10 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
       onClick={(e) => {
-        if (onCard(e)) openIt(e.ctrlKey || e.metaKey);
+        if (!onCard(e)) return;
+        // A click on plain content is not focusable, so the Menu key would find nothing.
+        cardRef.current?.querySelector<HTMLElement>(".ovw-open")?.focus({ preventScroll: true });
+        openIt(e.ctrlKey || e.metaKey);
       }}
       onAuxClick={(e) => {
         if (e.button !== 1 || !onCard(e)) return;
@@ -198,16 +213,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         aria-disabled={inert || undefined}
         aria-label={displayName(s)}
         aria-current={selected || undefined}
-        title={
-          displayName(s) +
-          "\n" +
-          (inert
-            ? tr("srow.cant_resume")
-            : s.alive
-              ? tr(beside ? "ovw.open_hint" : "ovw.open_hint_here")
-              : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
-          `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
-        }
+        title={tip}
         onKeyDown={onKeyDown}
       />
       <header className="ovw-head">
