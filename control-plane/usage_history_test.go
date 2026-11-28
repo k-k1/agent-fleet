@@ -877,7 +877,7 @@ func TestNoTaskUpReadsWhenTheDeadlineAllowsIt(t *testing.T) {
 		t.Fatalf("reads=%d limited=%v budget=%v, want one read bounded to about half of 8s", p.reads, p.hasLimit, p.budget)
 	}
 	p2 := &probeRT{taskBoxRT: taskBoxRT{boxRT: rt}}
-	if !noTaskUp(context.Background(), p2) || p2.reads != 1 || p2.budget > usageStopProbeTimeout {
-		t.Fatalf("no deadline: reads=%d budget=%v", p2.reads, p2.budget)
+	if !noTaskUp(context.Background(), p2) || p2.reads != 1 || !p2.hasLimit || p2.budget > usageStopProbeTimeout {
+		t.Fatalf("no deadline: reads=%d limited=%v budget=%v", p2.reads, p2.hasLimit, p2.budget)
 	}
 }
