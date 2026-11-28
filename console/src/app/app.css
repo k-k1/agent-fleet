@@ -145,10 +145,12 @@
   padding: 0;
 }
 /* The waiting / failed cue that rides beside a neutral open-run count: the same amber or red as
-   the lone dot, at the upper left so the count keeps the upper right and the mark the lower right. */
+   the lone dot. It sits at the lower left, clear of the count at the upper right (even "99+")
+   and of the mark at the lower right. */
 .actbar-btn > .actbar-badge.actbar-cue {
-  top: 7px;
-  left: 8px;
+  top: auto;
+  bottom: 6px;
+  left: 6px;
   right: auto;
   min-width: 8px;
   width: 8px;

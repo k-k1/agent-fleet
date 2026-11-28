@@ -456,6 +456,9 @@ export function MemberView({
       max_sessions: +limit || 0,
       memo_run_limit: limits?.memo_run_limit ?? runLimit,
       memo_run_limit_effective: limits?.memo_run_limit_effective ?? (runLimit || member.memo_run_limit_default),
+      // With no override the effective value IS the tenant default as of this save, which may
+      // differ from the one read when the page opened (another admin changed it meanwhile).
+      ...(runLimit === 0 && limits?.memo_run_limit_effective !== undefined && { memo_run_limit_default: limits.memo_run_limit_effective }),
       mem_limit: Math.round(+memMb || 0) * 1048576,
       cpu_limit: Math.round(+cpuUnits || 0),
       disk_gb: Math.round(+diskGb || 0),

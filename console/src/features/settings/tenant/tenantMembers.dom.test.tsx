@@ -164,6 +164,50 @@ describe("member limit editing", () => {
     expect(host!.querySelector(".ws-size-now .mr-lim[title]")).toBeNull();
   });
 
+  it("an override alone is a size: the chip replaces the \"all deployment defaults\" line, and clearing it brings the line back", async () => {
+    const bare = { ...MEMBER, max_sessions: 0, mem_limit: 0, cpu_limit: 0, disk_gb: 0 };
+    const setValue = async (input: HTMLInputElement, v: string) =>
+      act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, v);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    const save = async (override: number, effective: number) => {
+      apiJSON.mockResolvedValue({ memo_run_limit: override, memo_run_limit_effective: effective });
+      await act(async () => buttonWith("保存")!.click());
+      return apiJSON.mock.calls.filter((c) => c[0] === "api/admin/user-limits").at(-1)![2];
+    };
+    await mount(bare);
+    expect(host?.textContent).toContain("すべて配備の既定");
+    await openEditor();
+    await setValue(host!.querySelector<HTMLInputElement>("#md-memo-run-limit")!, "3");
+    expect(await save(3, 3)).toMatchObject({ memo_run_limit: 3 });
+    expect(host!.querySelector(".ws-size-now .mr-lim[title]")?.textContent).toBe("実行≤3");
+    expect(host?.textContent).not.toContain("すべて配備の既定");
+    await openEditor();
+    const input = host!.querySelector<HTMLInputElement>("#md-memo-run-limit")!;
+    expect(input.value).toBe("3");
+    await setValue(input, "0");
+    expect(await save(0, 7)).toMatchObject({ memo_run_limit: 0 });
+    expect(host!.querySelector(".ws-size-now .mr-lim[title]")).toBeNull();
+    expect(host?.textContent).toContain("すべて配備の既定");
+  });
+
+  it("names the tenant default as of the save, not the one read when the page opened", async () => {
+    // Another admin moved the tenant default from 7 (MEMBER's) to 8 while the page was open.
+    await mount({ ...MEMBER, memo_run_limit: 5, memo_run_limit_effective: 5 });
+    await openEditor();
+    const input = host!.querySelector<HTMLInputElement>("#md-memo-run-limit")!;
+    apiJSON.mockResolvedValue({ memo_run_limit: 0, memo_run_limit_effective: 8 });
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "0");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => buttonWith("保存")!.click());
+    await openEditor();
+    expect(host?.textContent).toContain("0 = テナントの既定値（8 件）");
+    expect(host?.textContent).not.toContain("（7 件）");
+  });
+
   it("states no override for a member on the tenant default, and rejects values above 10", async () => {
     await mount(MEMBER);
     expect(host!.querySelector(".ws-size-now .mr-lim[title]")).toBeNull();

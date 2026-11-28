@@ -11,7 +11,7 @@
 // is switched here is presentation only.
 import { FieldLabel } from "../../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import { deleteTenant, putTenantLimits } from "./tenantApi.ts";
@@ -179,6 +179,7 @@ export function TenantLimits({
   const [maxWs, setMaxWs] = useState<number | string>(tenant?.max_workspaces || 0);
   const [maxSs, setMaxSs] = useState<number | string>(tenant?.max_sessions || 0);
   const [memoRunLimit, setMemoRunLimit] = useState<number | string>(tenant?.memo_run_limit ?? "");
+  const runLimitRef = useRef<HTMLInputElement>(null);
   const [maxRepos, setMaxRepos] = useState<number | string>(tenant?.max_git_repos || 0);
   // LFS cap is stored in bytes but edited in MB for usability.
   const [maxLfsMb, setMaxLfsMb] = useState<number | string>(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
@@ -232,9 +233,11 @@ export function TenantLimits({
   }, [slug, tenant]);
 
   const saveLimits = async () => {
-    // The server always reports the effective default, so blank only means it has not been read:
-    // leave the field out and the stored value is kept.
-    const runLimit = memoRunLimit === "" ? undefined : Number(memoRunLimit);
+    // The server always reports the effective default, so a blank field is an error (as 0 is).
+    // Only when no value was ever reported is blank "not read yet": the field is left out and the
+    // stored value is kept. A number input holding "1e" reads "" too, but is never intentional.
+    const unread = tenant?.memo_run_limit === undefined && !runLimitRef.current?.validity.badInput;
+    const runLimit = memoRunLimit === "" && unread ? undefined : Number(memoRunLimit);
     if (runLimit !== undefined && (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 10)) {
       toast(tr("admin.memo_run_limit_range"));
       return;
@@ -331,7 +334,7 @@ export function TenantLimits({
         <div className="admin-fgrid">
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.memo_run_limit_default")}</span>
-            <input type="number" min="1" max="10" value={memoRunLimit} onChange={(e) => setMemoRunLimit(e.target.value)} />
+            <input ref={runLimitRef} type="number" min="1" max="10" value={memoRunLimit} onChange={(e) => setMemoRunLimit(e.target.value)} />
             <span className="af-note">{tr("admin.memo_run_limit_range")}</span>
           </label>
         </div>

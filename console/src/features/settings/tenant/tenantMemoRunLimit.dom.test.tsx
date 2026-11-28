@@ -93,6 +93,23 @@ describe("tenant auto-run limit field", () => {
     expect(toast).toHaveBeenCalledWith(t("admin.memo_run_limit_range"));
   });
 
+  it("treats a blank field as an error when the server reported a value", async () => {
+    await mount({ slug: "acme", memo_run_limit: 4 });
+    await type(field(), "");
+    await save();
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(t("admin.memo_run_limit_range"));
+  });
+
+  it("treats an unparseable entry as an error even when no value was reported", async () => {
+    await mount({ slug: "acme" });
+    // A number input holding "1e" reads "" and reports badInput; jsdom does not, so say it.
+    Object.defineProperty(field(), "validity", { value: { badInput: true } });
+    await save();
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(t("admin.memo_run_limit_range"));
+  });
+
   it("does not invent a default when the server reported none, and leaves the field out of the save", async () => {
     apiJSON.mockResolvedValue({});
     await mount({ slug: "acme" });
