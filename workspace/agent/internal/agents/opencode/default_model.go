@@ -330,8 +330,10 @@ func resolveDefaultModelLaunch(m session.Meta, start time.Time) routes.Launch {
 	}
 	// Nothing below reads the credential store again: a second, unbounded read (credentialView)
 	// would wait on a writer that holds it after the budget is spent. The keys are the ones just
-	// read, the billing choice and the account are the cached views, and the provider is opencode,
-	// which neither an engine nor a custom connection can take (reservedProviders).
+	// read, the billing choice and the account are the cached views, and the provider is opencode.
+	// reservedProviders only keeps a custom connection from taking that id; what excludes an
+	// engine is the serve's answer, which must list the built-in opencode provider on
+	// opencode.ai's own endpoint.
 	pref, acct := defaultModelAccount()
 	model := launchDefaultModelOf(ctx, m.CWD())
 	if model == "" {
