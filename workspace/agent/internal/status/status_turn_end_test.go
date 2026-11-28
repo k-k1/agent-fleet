@@ -421,3 +421,33 @@ func TestPersistTurnEndRepeatedStopKeepsTheStamp(t *testing.T) {
 		}
 	})
 }
+
+// A duplicate Stop that read its clock in the second of the end it repeats keeps that end's
+// stamp even when it only gets the session lock in the next second: the stamp is chosen when the
+// call starts, not after the wait.
+func TestPersistTurnEndDuplicateStopWaitingOnTheLockAcrossASecond(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const sid = "slot-hook-lock-wait"
+		t.Setenv("HOME", t.TempDir())
+
+		Persist(sid, "working")
+		time.Sleep(990 * time.Millisecond) // the virtual clock starts on a whole second
+		PersistTurnEnd(sid, "idle")
+		first, _ := LatestTurnEnd(sid)
+
+		time.Sleep(5 * time.Millisecond) // 12:00:00.995
+		unlock, ok := lockSid(sid)
+		if !ok {
+			t.Fatal("could not take the lock")
+		}
+		done := make(chan struct{})
+		go func() { defer close(done); PersistTurnEnd(sid, "idle") }() // the duplicate, blocked on the lock
+		time.Sleep(10 * time.Millisecond)                              // 12:00:01.005: the next second
+		unlock()
+		<-done
+
+		if again, _ := LatestTurnEnd(sid); again != first {
+			t.Fatalf("a duplicate Stop that waited across a second boundary moved the end from %q to %q", first, again)
+		}
+	})
+}

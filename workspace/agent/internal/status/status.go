@@ -270,6 +270,10 @@ func PersistTurnEndReason(sid, state, reason string) {
 // (SessionStatus.PromptID). An empty promptID writes no ledger entry.
 func PersistTurnEndFor(sid, state, reason, promptID string) {
 	observed := ObservedTurnEnd(sid)
+	// Taken here, before any wait for the lock: a duplicate Stop that reached this point in the
+	// same second as the end it repeats must compare against that second even if the lock only
+	// comes free in the next one.
+	now := time.Now()
 	// The key goes first, and in the same critical section: the record is what a reconciler sweep
 	// settles a scheduled run on, and it stores what the late hook for this end must raise under
 	// this key. A key written after the record leaves a window where the sweep finds none, stores
@@ -280,7 +284,7 @@ func PersistTurnEndFor(sid, state, reason, promptID string) {
 	defer unlock()
 	at := observed
 	if at == "" {
-		at = sameSecondEnd(sid, time.Now())
+		at = sameSecondEnd(sid, now)
 	}
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
 	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
