@@ -66,8 +66,10 @@ export function LaunchSplit({ running, hasAgents, unavailable, mainLabel, caretD
 
 /** The ▼ menu's per-kind items. A plain click launches; Ctrl/⌘-click and middle-click open the
  *  new session in a split pane. `children` follows a separator (the Repositories row adds
- *  its image studio entry there). */
-export function LaunchKindItems({ kinds, onPick, children }: { kinds: string[]; onPick: (kind: string, split: boolean) => void; children?: ReactNode }) {
+ *  its image studio entry there). `menu`: the items carry role=menuitem themselves, for a parent that is
+ *  a role=menu: the roving-focus hook stamps roles only on the items present when the menu opens,
+ *  so an item added by a later poll would otherwise have none. */
+export function LaunchKindItems({ kinds, onPick, menu, children }: { kinds: string[]; onPick: (kind: string, split: boolean) => void; menu?: boolean; children?: ReactNode }) {
   const tr = useT();
   return (
     <>
@@ -76,6 +78,7 @@ export function LaunchKindItems({ kinds, onPick, children }: { kinds: string[]; 
           key={k}
           type="button"
           className="ui-menu-item"
+          {...(menu ? { role: "menuitem", tabIndex: -1 } : null)}
           title={tr("repo.launch_new_pane")}
           onClick={(e) => onPick(k, e.ctrlKey || e.metaKey)}
           onMouseDown={(e) => e.button === 1 && e.preventDefault()}

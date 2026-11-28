@@ -461,6 +461,45 @@ describe("ActiveSection", () => {
       expect(quickLaunch).not.toHaveBeenCalled();
     });
 
+    it.each(["main", "caret"] as const)("closes the %s's clone menu when no agent is left to launch, and does not bring it back with the agents", async (part) => {
+      const button = await openCloneMenu(part);
+      rail.launchKinds = [];
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      expect(anyMenu()).toBe(0);
+      expect(button.disabled).toBe(true);
+      expect(document.activeElement).toBe(host.querySelector(".act-gfold"));
+      rail.launchKinds = ["claude", "codex"];
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      expect(anyMenu()).toBe(0);
+      expect(button.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("moves focus into the menu when the other part is pressed, and returns to the part that is current when the chosen clone goes away", async () => {
+      await openCloneMenu("main");
+      caretButton().focus();
+      await act(async () => caretButton().click());
+      expect(document.activeElement).toBe(cloneItems()[0]);
+      await act(async () => cloneItems()[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+      expect(document.activeElement).toBe(cloneItems()[1]);
+      await act(async () => cloneItems()[1].click());
+      expect(kindItems()).toHaveLength(2);
+      await act(async () => useReposStore.setState({ repos: [worktree, base] }));
+      expect(anyMenu()).toBe(0);
+      expect(document.activeElement).toBe(caretButton());
+    });
+
+    it("keeps the kind menu a menu of menuitems when the kinds change while it is open", async () => {
+      useReposStore.setState({ repos: [worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      await act(async () => caretButton().click());
+      expect(document.querySelector(".launch-menu")?.getAttribute("role")).toBe("menu");
+      rail.launchKinds = ["codex", "agy"];
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      const items = [...document.querySelectorAll<HTMLElement>(".launch-menu .ui-menu-item")];
+      expect(items.map((i) => i.textContent?.trim())).toEqual(["Codex", "Antigravity"]);
+      expect(items.every((i) => i.getAttribute("role") === "menuitem")).toBe(true);
+    });
+
     it("closes the kind menu on Escape and Tab, returning focus to the caret", async () => {
       useReposStore.setState({ repos: [worktree, base] });
       await render([sess("wt", { repo: worktree.name, worktree: true })]);

@@ -688,3 +688,28 @@ describe("a route panel that vanished with the agent", () => {
     }
   });
 });
+
+describe("LaunchModal initialKind", () => {
+  const renderKind = async (initialKind?: string) => {
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <LaunchModal repo="app" branch="main" kinds={["claude", "codex"]} access={access} initialKind={initialKind} onClose={() => {}} onLaunch={onLaunch} />
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await settle();
+  };
+
+  it("opens on the kind a quick launch handed over, and a later open without one starts from the usual pick even though the dialog stayed mounted", async () => {
+    await renderKind("codex");
+    expect(strip().textContent).toContain("Codex");
+    expect(strip().querySelector(".run-model--claude")).toBeNull();
+    // The same copy opened again by another path (a clone toast's "start now") while this dialog is
+    // still up: the store's kind is empty now, and the form must not keep the earlier pick.
+    await renderKind(undefined);
+    expect(strip().querySelector(".run-model--claude")).not.toBeNull();
+  });
+});

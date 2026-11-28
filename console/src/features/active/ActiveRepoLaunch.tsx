@@ -40,7 +40,9 @@ export function ActiveRepoLaunch({ label, copies, running, kinds, hasAgents, qui
   const kindMenu = useRef<HTMLDivElement>(null);
   const multiple = copies.length > 1;
   const kindsCopy = step?.menu === "kinds" ? copies.find((c) => c.name === step.copy) : undefined;
-  const cloneOpen = step?.menu === "clone" && running && multiple;
+  // The clone menu belongs to the part that opened it, so it closes when that part is disabled
+  // (▷ needs an agent that runs in a directory, ▼ needs a kind to list), not only when it is gone.
+  const cloneOpen = step?.menu === "clone" && running && multiple && (step.then === "dialog" ? hasAgents : kinds.length > 0);
   const kindsOpen = step?.menu === "kinds" && running && !!kindsCopy && kinds.length > 0;
   const open = cloneOpen || kindsOpen;
   const noCopy = copies.length === 0;
@@ -63,8 +65,9 @@ export function ActiveRepoLaunch({ label, copies, running, kinds, hasAgents, qui
   });
   useLayoutEffect(() => {
     if (!open) return;
-    const from = opener.current;
     return () => {
+      // Read when the menu closes, not when it opened: the member may have switched to the other part.
+      const from = opener.current;
       // A catalogue update can remove the focused menu item and disable its opener at once.
       if (!from?.isConnected || document.activeElement !== document.body) return;
       const fallback = from.disabled ? from.closest(".act-gtitle")?.querySelector<HTMLButtonElement>(".act-gfold") : from;
@@ -74,6 +77,13 @@ export function ActiveRepoLaunch({ label, copies, running, kinds, hasAgents, qui
   // One instance per menu: the roving focus starts when a menu opens, and the move from the clone
   // menu to the kind menu keeps `open` true.
   useMenuRoving(cloneMenu, cloneOpen);
+  // Pressing the other part while a clone menu is open keeps `cloneOpen` true, so the roving hook
+  // does not run again and the browser leaves focus on the pressed button: put it on the first
+  // item of the menu that now answers.
+  const cloneFor = step?.menu === "clone" ? step.then : "";
+  useEffect(() => {
+    if (cloneOpen) cloneMenu.current?.querySelector<HTMLElement>(".ui-menu-item")?.focus({ preventScroll: true });
+  }, [cloneOpen, cloneFor]);
   useMenuRoving(kindMenu, kindsOpen);
 
   const openDialog = (copy: Repo) => {
@@ -141,9 +151,9 @@ export function ActiveRepoLaunch({ label, copies, running, kinds, hasAgents, qui
         document.body,
       )}
       {kindsOpen && kindsCopy && createPortal(
-        <div className="ui-menu launch-menu" ref={kindMenu} onMouseDown={(e) => e.stopPropagation()}
+        <div className="ui-menu launch-menu" ref={kindMenu} role="menu" aria-label={tr("repo.quick_launch")} onMouseDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => { if (e.key === "Tab") close(); }}>
-          <LaunchKindItems kinds={kinds} onPick={(kind, newPane) => pick(kindsCopy, kind, newPane)} />
+          <LaunchKindItems menu kinds={kinds} onPick={(kind, newPane) => pick(kindsCopy, kind, newPane)} />
         </div>,
         document.body,
       )}
