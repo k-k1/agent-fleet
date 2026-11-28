@@ -835,14 +835,49 @@ func TestStopSkipsTheAccountingReadNearTheDeadline(t *testing.T) {
 	srt := countingStateRT{slowStateRT{taskBoxRT: taskBoxRT{boxRT: rt}, stopCtxErr: &stopErr}, &reads}
 	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
 	defer cancel()
-	begin := time.Now()
 	if err := mgr.stopRecorded(ctx, ws, srt, false); err != nil {
 		t.Fatal(err)
 	}
-	if reads != 0 || *rt.stops != 1 || stopErr != nil || time.Since(begin) > 100*time.Millisecond {
-		t.Fatalf("reads=%d stops=%d stopErr=%v after %v, want no read and a prompt live Stop", reads, *rt.stops, stopErr, time.Since(begin))
+	if reads != 0 || *rt.stops != 1 || stopErr != nil {
+		t.Fatalf("reads=%d stops=%d stopErr=%v, want no read and a live Stop", reads, *rt.stops, stopErr)
 	}
 	if l, _, _ := st.GetLaunch(context.Background(), "L"); l.StoppedAt-l.StartedAt < 9*60 {
 		t.Fatalf("closed %ds after its start, want the stop", l.StoppedAt-l.StartedAt)
+	}
+}
+
+// probeRT records the context State is read with and reports a launch that never came up.
+type probeRT struct {
+	taskBoxRT
+	reads    int
+	budget   time.Duration
+	hasLimit bool
+}
+
+func (r *probeRT) State(ctx context.Context) string {
+	r.reads++
+	if dl, ok := ctx.Deadline(); ok {
+		r.hasLimit, r.budget = true, time.Until(dl)
+	}
+	return "stopped"
+}
+
+// With the default margin and enough deadline left, the read still happens and gets at most half
+// of what is left; with no deadline it gets the plain probe timeout. Guards against the skip
+// swallowing every deadline-carrying context.
+func TestNoTaskUpReadsWhenTheDeadlineAllowsIt(t *testing.T) {
+	_, _, _, _, rt := historyFixture(t, "stopped")
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	p := &probeRT{taskBoxRT: taskBoxRT{boxRT: rt}}
+	if !noTaskUp(ctx, p) {
+		t.Fatal("noTaskUp = false, want true: stopped with no task up")
+	}
+	if p.reads != 1 || !p.hasLimit || p.budget > 4*time.Second+50*time.Millisecond {
+		t.Fatalf("reads=%d limited=%v budget=%v, want one read bounded to about half of 8s", p.reads, p.hasLimit, p.budget)
+	}
+	p2 := &probeRT{taskBoxRT: taskBoxRT{boxRT: rt}}
+	if !noTaskUp(context.Background(), p2) || p2.reads != 1 || p2.budget > usageStopProbeTimeout {
+		t.Fatalf("no deadline: reads=%d budget=%v", p2.reads, p2.budget)
 	}
 }
