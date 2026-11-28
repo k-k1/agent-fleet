@@ -55,7 +55,7 @@ function mixPct(selector: string): number {
 
 describe("answered question card text", () => {
   it("dims no text with opacity", () => {
-    for (const b of questionBlocks) expect(b.body, b.selector).not.toMatch(/(?<![\w-])opacity\s*:\s*(?!1\s*;)/);
+    for (const b of questionBlocks) expect(b.body, b.selector).not.toMatch(/(?<![\w-])opacity\s*:(?!\s*1\s*;)/);
   });
 
   it("an inert unpicked option stays distinguishable from a live one without fading text", () => {
@@ -98,19 +98,17 @@ describe("answered question card text", () => {
   }
 });
 
-// The generic disabled-button fade in the mirror shell reached the answered card's options (they are
-// disabled <button>s) and dimmed their text to about 2:1 in the light theme; the cascade is invisible to
-// the dom tests, so pin the exemption in the source. It must be wrapped in :where(): a bare :not(.mq-opt)
-// raises the rule's specificity and lets it beat every `.x:disabled` opacity elsewhere (pending.css,
-// composer.css, marks.css).
+// The mirror shell's generic `button:disabled { opacity: 0.4 }` reached the answered card's options (they
+// are disabled <button>s) and dimmed their text to about 2:1 in the light theme. The cascade is invisible to
+// the dom tests, so pin it in the source: `.mq-opt:disabled` resets opacity, and the generic rule stays
+// scoped with :where() (specificity 0,1,1) so that reset (0,2,0) keeps winning. The exemption lives in
+// question.css because naming .mq-opt in shell.css trips the css-dup ceiling.
 describe("generic disabled-button opacity", () => {
-  it("skips question options in every shell without changing specificity", () => {
+  it("is overridden for question options", () => {
+    expect(rule(".mq-opt:disabled")).toMatch(/(?<![\w-])opacity:\s*1\s*;/);
     const shell = strip(readFileSync(path.resolve(__dirname, "../features/mirror/parts/shell.css"), "utf8"));
-    const fading = parse(shell).filter((b) => /opacity\s*:\s*(?!1\s*;)/.test(b.body) && /button:disabled/.test(b.selector));
+    const fading = parse(shell).filter((b) => /opacity\s*:(?!\s*1\s*;)/.test(b.body) && /button:disabled/.test(b.selector));
     expect(fading.length).toBeGreaterThan(0);
-    for (const b of fading) {
-      // Whole selector, so a scope that adds specificity (`:is()` for `:where()`) is caught too.
-      expect(b.selector, b.selector).toMatch(/^:where\([^()]*\) button:disabled:where\(:not\(\.mq-opt\)\)$/);
-    }
+    for (const b of fading) expect(b.selector, b.selector).toMatch(/^:where\([^()]*\) button:disabled$/);
   });
 });
