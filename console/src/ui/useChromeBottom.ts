@@ -13,7 +13,7 @@ import { measureChromeBottom, touchesChrome } from "./toastPlacement.ts";
  *  mutations that touch a bar count (touchesChrome), coalesced to one measurement per frame; an
  *  unchanged value does not re-render.
  *
- *  `self` is the element the value places, when it is itself marked data-toast-chrome so that the
+ *  `self` is the element the value places, when it is itself marked data-toast-floor so that the
  *  toasts stay below it: it is left out of its own measurement. */
 export function useChromeBottom(active: boolean, remeasureKey?: unknown, self?: RefObject<Element | null>): number | null {
   const [top, setTop] = useState<number | null>(null);

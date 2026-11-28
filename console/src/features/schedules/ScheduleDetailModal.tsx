@@ -81,8 +81,8 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const returnToEditRef = useRef<HTMLButtonElement>(null);
   // On a phone the opened session's composer and send button are at the bottom right, where the
   // return button sits on a desktop. It goes below the top bars instead, like the toasts, and is
-  // marked as one of the bars so that a toast lands under it rather than over it (a toast is
-  // in front of the button and a sticky one would keep it from being tapped).
+  // marked as a floor so that a toast lands under it rather than over it (a toast is in front of
+  // the button and a sticky one would keep it from being tapped).
   const phone = useIsMobile();
   const returnTop = useChromeBottom(phone && viewingSession, undefined, returnToEditRef);
   useEffect(() => {
@@ -288,7 +288,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   if (viewingSession) {
     return createPortal(
       <Button ref={returnToEditRef} type="button" variant="primary" className={"sched-return-to-edit" + (phone ? " sched-return-phone" : "")}
-        data-toast-chrome={phone ? "" : undefined}
+        data-toast-floor={phone ? "" : undefined}
         style={phone && returnTop != null ? { top: returnTop + 8 } : undefined}
         onClick={() => setViewingSession(false)}>
         {tr("sched.return_to_edit", { name: scheduleTitle(s) })}

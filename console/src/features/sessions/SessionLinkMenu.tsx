@@ -9,6 +9,7 @@ import { createContext, useCallback, useContext, useState } from "react";
 import type { ReactNode } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
+import { useBackClose } from "../../lib/backClose.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
@@ -66,6 +67,9 @@ export function SessionLinkMenuHost({ children }: { children: ReactNode }) {
 function LinkMenu({ s, menu, onClose }: { s: Session; menu: MenuState; onClose: () => void }) {
   const running = useWorkspaceStore((st) => st.state) === "running";
   const actions = useSessionActions();
+  // The device's Back closes the menu first. Over a modal (the schedule detail) it would otherwise
+  // reach the modal's own Back layer and close it together with its unsaved form.
+  useBackClose(menu.open ? onClose : undefined, menu.open);
   return (
     <SessionMenu
       s={s}

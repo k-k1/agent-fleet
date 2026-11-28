@@ -311,28 +311,43 @@ describe("ScheduleDetailModal reuse navigation", () => {
       expect(back.style.top).toBe("8px");
     });
 
-    it("follows the bars and leaves the toasts the space below it", async () => {
-      // jsdom has no layout: give the top bar and the return button boxes of their own. The
-      // button's box follows its inline `top`, as a laid-out fixed element's would.
-      const topbar = document.createElement("div");
-      topbar.className = "topbar";
-      document.body.appendChild(topbar);
+    // jsdom has no layout: give the bars boxes of their own. A bar a test adds says its box in
+    // data-test-box ("top,height"); the return button's follows its inline `top`, as a laid-out
+    // fixed element's would. Returns the restore.
+    function stubBoxes(): () => void {
       const realRect = Element.prototype.getBoundingClientRect;
       Element.prototype.getBoundingClientRect = function (this: Element) {
         const box = (top: number, height: number) => ({ top, bottom: top + height, left: 0, right: 390, width: 390, height, x: 0, y: top, toJSON() {} }) as DOMRect;
-        if (this.classList.contains("topbar")) return box(0, 40);
-        if (this.hasAttribute("data-toast-chrome")) return box(parseFloat((this as HTMLElement).style.top) || 0, 31);
+        if (this.hasAttribute("data-toast-floor")) return box(parseFloat((this as HTMLElement).style.top) || 0, 31);
+        const fixed = (this as HTMLElement).dataset?.testBox;
+        if (fixed) return box(Number(fixed.split(",")[0]), Number(fixed.split(",")[1]));
         return realRect.call(this);
       };
+      return () => {
+        Element.prototype.getBoundingClientRect = realRect;
+      };
+    }
+    function addBar(parent: Element, cls: string, box: string): HTMLElement {
+      const bar = document.createElement("div");
+      bar.className = cls;
+      bar.dataset.testBox = box;
+      parent.appendChild(bar);
+      return bar;
+    }
+    const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 60))));
+
+    it("follows the bars and leaves the toasts the space below it", async () => {
+      const topbar = addBar(document.body, "topbar", "0,40");
+      const restore = stubBoxes();
       try {
         setPhone(true);
         const back = await park();
         // Below a 40px bar, not at 8px: the measured height is followed, and the button is not
         // counted in its own measurement (it would otherwise creep down by its height).
         expect(back.style.top).toBe("48px");
-        expect(back.hasAttribute("data-toast-chrome")).toBe(true);
-        // Setting that top is itself a mutation of a bar, which schedules another measurement.
-        await act(async () => void (await new Promise((r) => setTimeout(r, 60))));
+        expect(back.hasAttribute("data-toast-floor")).toBe(true);
+        // Setting that top is itself a mutation, which schedules another measurement.
+        await settle();
         expect(back.style.top).toBe("48px");
         await act(async () => fire("a notice that stays", { kind: "info", duration: 0 }));
         // The stack starts under the button (48 + 31 + 8), so the button is never covered.
@@ -340,8 +355,30 @@ describe("ScheduleDetailModal reuse navigation", () => {
         expect(stack.style.top).toBe("87px");
         expect(back.style.top).toBe("48px");
       } finally {
-        Element.prototype.getBoundingClientRect = realRect;
+        restore();
         topbar.remove();
+      }
+    });
+
+    it("keeps the toasts below the button when a second pane's header ends the run above it", async () => {
+      // A short phone screen split in two (a soft keyboard up, the top pane shrunk): the first
+      // pane's header ends at 144, the second pane's starts at 149 and stops the run there, so the
+      // button, placed at 144 + 8, is past the run's reach.
+      const topbar = addBar(document.body, "topbar", "0,40");
+      const upper = addBar(document.body, "pane", "40,104");
+      const lower = addBar(document.body, "pane", "149,120");
+      const heads = [addBar(upper, "view-head", "40,104"), addBar(lower, "view-head", "149,31")];
+      const restore = stubBoxes();
+      try {
+        setPhone(true);
+        const back = await park();
+        expect(back.style.top).toBe("152px");
+        await act(async () => fire("a notice that stays", { kind: "info", duration: 0 }));
+        // Under the button (152 + 31 + 8), not at 144 + 8 where it would cover it.
+        expect(document.querySelector<HTMLElement>(".ui-toasts")!.style.top).toBe("191px");
+      } finally {
+        restore();
+        for (const el of [topbar, upper, lower, ...heads]) el.remove();
       }
     });
 
@@ -349,7 +386,7 @@ describe("ScheduleDetailModal reuse navigation", () => {
       setPhone(false);
       const back = await park();
       expect(back.classList.contains("sched-return-phone")).toBe(false);
-      expect(back.hasAttribute("data-toast-chrome")).toBe(false);
+      expect(back.hasAttribute("data-toast-floor")).toBe(false);
       expect(back.style.top).toBe("");
     });
   });
