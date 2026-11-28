@@ -113,23 +113,15 @@ func SharedMCPCaller(ctx context.Context, pid int, id string) string {
 	if err := apiJSONCtx(ctx, serveClient, http.MethodGet, addr+"/api/info", nil, &info); err != nil || info.PID != pid {
 		return ""
 	}
-	var name string
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindOpencode || m.Archived || !session.ValidName(m.Name) {
-			continue
-		}
-		if SlotSessionID(m) != id {
-			continue
-		}
-		target := v2TargetFor(m)
-		if target.offline || target.Addr != addr {
-			continue
-		}
-		if name != "" {
+	name, _ := agents.UniqueSlotForSessionID(session.ListMetas(), id, func(m session.Meta) string {
+		if m.Kind != session.KindOpencode {
 			return ""
 		}
-		name = m.Name
-	}
+		return SlotSessionID(m)
+	}, func(m session.Meta) bool {
+		target := v2TargetFor(m)
+		return !target.offline && target.Addr == addr
+	})
 	return name
 }
 
