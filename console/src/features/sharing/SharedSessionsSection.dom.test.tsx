@@ -10,7 +10,7 @@ vi.mock("../../core/api/client.ts", async (importOriginal) => ({
 }));
 
 const { SharedSessionsSection } = await import("./SharedSessionsSection.tsx");
-const { useSharedSessionsStore } = await import("./store.ts");
+const { useSharedSessionsStore, useMySharesStore } = await import("./store.ts");
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -42,6 +42,18 @@ describe("SharedSessionsSection in its own view", () => {
     useSharedSessionsStore.setState({ sessions: [], refresh: () => Promise.resolve() });
     await act(async () => root.render(<SharedSessionsSection />));
     expect(host.querySelector(".pane-empty")).not.toBeNull();
+  });
+
+  it("still says nothing is shared with the member when they only own one share", async () => {
+    useSharedSessionsStore.setState({ sessions: [], refresh: () => Promise.resolve() });
+    useMySharesStore.setState({ shares: [{ id: "m1" }] as never, refresh: () => Promise.resolve() }); // mount-time polling must not wipe the seed
+    try {
+      await act(async () => root.render(<SharedSessionsSection />));
+      expect(host.querySelector("button")).not.toBeNull(); // the section head (reload / gear) is shown
+      expect(host.querySelector(".pane-empty")?.textContent).toContain("共有されているものはまだありません");
+    } finally {
+      useMySharesStore.setState({ shares: [] });
+    }
   });
 
 });

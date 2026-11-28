@@ -67,9 +67,13 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
             disabled={reloading} onClick={() => void reload()} />
           <IconButton icon="settings-gear" label={tr("share.list_title")} onClick={() => setManageOpen(true)} />
         </>}>
-        <ul className="proj-tree sess-list">
-          {groups.map((g) => <SharedProjectNode key={`${g.ownerUserKey}:${g.copies[0].workingCopyId}`} group={g} />)}
-        </ul>
+        {/* Outgoing shares, proposals or handovers keep the section head (gear, mail) on screen
+            while nothing is shared *to* this member; without this line the body is blank. */}
+        {groups.length === 0 ? <div className="pane-empty">{tr("share.none")}</div> : (
+          <ul className="proj-tree sess-list">
+            {groups.map((g) => <SharedProjectNode key={`${g.ownerUserKey}:${g.copies[0].workingCopyId}`} group={g} />)}
+          </ul>
+        )}
       </Section>
       {inboxOpen && <HandoffInboxModal onClose={() => setInboxOpen(false)} />}
       {open && (
