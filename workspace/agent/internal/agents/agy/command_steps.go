@@ -68,11 +68,11 @@ func removeCommandSteps(conv string) {
 }
 
 // dropSlotCommandSteps removes the command steps of the conversations slotSid names, unless
-// another slot still names the same one: a slot that adopted a sibling's conversation by
-// mistake must not take the sibling's steps with it.
-func dropSlotCommandSteps(slotSid string) {
+// another slot still names the same one, live or held by the trash: a slot that adopted a
+// sibling's conversation by mistake must not take the sibling's steps with it.
+func dropSlotCommandSteps(slotSid string, trashed []session.Meta) {
 	convs := map[string]bool{sids.Read(slotSid): true, hookConversation(slotSid): true}
-	for _, m := range session.ListMetas() {
+	for _, m := range append(session.ListMetas(), trashed...) {
 		if other := session.UUID(m.Dir, m.Name); m.Kind == session.KindAgy && other != slotSid {
 			delete(convs, sids.Read(other))
 			delete(convs, hookConversation(other))

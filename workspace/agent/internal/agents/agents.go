@@ -238,9 +238,11 @@ type ManagedRuntime interface {
 // SlotPurger is implemented by a kind that keeps per-conversation state under the Agent's
 // own state dir, which nothing else removes once the session is gone. It runs when a session
 // is purged from the trash for good (a restorable session in the trash keeps its state), and
-// must be safe to call for a slot that never launched.
+// must be safe to call for a slot that never launched. trashed are the sessions other trash
+// archives still hold: their metas are gone from the live list, but restoring one resumes
+// its conversation, so state shared with them must stay.
 type SlotPurger interface {
-	PurgeSlot(m session.Meta)
+	PurgeSlot(m session.Meta, trashed []session.Meta)
 }
 
 // ManagedRuntimeOps are the kind package's own handle functions. They are function values

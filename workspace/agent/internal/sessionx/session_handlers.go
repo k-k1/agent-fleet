@@ -103,9 +103,9 @@ func dropManagedRuntime(m session.Meta) {
 // removeManagedLedger drops the ClientMessageID ledger, discarding the slot's identity with
 // it. Only purging a trash archive calls it (through RemoveManagedLedger): halt, archive and
 // the trash itself keep it, because each of those can still be resumed.
-func removeManagedLedger(m session.Meta) {
+func removeManagedLedger(m session.Meta, trashed []session.Meta) {
 	if p, ok := registeredCap[agents.SlotPurger](m.Kind); ok {
-		p.PurgeSlot(m)
+		p.PurgeSlot(m, trashed)
 	}
 	if rt, ok := managedRuntimeOf(m.Kind); ok {
 		rt.RemoveLedger(m.Name)
@@ -1380,7 +1380,9 @@ func forgetSessionCaches(name string) {
 
 // RemoveManagedLedger is removeManagedLedger for package main. The trash keeps the ledger (a
 // session in it can be restored and resumed); purging the archive is what drops it.
-func RemoveManagedLedger(m session.Meta) { removeManagedLedger(m) }
+//
+// trashed are the sessions the remaining trash archives hold (see agents.SlotPurger).
+func RemoveManagedLedger(m session.Meta, trashed []session.Meta) { removeManagedLedger(m, trashed) }
 
 // HandleHaltSession stops a RUNNING session into the stopped (resumable) state: it
 // kills the live tmux but KEEPS the meta visible (Archived stays false), so the row

@@ -251,7 +251,7 @@ func diffStrings(cur []string, prev map[string]bool) []string {
 }
 
 func (agentImpl) ClearResume(sid string) {
-	dropSlotCommandSteps(sid) // before the sid that names the conversation goes
+	dropSlotCommandSteps(sid, nil) // before the sid that names the conversation goes
 	sids.Remove(sid)
 	clearHook(sid)
 	launchGens.Remove(sid)
@@ -263,4 +263,6 @@ func (agentImpl) ClearResume(sid string) {
 // is purged from the trash (agents.SlotPurger). Command steps are keyed by conversation, which
 // only the slot's sid file (or, before the poll adopted it, the launch's hook record) names, so
 // this has to run while those files still exist.
-func (agentImpl) PurgeSlot(m session.Meta) { dropSlotCommandSteps(session.UUID(m.Dir, m.Name)) }
+func (agentImpl) PurgeSlot(m session.Meta, trashed []session.Meta) {
+	dropSlotCommandSteps(session.UUID(m.Dir, m.Name), trashed)
+}

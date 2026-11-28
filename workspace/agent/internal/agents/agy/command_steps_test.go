@@ -198,7 +198,7 @@ func TestClearResumeAndPurgeSlotRemoveTheConversationsCommandSteps(t *testing.T)
 	const other = "10111213-1415-4617-9819-1a1b1c1d1e1f"
 	drops := map[string]func(session.Meta){
 		"ClearResume": func(m session.Meta) { agentImpl{}.ClearResume(session.UUID(m.Dir, m.Name)) },
-		"PurgeSlot":   func(m session.Meta) { agentImpl{}.PurgeSlot(m) },
+		"PurgeSlot":   func(m session.Meta) { agentImpl{}.PurgeSlot(m, nil) },
 	}
 	write := func(t *testing.T, ids ...string) {
 		t.Helper()
@@ -253,6 +253,24 @@ func TestClearResumeAndPurgeSlotRemoveTheConversationsCommandSteps(t *testing.T)
 			drop(sibling)
 			if exists(conv) {
 				t.Fatal("the steps stayed after the last slot naming the conversation was dropped")
+			}
+		})
+		t.Run(name+"/the sharing slot is only in the trash", func(t *testing.T) {
+			m, sid := hookFixture(t, "slot-purge")
+			trashed := session.Meta{Dir: m.Dir, Name: "slot-trashed", Kind: session.KindAgy} // no live meta
+			sids.Write(sid, conv)
+			sids.Write(session.UUID(trashed.Dir, trashed.Name), conv)
+			write(t, conv)
+			if name == "PurgeSlot" {
+				agentImpl{}.PurgeSlot(m, []session.Meta{trashed})
+				if !exists(conv) {
+					t.Fatal("the steps went although a trashed slot still names the conversation")
+				}
+				session.RemoveMeta(m.Name) // purged: its meta is gone
+				agentImpl{}.PurgeSlot(trashed, nil)
+				if exists(conv) {
+					t.Fatal("the steps stayed after the last slot naming the conversation was purged")
+				}
 			}
 		})
 		t.Run(name+"/never launched", func(t *testing.T) {

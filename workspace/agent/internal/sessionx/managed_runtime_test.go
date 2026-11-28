@@ -97,7 +97,7 @@ func TestManagedRuntimeWithoutHandle(t *testing.T) {
 				kind, ManagedAlive(m), managedBusy(m), managedInFlight(m))
 		}
 		dropManagedRuntime(m)
-		removeManagedLedger(m)
+		removeManagedLedger(m, nil)
 	}
 }
 
@@ -151,7 +151,7 @@ func TestManagedRuntimeWrappersPassThrough(t *testing.T) {
 	}
 	f.calls = nil
 	dropManagedRuntime(m)
-	removeManagedLedger(m)
+	removeManagedLedger(m, nil)
 	if want := []string{"drop rt-probe", "removeLedger rt-probe"}; !slices.Equal(f.calls, want) {
 		t.Errorf("calls %q, want %q", f.calls, want)
 	}

@@ -634,6 +634,55 @@ func TestPurgeDropsAgyCommandStepsOnceNoArchiveHoldsTheSession(t *testing.T) {
 	}
 }
 
+// A slot that adopted a sibling's conversation id shares its command steps. When the sibling is
+// only in the trash (no live meta), purging this slot's archive must keep them; purging the
+// sibling's is what removes them.
+func TestPurgeKeepsAgyCommandStepsASharedConversationNeedsInTheTrash(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	const conv = "00010203-0405-4607-8809-0a0b0c0d0e0f"
+	a := session.Meta{Name: "agyA001", Dir: home, Kind: session.KindAgy}
+	b := session.Meta{Name: "agyB001", Dir: home, Kind: session.KindAgy}
+	for _, m := range []session.Meta{a, b} {
+		agents.NewSidStore("agy-sid").Write(session.UUID(m.Dir, m.Name), conv)
+	}
+	stepsDir := filepath.Join(paths.AgentStateDir(), "agy-command-steps", conv)
+	if err := os.MkdirAll(stepsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stepsDir, "4.txt"), []byte("ls"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(m session.Meta, sec int) string {
+		at := time.Date(2026, 8, 1, 0, 0, sec, 0, time.UTC)
+		man := cleanupManifest{ID: newCleanupID(at, m.Name), At: at.Format(time.RFC3339), Reason: "delete_session",
+			Sessions: []cleanupArchivedSession{{Name: m.Name, Kind: m.Kind, Meta: marshalMeta(m)}}}
+		if err := writeCleanupArchive(&man, nil); err != nil {
+			t.Fatal(err)
+		}
+		return man.ID
+	}
+	idA, idB := mk(a, 0), mk(b, 1)
+
+	man, err := purgeCleanupArchive(idB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropPurgedLedgers([]cleanupManifest{man})
+	if _, err := os.Stat(stepsDir); err != nil {
+		t.Fatal("the command steps went although the trashed sibling still names the conversation")
+	}
+	man, err = purgeCleanupArchive(idA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropPurgedLedgers([]cleanupManifest{man})
+	if _, err := os.Stat(stepsDir); err == nil {
+		t.Fatal("the command steps stayed after the last slot naming the conversation was purged")
+	}
+}
+
 // The Agent's backup of a session's transcript (claude.BackupTranscript) is removed when the
 // session is deleted, and a session whose own log was already gone does not lose its
 // conversation in the same step: the cleanup archive carries the backup, and restoring it puts
