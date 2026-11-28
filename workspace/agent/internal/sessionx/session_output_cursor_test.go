@@ -200,11 +200,12 @@ func TestOutputStepIndexedCursorSurvivesInsertedTurn(t *testing.T) {
 }
 
 // A growing assistant turn is re-read from the previous turn's end while working, so the next
-// read starts at or before it (Idx >= since) and sees the rest; once idle the cursor moves past it.
+// read starts at its own Idx (Idx == since: its prompt sits at 40, as in native agy transcripts)
+// and sees the rest; once idle the cursor moves past it.
 func TestOutputStepIndexedGrowingTurnResumesAtItsIndex(t *testing.T) {
 	turns := []transcript.Turn{
 		{Role: "user", Idx: 40, Text: "go"},
-		{Role: "assistant", Idx: 81, Text: "part one"},
+		{Role: "assistant", Idx: 41, Text: "part one"},
 	}
 	state := "working"
 	m := stepFixture(t, "agy_step_grow", &turns, &state)
@@ -221,7 +222,7 @@ func TestOutputStepIndexedGrowingTurnResumesAtItsIndex(t *testing.T) {
 	turns[1].Text = "part one and two and three"
 	state = "idle"
 	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
-	if out != "part one and two and three" || cur != stepCursorBase+82 {
+	if out != "part one and two and three" || cur != stepCursorBase+42 {
 		t.Fatalf("idle read = %q cursor %d, want the final text and index 82", out, cur)
 	}
 	if out, _ = outputRead(t, m.Name, "since="+strconv.Itoa(cur)); out != "" {
