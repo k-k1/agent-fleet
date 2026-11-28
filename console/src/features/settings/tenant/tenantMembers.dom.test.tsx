@@ -206,6 +206,17 @@ describe("member limit editing", () => {
     await openEditor();
     expect(host?.textContent).toContain("0 = テナントの既定値（8 件）");
     expect(host?.textContent).not.toContain("（7 件）");
+    // A later save with an override says nothing about the default: the 8 stays known.
+    const again = host!.querySelector<HTMLInputElement>("#md-memo-run-limit")!;
+    apiJSON.mockResolvedValue({ memo_run_limit: 3, memo_run_limit_effective: 3 });
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(again, "3");
+      again.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => buttonWith("保存")!.click());
+    await openEditor();
+    expect(host?.textContent).toContain("0 = テナントの既定値（8 件）");
+    expect(host?.textContent).not.toContain("（7 件）");
   });
 
   it("states no override for a member on the tenant default, and rejects values above 10", async () => {
