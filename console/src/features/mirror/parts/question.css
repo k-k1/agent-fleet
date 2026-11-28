@@ -90,7 +90,11 @@
   margin-top: 6px;
   font-size: 12px;
 }
+/* opacity: 1 beats the mirror shell's generic `button:disabled { opacity: 0.4 }`, which is scoped
+   with :where() and so loses to this selector. Without it the answered card's text fades to about
+   2:1 in the light theme. */
 .mq-opt:disabled {
+  opacity: 1;
   cursor: default;
 }
 /* An inert option that is not picked (answered card, terminal-only menu, a send in flight) is
