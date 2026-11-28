@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
 import { DATETIME_FULL, fmtDateTime } from "../../../lib/intl.ts";
@@ -7,10 +7,8 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import type { SessionWatch } from "../../../core/api/client.ts";
 import { openWorkItemUrl } from "../../workitems/openUrl.ts";
 import { elapsedShort } from "./BackgroundShellsPanel.tsx";
-import { makeSessionLink } from "../../viewer/parts/mdRefLinks.ts";
-import { useSessionLinkMenu } from "../../sessions/SessionLinkMenu.tsx";
+import { SessionRefLink } from "../../sessions/SessionRefLink.tsx";
 import { useSessionsStore } from "../../sessions/store.ts";
-import { openSessionChat, openSessionChatSplit } from "../../sessions/open.ts";
 
 /** parseWatches keeps the well-formed entries of a messages payload's `watches`. */
 export function parseWatches(v: unknown): SessionWatch[] {
@@ -258,41 +256,16 @@ export function WatchesPanel({
   );
 }
 
-/** SessionRef shows a fleet watch's ref, the name of the session it waits on, as the same link a
- *  Markdown reply gives a session slug: built by makeSessionLink, so a click, a modified click,
- *  the context menu and the tooltip cannot drift from the transcript's. A session that no longer
- *  exists stays plain text, as it does in the transcript. */
+/** SessionRef shows a fleet watch's ref, the name of the session it waits on, as the shared
+ *  session link (SessionRefLink), followed by the session's display name and branch. A session
+ *  that no longer exists stays plain text. */
 function SessionRef({ name }: { name: string }) {
   const session = useSessionsStore((st) => st.sessions.find((s) => s.name === name));
-  const exists = session !== undefined;
-  const openMenu = useSessionLinkMenu();
-  const menuRef = useRef(openMenu);
-  menuRef.current = openMenu;
-  const hasMenu = openMenu !== null;
-  const host = useRef<HTMLSpanElement>(null);
-  useLayoutEffect(() => {
-    const el = host.current;
-    if (!el || !exists) return;
-    const a = makeSessionLink(
-      name,
-      (n, openInNew) => (openInNew ? openSessionChatSplit(n) : openSessionChat(n)),
-      hasMenu ? (n, x, y) => menuRef.current?.(n, x, y) : undefined,
-    );
-    a.classList.add("mw-ref");
-    el.append(a);
-    return () => a.remove();
-  }, [name, exists, hasMenu]);
-  if (!session) {
-    return (
-      <span key="text" className="mw-ref" title={name}>
-        {name}
-      </span>
-    );
-  }
+  if (!session) return <SessionRefLink name={name} className="mw-ref" />;
   const branch = session.currentBranch || session.branch;
   return (
     <span className="mw-fleet-ref">
-      <span ref={host} className="md-ref-host" />{" "}
+      <SessionRefLink name={name} className="mw-ref" />{" "}
       <span>{displayName(session)}</span>
       {branch && <>{" "}<span className="mw-fleet-branch">{branch}</span></>}
     </span>

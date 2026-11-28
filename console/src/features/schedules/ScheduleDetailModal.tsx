@@ -11,7 +11,7 @@
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { MouseEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -43,6 +43,10 @@ import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { workItemList } from "../workitems/api.ts";
 import { readWorkItems, type WorkItemQuery } from "../workitems/read.ts";
 import { openSessionFromList } from "../sessions/open.ts";
+import { SessionRefLink } from "../sessions/SessionRefLink.tsx";
+import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
+import { useIsMobile } from "../../lib/device.ts";
+import { useChromeBottom } from "../../ui/useChromeBottom.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 
 // The agent kinds this picker offers come from the registry cap (AgentCaps.scheduledRuns),
@@ -75,6 +79,14 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const [busy, setBusy] = useState(false);
   const [viewingSession, setViewingSession] = useState(false);
   const returnToEditRef = useRef<HTMLButtonElement>(null);
+  // Closes a session menu open over the form; see onBack below.
+  const closeMenuRef = useRef<(() => boolean) | null>(null);
+  // On a phone the opened session's composer and send button are at the bottom right, where the
+  // return button sits on a desktop. It goes below the top bars instead, like the toasts, and is
+  // marked as a floor so that a toast lands under it rather than over it (a toast is in front of
+  // the button and a sticky one would keep it from being tapped).
+  const phone = useIsMobile();
+  const returnTop = useChromeBottom(phone && viewingSession, undefined, returnToEditRef);
   useEffect(() => {
     // Run after the departing modal's focus trap restores focus to its opener.
     returnToEditRef.current?.focus();
@@ -258,9 +270,13 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
         ? tr("sched.spec_hint_once")
         : tr("sched.spec_hint_cron");
 
-  function openReuseSession(name: string, e: MouseEvent<HTMLButtonElement>) {
+  // The target is looked up when the link is used, not when it is drawn: the list may have moved
+  // on. SessionRefLink only draws a link for a session the list has, so a miss here is a session
+  // that just went; one the list has but that cannot be opened (a stopped session with no
+  // transcript and no folder) gets the same toast.
+  function openReuseSession(name: string, openInNew: boolean) {
     const target = useSessionsStore.getState().sessions.find((session) => session.name === name);
-    if (!target || !openSessionFromList(target, e.ctrlKey || e.metaKey, running)) {
+    if (!target || !openSessionFromList(target, openInNew, running)) {
       toast(tr("sched.reuse_unavailable", { name }), { kind: "warn" });
       return;
     }
@@ -268,16 +284,15 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
     else onClose();
   }
 
-  const reuseSessionLink = (name?: string) => name && (
-    <button type="button" className="sched-reuse-link" onClick={(e) => openReuseSession(name, e)}>
-      {name}
-    </button>
-  );
+  const reuseSessionLink = (name?: string) => name && <SessionRefLink name={name} onOpen={openReuseSession} />;
 
   // Keep the form state mounted while letting the session pane take focus.
   if (viewingSession) {
     return createPortal(
-      <Button ref={returnToEditRef} type="button" variant="primary" className="sched-return-to-edit" onClick={() => setViewingSession(false)}>
+      <Button ref={returnToEditRef} type="button" variant="primary" className={"sched-return-to-edit" + (phone ? " sched-return-phone" : "")}
+        data-toast-floor={phone ? "" : undefined}
+        style={phone && returnTop != null ? { top: returnTop + 8 } : undefined}
+        onClick={() => setViewingSession(false)}>
         {tr("sched.return_to_edit", { name: scheduleTitle(s) })}
       </Button>,
       document.body,
@@ -285,359 +300,365 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   }
 
   return (
-    <Modal
-      title={tr("sched.detail_title", { name: scheduleTitle(s) })}
-      onClose={onClose}
-      className="sched-detail-modal"
-      as="form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void save();
-      }}
-      lockClose={busy}
-    >
-      <div className="ui-modal-body">
-        {s.approval_pending && (
-          <div className="sched-held-note" role="note">
-            {tr("sched.held_note")}
-          </div>
-        )}
-        <div className="ui-field">
-          <label className="ui-field-label" htmlFor="sched-label">
-            {tr("sched.f_label")}
-          </label>
-          <input {...NO_AUTOFILL}
-            id="sched-label"
-            type="text"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder={tr("sched.f_label_ph")}
-          />
-        </div>
-
-        <div className="ui-field-row">
-          <div className="ui-field sched-narrow">
-            <label className="ui-field-label" htmlFor="sched-kind">
-              {tr("sched.f_spec_kind")}
-            </label>
-            <select id="sched-kind" value={specKind} onChange={(e) => setSpecKind(e.target.value)}>
-              {SPEC_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="ui-field">
-            <FieldLabel htmlFor="sched-spec" info={specHint}>{tr("sched.f_spec")}</FieldLabel>
-            <input {...NO_AUTOFILL} id="sched-spec" type="text" value={spec} onChange={(e) => setSpec(e.target.value)} spellCheck={false} />
-          </div>
-        </div>
-
-        <div className="ui-field-row">
-          <div className="ui-field">
-            <label className="ui-field-label" htmlFor="sched-tz">
-              {tr("sched.f_tz")}
-            </label>
-            <input {...NO_AUTOFILL} id="sched-tz" type="text" value={tz} onChange={(e) => setTz(e.target.value)} placeholder="UTC" spellCheck={false} />
-          </div>
-          <div className="ui-field sched-narrow">
-            <label className="ui-field-label" htmlFor="sched-wake">
-              {tr("sched.f_wake")}
-            </label>
-            <select id="sched-wake" value={wake} onChange={(e) => setWake(e.target.value)}>
-              {WAKE_POLICIES.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="ui-field-row">
-          <div className="ui-field sched-narrow">
-            <label className="ui-field-label" htmlFor="sched-agent">
-              {tr("sched.f_agent")}
-            </label>
-            <select
-              id="sched-agent"
-              value={agent}
-              onChange={(e) => {
-                setAgent(e.target.value);
-                // A route belongs to one kind; the CP refuses a kind change that keeps another's.
-                setRouteKey("");
-              }}
-            >
-              {kinds.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="ui-field">
-            <label className="ui-field-label" htmlFor="sched-model">
-              {tr("sched.f_model")}
-            </label>
-            <input {...NO_AUTOFILL} id="sched-model" type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("sched.f_model_ph")} spellCheck={false} />
-          </div>
-        </div>
-
-        {s.session_mode !== "assistant" && (choices.length > 0 || storedHidden) && (
-          <div className="ui-field">
-            <FieldLabel htmlFor="sched-route" info={tr("sched.route_hint")}>{tr("sched.f_route")}</FieldLabel>
-            <select id="sched-route" value={routeKey} onChange={(e) => setRouteKey(e.target.value)}>
-              <option value="">{defaultLabel ? tr("sched.route_default_saved", { route: defaultLabel }) : tr("sched.route_none")}</option>
-              {storedHidden && <option value={storedKey}>{tr("sched.route_unavailable")}</option>}
-              {choices.map((c) => (
-                <option key={choiceKey(c)} value={choiceKey(c)}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {/* Completion-report opt-in (default off). Hidden for session_mode=assistant —
-            there the fire itself lands in the conversation, so a report is meaningless. */}
-        {s.session_mode !== "assistant" && (
-          <div className="ui-field">
-            <FieldLabel plain className="ui-field-check" info={tr("sched.f_report_hint")}>
-              <input type="checkbox" checked={report} onChange={(e) => setReport(e.target.checked)} />
-              <span>{tr("sched.f_report")}</span>
-            </FieldLabel>
-          </div>
-        )}
-
-        {/* Delivery targets (#1560): where the report goes. Only while reporting is on; an
-            empty choice is refused by canSave rather than saved as "report to nobody". */}
-        {s.session_mode !== "assistant" && report && (
-          <fieldset className="ui-field sched-targets">
-            <legend>
-              <FieldLabel as="span" info={tr("sched.f_deliver_to_hint")}>
-                {tr("sched.f_deliver_to")}
-              </FieldLabel>
-            </legend>
-            <div className="sched-target-list">
-              {DELIVERY_TARGETS.map((target) => (
-                <label key={target} className="sched-target">
-                  <input
-                    type="checkbox"
-                    checked={targets.includes(target)}
-                    onChange={(e) => toggleTarget(target, e.target.checked)}
-                  />
-                  <span>{tr(TARGET_LABELS[target])}</span>
-                </label>
-              ))}
+    // Session links get a context menu only under a host; none above the Schedules rail.
+    <SessionLinkMenuHost closeRef={closeMenuRef}>
+      <Modal
+        title={tr("sched.detail_title", { name: scheduleTitle(s) })}
+        onClose={onClose}
+        // The device's Back peels an open session menu first; without this it would close the
+        // dialog and the unsaved form with it.
+        onBack={() => (closeMenuRef.current?.() ? "hold" : onClose())}
+        className="sched-detail-modal"
+        as="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+        lockClose={busy}
+      >
+        <div className="ui-modal-body">
+          {s.approval_pending && (
+            <div className="sched-held-note" role="note">
+              {tr("sched.held_note")}
             </div>
-            {!targetsOk && <div className="ui-field-hint">{tr("sched.f_deliver_to_empty")}</div>}
-          </fieldset>
-        )}
-
-        {/* The silent sentinel (#1560), independent of the report: even with reporting off it
-            keeps a [SILENT] answer out of the notifications and marks the run as silent. */}
-        {s.session_mode !== "assistant" && (
+          )}
           <div className="ui-field">
-            <FieldLabel plain className="ui-field-check" info={tr("sched.f_silent_hint")}>
-              <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)} />
-              <span>{tr("sched.f_silent")}</span>
-            </FieldLabel>
+            <label className="ui-field-label" htmlFor="sched-label">
+              {tr("sched.f_label")}
+            </label>
+            <input {...NO_AUTOFILL}
+              id="sched-label"
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder={tr("sched.f_label_ph")}
+            />
           </div>
-        )}
 
-        {/* Stop-after-run opt-in (docs/log/85), default off. Hidden for
-            session_mode=assistant for the same reason as the report above: that mode drives a
-            conversation and holds no session to stop. */}
-        {s.session_mode !== "assistant" && (
-          <div className="ui-field">
-            <FieldLabel plain className="ui-field-check" info={tr("sched.f_stop_after_run_hint")}>
-              <input type="checkbox" checked={stopAfterRun} onChange={(e) => setStopAfterRun(e.target.checked)} />
-              <span>{tr("sched.f_stop_after_run")}</span>
-            </FieldLabel>
+          <div className="ui-field-row">
+            <div className="ui-field sched-narrow">
+              <label className="ui-field-label" htmlFor="sched-kind">
+                {tr("sched.f_spec_kind")}
+              </label>
+              <select id="sched-kind" value={specKind} onChange={(e) => setSpecKind(e.target.value)}>
+                {SPEC_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="ui-field">
+              <FieldLabel htmlFor="sched-spec" info={specHint}>{tr("sched.f_spec")}</FieldLabel>
+              <input {...NO_AUTOFILL} id="sched-spec" type="text" value={spec} onChange={(e) => setSpec(e.target.value)} spellCheck={false} />
+            </div>
           </div>
-        )}
 
-        {/* "Also show in the Sessions view", default off. Not offered for session_mode=assistant:
-            it holds no sessions with a worktree of their own for the flag to surface. */}
-        {s.session_mode !== "assistant" && (
-          <div className="ui-field">
-            <FieldLabel plain className="ui-field-check" info={showFits ? tr("sched.f_show_in_sessions_hint") : tr("sched.f_show_in_sessions_unfit")}>
-              <input
-                type="checkbox"
-                checked={showInSessions}
-                disabled={showLocked}
-                onChange={(e) => setShowInSessions(showFits ? e.target.checked : false)}
-              />
-              <span>{tr("sched.f_show_in_sessions")}</span>
-            </FieldLabel>
+          <div className="ui-field-row">
+            <div className="ui-field">
+              <label className="ui-field-label" htmlFor="sched-tz">
+                {tr("sched.f_tz")}
+              </label>
+              <input {...NO_AUTOFILL} id="sched-tz" type="text" value={tz} onChange={(e) => setTz(e.target.value)} placeholder="UTC" spellCheck={false} />
+            </div>
+            <div className="ui-field sched-narrow">
+              <label className="ui-field-label" htmlFor="sched-wake">
+                {tr("sched.f_wake")}
+              </label>
+              <select id="sched-wake" value={wake} onChange={(e) => setWake(e.target.value)}>
+                {WAKE_POLICIES.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        )}
 
-        <div className="ui-field">
-          <label className="ui-field-label" htmlFor="sched-prompt">
-            {tr("sched.f_prompt")}
-          </label>
-          <textarea {...NO_AUTOFILL}
-            id="sched-prompt"
-            className="sched-prompt"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            spellCheck={false}
-            rows={6}
-          />
-        </div>
+          <div className="ui-field-row">
+            <div className="ui-field sched-narrow">
+              <label className="ui-field-label" htmlFor="sched-agent">
+                {tr("sched.f_agent")}
+              </label>
+              <select
+                id="sched-agent"
+                value={agent}
+                onChange={(e) => {
+                  setAgent(e.target.value);
+                  // A route belongs to one kind; the CP refuses a kind change that keeps another's.
+                  setRouteKey("");
+                }}
+              >
+                {kinds.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="ui-field">
+              <label className="ui-field-label" htmlFor="sched-model">
+                {tr("sched.f_model")}
+              </label>
+              <input {...NO_AUTOFILL} id="sched-model" type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("sched.f_model_ph")} spellCheck={false} />
+            </div>
+          </div>
 
-        {showGate && (
-          <fieldset className="ui-field sched-gate">
-            <legend>
-              <FieldLabel as="span" info={tr("sched.gate_hint")}>
-                {tr("sched.gate_title")}
+          {s.session_mode !== "assistant" && (choices.length > 0 || storedHidden) && (
+            <div className="ui-field">
+              <FieldLabel htmlFor="sched-route" info={tr("sched.route_hint")}>{tr("sched.f_route")}</FieldLabel>
+              <select id="sched-route" value={routeKey} onChange={(e) => setRouteKey(e.target.value)}>
+                <option value="">{defaultLabel ? tr("sched.route_default_saved", { route: defaultLabel }) : tr("sched.route_none")}</option>
+                {storedHidden && <option value={storedKey}>{tr("sched.route_unavailable")}</option>}
+                {choices.map((c) => (
+                  <option key={choiceKey(c)} value={choiceKey(c)}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Completion-report opt-in (default off). Hidden for session_mode=assistant —
+              there the fire itself lands in the conversation, so a report is meaningless. */}
+          {s.session_mode !== "assistant" && (
+            <div className="ui-field">
+              <FieldLabel plain className="ui-field-check" info={tr("sched.f_report_hint")}>
+                <input type="checkbox" checked={report} onChange={(e) => setReport(e.target.checked)} />
+                <span>{tr("sched.f_report")}</span>
               </FieldLabel>
-            </legend>
-            {gateKnown ? (
-              <>
-                <label className="sched-target">
-                  <input
-                    type="checkbox"
-                    checked={gateForm.on}
-                    onChange={(e) => setGateForm((f) => ({ ...f, on: e.target.checked }))}
-                  />
-                  <span>{tr("sched.gate_enable")}</span>
-                </label>
-                {gateErr === "fit" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_unfit")}</div>}
-                {gateForm.on && (
-                  <>
-                    <div className="ui-field">
-                      <label className="ui-field-label" htmlFor="sched-gate-query">
-                        {tr("sched.gate_query")}
-                      </label>
-                      <select
-                        id="sched-gate-query"
-                        value={gateForm.queryId}
-                        onChange={(e) => setGateForm((f) => ({ ...f, queryId: e.target.value }))}
-                      >
-                        <option value="">{tr("sched.gate_query_ph")}</option>
-                        {/* The stored query stays selectable when the list does not hold it (not loaded yet,
-                            deleted since): otherwise the select would silently show "choose" and a save
-                            would point the gate somewhere else. */}
-                        {gateForm.queryId && !(queries ?? []).some((q) => q.id === gateForm.queryId) && (
-                          <option value={gateForm.queryId}>{tr("sched.gate_query_unknown", { id: gateForm.queryId })}</option>
-                        )}
-                        {(queries ?? []).map((q) => (
-                          <option key={q.id} value={q.id}>
-                            {q.label || q.query}
-                          </option>
-                        ))}
-                      </select>
-                      {queriesFailed && <div className="ui-field-hint">{tr("sched.gate_queries_failed")}</div>}
-                      {queries && queries.length === 0 && <div className="ui-field-hint">{tr("sched.gate_queries_none")}</div>}
-                      {gateErr === "query" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_query_pick")}</div>}
-                    </div>
-                    <div className="ui-field">
-                      <FieldLabel htmlFor="sched-gate-fp" info={tr("sched.gate_fp_hint")}>{tr("sched.gate_fingerprint")}</FieldLabel>
-                      <select
-                        id="sched-gate-fp"
-                        value={gateForm.fingerprint}
-                        onChange={(e) => setGateForm((f) => ({ ...f, fingerprint: e.target.value }))}
-                      >
-                        <option value="keys">{tr("sched.gate_fp_keys")}</option>
-                        <option value="keys+updated">{tr("sched.gate_fp_updated")}</option>
-                      </select>
-                    </div>
-                    <div className="ui-field-row">
-                      <div className="ui-field sched-narrow">
-                        <label className="ui-field-label" htmlFor="sched-gate-max">
-                          {tr("sched.gate_max_fires")}
-                        </label>
-                        <input {...NO_AUTOFILL}
-                          id="sched-gate-max"
-                          type="text"
-                          inputMode="numeric"
-                          value={gateForm.maxFires}
-                          placeholder="2"
-                          onChange={(e) => setGateForm((f) => ({ ...f, maxFires: e.target.value }))}
-                        />
-                      </div>
-                      <div className="ui-field sched-narrow">
-                        <label className="ui-field-label" htmlFor="sched-gate-gap">
-                          {tr("sched.gate_min_gap")}
-                        </label>
-                        <input {...NO_AUTOFILL}
-                          id="sched-gate-gap"
-                          type="text"
-                          inputMode="numeric"
-                          value={gateForm.minGap}
-                          placeholder="21600"
-                          onChange={(e) => setGateForm((f) => ({ ...f, minGap: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-                    <div className="ui-field-hint" data-invalid={gateErr === "caps" || undefined}>
-                      {tr("sched.gate_caps_hint")}
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="ui-field-hint">{tr("sched.gate_unsupported", { kind: s.gate?.kind ?? "" })}</div>
-            )}
-            {s.gate && <GateLastLine gate={s.gate} />}
-          </fieldset>
-        )}
+            </div>
+          )}
 
-        {/* Read-only: the advanced execution fields, changed via the operator chat. */}
-        <div className="sched-readonly">
-          <div className="sched-readonly-head">{tr("sched.detail_readonly")}</div>
-          <dl className="sched-dl">
-            <ReadRow label={tr("sched.f_session_mode")} value={s.session_mode} />
-            {s.session_mode === "reuse" && (
-              <>
-                <ReadRow label={tr("sched.f_reuse_target")} value={reuseSessionLink(s.reuse_target)} />
-                <ReadRow
-                  label={tr("sched.f_reuse_session")}
-                  value={s.reuse_session === s.reuse_target ? s.reuse_session : reuseSessionLink(s.reuse_session)}
+          {/* Delivery targets (#1560): where the report goes. Only while reporting is on; an
+              empty choice is refused by canSave rather than saved as "report to nobody". */}
+          {s.session_mode !== "assistant" && report && (
+            <fieldset className="ui-field sched-targets">
+              <legend>
+                <FieldLabel as="span" info={tr("sched.f_deliver_to_hint")}>
+                  {tr("sched.f_deliver_to")}
+                </FieldLabel>
+              </legend>
+              <div className="sched-target-list">
+                {DELIVERY_TARGETS.map((target) => (
+                  <label key={target} className="sched-target">
+                    <input
+                      type="checkbox"
+                      checked={targets.includes(target)}
+                      onChange={(e) => toggleTarget(target, e.target.checked)}
+                    />
+                    <span>{tr(TARGET_LABELS[target])}</span>
+                  </label>
+                ))}
+              </div>
+              {!targetsOk && <div className="ui-field-hint">{tr("sched.f_deliver_to_empty")}</div>}
+            </fieldset>
+          )}
+
+          {/* The silent sentinel (#1560), independent of the report: even with reporting off it
+              keeps a [SILENT] answer out of the notifications and marks the run as silent. */}
+          {s.session_mode !== "assistant" && (
+            <div className="ui-field">
+              <FieldLabel plain className="ui-field-check" info={tr("sched.f_silent_hint")}>
+                <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)} />
+                <span>{tr("sched.f_silent")}</span>
+              </FieldLabel>
+            </div>
+          )}
+
+          {/* Stop-after-run opt-in (docs/log/85), default off. Hidden for
+              session_mode=assistant for the same reason as the report above: that mode drives a
+              conversation and holds no session to stop. */}
+          {s.session_mode !== "assistant" && (
+            <div className="ui-field">
+              <FieldLabel plain className="ui-field-check" info={tr("sched.f_stop_after_run_hint")}>
+                <input type="checkbox" checked={stopAfterRun} onChange={(e) => setStopAfterRun(e.target.checked)} />
+                <span>{tr("sched.f_stop_after_run")}</span>
+              </FieldLabel>
+            </div>
+          )}
+
+          {/* "Also show in the Sessions view", default off. Not offered for session_mode=assistant:
+              it holds no sessions with a worktree of their own for the flag to surface. */}
+          {s.session_mode !== "assistant" && (
+            <div className="ui-field">
+              <FieldLabel plain className="ui-field-check" info={showFits ? tr("sched.f_show_in_sessions_hint") : tr("sched.f_show_in_sessions_unfit")}>
+                <input
+                  type="checkbox"
+                  checked={showInSessions}
+                  disabled={showLocked}
+                  onChange={(e) => setShowInSessions(showFits ? e.target.checked : false)}
                 />
-                <ReadRow label={tr("sched.f_overlap")} value={s.overlap_policy} />
-                <ReadRow label={tr("sched.f_rotation")} value={s.rotation} />
-                <ReadRow label={tr("sched.f_missing")} value={s.missing_target_policy} />
-              </>
-            )}
-            {s.approval_pending && s.session_mode !== "assistant" && s.report && scheduleTargets(s).includes("operator") && (
-              <ReadRow label={tr("sched.f_report_conv")} value={s.owner_conv} />
-            )}
-            {s.session_mode === "assistant" && (
-              <ReadRow label={tr("sched.f_assistant_conv")} value={s.reuse_target || s.owner_conv} />
-            )}
-            <ReadRow label={tr("sched.f_repo")} value={s.repo} />
-            {s.worktree && <ReadRow label={tr("sched.f_worktree")} value={s.worktree} />}
-            <ReadRow label={tr("sched.f_next")} value={s.approval_pending ? tr("sched.held_tag") : s.enabled ? nextRunDetail(s) : tr("sched.paused_tag")} />
-            <ReadRow label={tr("sched.f_last_status")} value={s.last_status} />
-            <ReadRow label={tr("sched.f_updated")} value={s.updated_at} />
-          </dl>
-        </div>
-      </div>
+                <span>{tr("sched.f_show_in_sessions")}</span>
+              </FieldLabel>
+            </div>
+          )}
 
-      <footer className="ui-modal-foot">
-        <Button variant="ghost" onClick={onClose} type="button">
-          {tr("common.cancel")}
-        </Button>
-        {s.approval_pending && (
-          <Button
-            variant="primary"
-            disabled={busy || dirty}
-            type="button"
-            title={dirty ? tr("sched.approve_save_first") : undefined}
-            onClick={() => void approve()}
-          >
-            {tr("sched.approve")}
+          <div className="ui-field">
+            <label className="ui-field-label" htmlFor="sched-prompt">
+              {tr("sched.f_prompt")}
+            </label>
+            <textarea {...NO_AUTOFILL}
+              id="sched-prompt"
+              className="sched-prompt"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              spellCheck={false}
+              rows={6}
+            />
+          </div>
+
+          {showGate && (
+            <fieldset className="ui-field sched-gate">
+              <legend>
+                <FieldLabel as="span" info={tr("sched.gate_hint")}>
+                  {tr("sched.gate_title")}
+                </FieldLabel>
+              </legend>
+              {gateKnown ? (
+                <>
+                  <label className="sched-target">
+                    <input
+                      type="checkbox"
+                      checked={gateForm.on}
+                      onChange={(e) => setGateForm((f) => ({ ...f, on: e.target.checked }))}
+                    />
+                    <span>{tr("sched.gate_enable")}</span>
+                  </label>
+                  {gateErr === "fit" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_unfit")}</div>}
+                  {gateForm.on && (
+                    <>
+                      <div className="ui-field">
+                        <label className="ui-field-label" htmlFor="sched-gate-query">
+                          {tr("sched.gate_query")}
+                        </label>
+                        <select
+                          id="sched-gate-query"
+                          value={gateForm.queryId}
+                          onChange={(e) => setGateForm((f) => ({ ...f, queryId: e.target.value }))}
+                        >
+                          <option value="">{tr("sched.gate_query_ph")}</option>
+                          {/* The stored query stays selectable when the list does not hold it (not loaded yet,
+                              deleted since): otherwise the select would silently show "choose" and a save
+                              would point the gate somewhere else. */}
+                          {gateForm.queryId && !(queries ?? []).some((q) => q.id === gateForm.queryId) && (
+                            <option value={gateForm.queryId}>{tr("sched.gate_query_unknown", { id: gateForm.queryId })}</option>
+                          )}
+                          {(queries ?? []).map((q) => (
+                            <option key={q.id} value={q.id}>
+                              {q.label || q.query}
+                            </option>
+                          ))}
+                        </select>
+                        {queriesFailed && <div className="ui-field-hint">{tr("sched.gate_queries_failed")}</div>}
+                        {queries && queries.length === 0 && <div className="ui-field-hint">{tr("sched.gate_queries_none")}</div>}
+                        {gateErr === "query" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_query_pick")}</div>}
+                      </div>
+                      <div className="ui-field">
+                        <FieldLabel htmlFor="sched-gate-fp" info={tr("sched.gate_fp_hint")}>{tr("sched.gate_fingerprint")}</FieldLabel>
+                        <select
+                          id="sched-gate-fp"
+                          value={gateForm.fingerprint}
+                          onChange={(e) => setGateForm((f) => ({ ...f, fingerprint: e.target.value }))}
+                        >
+                          <option value="keys">{tr("sched.gate_fp_keys")}</option>
+                          <option value="keys+updated">{tr("sched.gate_fp_updated")}</option>
+                        </select>
+                      </div>
+                      <div className="ui-field-row">
+                        <div className="ui-field sched-narrow">
+                          <label className="ui-field-label" htmlFor="sched-gate-max">
+                            {tr("sched.gate_max_fires")}
+                          </label>
+                          <input {...NO_AUTOFILL}
+                            id="sched-gate-max"
+                            type="text"
+                            inputMode="numeric"
+                            value={gateForm.maxFires}
+                            placeholder="2"
+                            onChange={(e) => setGateForm((f) => ({ ...f, maxFires: e.target.value }))}
+                          />
+                        </div>
+                        <div className="ui-field sched-narrow">
+                          <label className="ui-field-label" htmlFor="sched-gate-gap">
+                            {tr("sched.gate_min_gap")}
+                          </label>
+                          <input {...NO_AUTOFILL}
+                            id="sched-gate-gap"
+                            type="text"
+                            inputMode="numeric"
+                            value={gateForm.minGap}
+                            placeholder="21600"
+                            onChange={(e) => setGateForm((f) => ({ ...f, minGap: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                      <div className="ui-field-hint" data-invalid={gateErr === "caps" || undefined}>
+                        {tr("sched.gate_caps_hint")}
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <div className="ui-field-hint">{tr("sched.gate_unsupported", { kind: s.gate?.kind ?? "" })}</div>
+              )}
+              {s.gate && <GateLastLine gate={s.gate} />}
+            </fieldset>
+          )}
+
+          {/* Read-only: the advanced execution fields, changed via the operator chat. */}
+          <div className="sched-readonly">
+            <div className="sched-readonly-head">{tr("sched.detail_readonly")}</div>
+            <dl className="sched-dl">
+              <ReadRow label={tr("sched.f_session_mode")} value={s.session_mode} />
+              {s.session_mode === "reuse" && (
+                <>
+                  <ReadRow label={tr("sched.f_reuse_target")} value={reuseSessionLink(s.reuse_target)} />
+                  <ReadRow
+                    label={tr("sched.f_reuse_session")}
+                    value={s.reuse_session === s.reuse_target ? s.reuse_session : reuseSessionLink(s.reuse_session)}
+                  />
+                  <ReadRow label={tr("sched.f_overlap")} value={s.overlap_policy} />
+                  <ReadRow label={tr("sched.f_rotation")} value={s.rotation} />
+                  <ReadRow label={tr("sched.f_missing")} value={s.missing_target_policy} />
+                </>
+              )}
+              {s.approval_pending && s.session_mode !== "assistant" && s.report && scheduleTargets(s).includes("operator") && (
+                <ReadRow label={tr("sched.f_report_conv")} value={s.owner_conv} />
+              )}
+              {s.session_mode === "assistant" && (
+                <ReadRow label={tr("sched.f_assistant_conv")} value={s.reuse_target || s.owner_conv} />
+              )}
+              <ReadRow label={tr("sched.f_repo")} value={s.repo} />
+              {s.worktree && <ReadRow label={tr("sched.f_worktree")} value={s.worktree} />}
+              <ReadRow label={tr("sched.f_next")} value={s.approval_pending ? tr("sched.held_tag") : s.enabled ? nextRunDetail(s) : tr("sched.paused_tag")} />
+              <ReadRow label={tr("sched.f_last_status")} value={s.last_status} />
+              <ReadRow label={tr("sched.f_updated")} value={s.updated_at} />
+            </dl>
+          </div>
+        </div>
+
+        <footer className="ui-modal-foot">
+          <Button variant="ghost" onClick={onClose} type="button">
+            {tr("common.cancel")}
           </Button>
-        )}
-        <Button variant={s.approval_pending ? "ghost" : "primary"} disabled={!canSave} type="submit">
-          {tr("common.save")}
-        </Button>
-      </footer>
-    </Modal>
+          {s.approval_pending && (
+            <Button
+              variant="primary"
+              disabled={busy || dirty}
+              type="button"
+              title={dirty ? tr("sched.approve_save_first") : undefined}
+              onClick={() => void approve()}
+            >
+              {tr("sched.approve")}
+            </Button>
+          )}
+          <Button variant={s.approval_pending ? "ghost" : "primary"} disabled={!canSave} type="submit">
+            {tr("common.save")}
+          </Button>
+        </footer>
+      </Modal>
+    </SessionLinkMenuHost>
   );
 }
 

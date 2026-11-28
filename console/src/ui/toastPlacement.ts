@@ -8,6 +8,13 @@
 // data-toast-chrome. A second pane's header lower down is not part of the run and is left out below.
 export const TOAST_CHROME_SELECTOR = ".topbar, .popout-titlebar, .wsbar, .pane-tabs, .view-head, [data-toast-chrome]";
 
+// A floating control that is not one of the bars but that a toast must still stay below, wherever
+// the run of bars ends: the schedule editor's "return to editing" button. The run stops at the
+// first bar of a second pane, and with a pane shrunk under a soft keyboard such a control can sit
+// past that bar, out of the run's reach; a floor is applied after the run, so it still counts.
+export const TOAST_FLOOR_SELECTOR = "[data-toast-floor]";
+const WATCHED_SELECTOR = `${TOAST_CHROME_SELECTOR}, ${TOAST_FLOOR_SELECTOR}`;
+
 // How far apart two bars of one run can be. Measured at 390x844: wsbar → pane header 7px, and the
 // image studio's tab strip → the header of the session embedded under it 36px (column padding).
 // A second pane's header is half a screen further down.
@@ -46,12 +53,21 @@ export function chromeBottom(boxes: Box[], viewportWidth: number): number {
   return y;
 }
 
-export function measureChromeBottom(doc: Document = document): number {
-  const boxes = [...doc.querySelectorAll(TOAST_CHROME_SELECTOR)].map((e) => {
+// `ignore` leaves one element (and what it holds) out: a floating element that places itself under
+// the bars must not count itself, or each measurement would push it down by its own height.
+export function measureChromeBottom(doc: Document = document, ignore?: Element | null): number {
+  const counts = (e: Element) => !ignore || !ignore.contains(e);
+  const boxes = [...doc.querySelectorAll(TOAST_CHROME_SELECTOR)].filter(counts).map((e) => {
     const r = e.getBoundingClientRect();
     return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, pane: e.closest(".pane") ?? undefined };
   });
-  return chromeBottom(boxes, doc.documentElement.clientWidth || window.innerWidth);
+  let bottom = chromeBottom(boxes, doc.documentElement.clientWidth || window.innerWidth);
+  for (const e of doc.querySelectorAll(TOAST_FLOOR_SELECTOR)) {
+    if (!counts(e)) continue;
+    const r = e.getBoundingClientRect();
+    if (r.bottom > r.top) bottom = Math.max(bottom, r.bottom);
+  }
+  return bottom;
 }
 
 // touchesChrome says whether a batch of DOM mutations can have moved the bars: a bar added,
@@ -60,7 +76,7 @@ export function measureChromeBottom(doc: Document = document): number {
 // transcript grows by the token — and measuring for it would force a layout each frame
 // (panes.css records a 20s profile spent that way). Selector matching only; no layout here.
 export function touchesChrome(records: MutationRecord[]): boolean {
-  const hasBar = (n: Node) => n instanceof Element && (n.matches(TOAST_CHROME_SELECTOR) || n.querySelector(TOAST_CHROME_SELECTOR) != null);
+  const hasBar = (n: Node) => n instanceof Element && (n.matches(WATCHED_SELECTOR) || n.querySelector(WATCHED_SELECTOR) != null);
   for (const r of records) {
     if (r.type === "attributes") {
       if (hasBar(r.target)) return true;

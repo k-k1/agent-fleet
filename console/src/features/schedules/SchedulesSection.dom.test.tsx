@@ -85,7 +85,7 @@ describe("SchedulesSection reuse editor", () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Unsaved");
       label.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await act(async () => document.querySelector<HTMLButtonElement>(".sched-reuse-link")!.click());
+    await act(async () => document.querySelector<HTMLElement>(".sched-dd .md-session-link")!.click());
     expect(returnButton()).not.toBeNull();
   }
 
