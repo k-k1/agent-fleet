@@ -224,8 +224,12 @@ func TestPersistTurnEndStampsWhenNothingObservedItFirst(t *testing.T) {
 	PersistTurnEnd(sid, "idle")
 
 	st, _ := Read(sid)
-	if st.TurnEndAt == "" || st.TurnEndAt != st.TS {
-		t.Fatalf("a hook-route end of turn carries no time: %+v", st)
+	// TurnEndAt keeps sub-second precision (its own test below); TS is the record's
+	// whole-second stamp, so the two agree to within the second boundary.
+	at, err := time.Parse(time.RFC3339Nano, st.TurnEndAt)
+	ts, err2 := time.Parse(time.RFC3339, st.TS)
+	if err != nil || err2 != nil || at.Sub(ts).Abs() >= 2*time.Second {
+		t.Fatalf("a hook-route end of turn carries no usable time: %+v (%v, %v)", st, err, err2)
 	}
 }
 
@@ -337,5 +341,42 @@ func TestPolledCompletionsInSameSecondHaveDistinctKeys(t *testing.T) {
 	key2, _ := ReadCompletionKey(sid)
 	if key1 == "" || key1 == key2 {
 		t.Fatalf("completion keys = %q, %q", key1, key2)
+	}
+}
+
+// A turn end no poll observed (the Stop hook, MarkTurnEnd) is stamped with sub-second
+// precision: TurnEndAt is the answer-ready completion key, and two turns that end within one
+// second on the hook / Managed path must not share a notification id.
+func TestPersistTurnEndStampsDistinctKeysForTwoTurnsInOneSecond(t *testing.T) {
+	const sid = "slot-hook-precision"
+	t.Setenv("HOME", t.TempDir())
+
+	end := func() string {
+		Persist(sid, "working")
+		PersistTurnEnd(sid, "idle")
+		st, _ := Read(sid)
+		key, ok := ReadCompletionKey(sid)
+		if !ok || key != st.TurnEndAt {
+			t.Fatalf("completion key %q (ok=%v) must equal TurnEndAt %q", key, ok, st.TurnEndAt)
+		}
+		RemoveCompletionKey(sid) // what the next UserPromptSubmit does
+		return st.TurnEndAt
+	}
+	first := end()
+	second := end()
+
+	if first == second {
+		t.Fatalf("two turn ends share one stamp %q", first)
+	}
+	for _, at := range []string{first, second} {
+		if _, err := time.Parse(time.RFC3339Nano, at); err != nil {
+			t.Fatalf("stamp %q must stay parseable as RFC 3339: %v", at, err)
+		}
+	}
+	// Time can step back only by a clock fault; the ordering of two stamps is what readers use.
+	a, _ := time.Parse(time.RFC3339Nano, first)
+	b, _ := time.Parse(time.RFC3339Nano, second)
+	if !b.After(a) {
+		t.Fatalf("second stamp %q is not after first %q", second, first)
 	}
 }

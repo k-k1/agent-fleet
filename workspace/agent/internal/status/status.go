@@ -40,7 +40,8 @@ type SessionStatus struct {
 	// unknown and the report waits for the next real end-of-turn (a miss costs a delay, a
 	// wrong answer costs a misdelivered report).
 	TurnEnd bool `json:"turnEnd,omitempty"`
-	// TurnEndAt is WHEN this turn ended (RFC3339) — the source of the listing's
+	// TurnEndAt is WHEN this turn ended (RFC3339 with nanoseconds, so it can double as the
+	// completion key: two turns ending in one second must not share a notification id) — the source of the listing's
 	// lastTurnEndAt (docs/log/89 §89.3). Set by PersistTurnEnd alongside TurnEnd, so it
 	// carries exactly that bit's evidence, and it is a field of its own because the value
 	// can be OBSERVED EARLIER than it is settled: on the four hook-less TUI kinds a poll of
@@ -270,7 +271,7 @@ func PersistTurnEndReason(sid, state, reason string) {
 func PersistTurnEndFor(sid, state, reason, promptID string) {
 	at := ObservedTurnEnd(sid)
 	if at == "" {
-		at = time.Now().Format(time.RFC3339)
+		at = time.Now().Format(time.RFC3339Nano)
 	}
 	// The key goes first, and in the same critical section: the record is what a reconciler sweep
 	// settles a scheduled run on, and it stores what the late hook for this end must raise under

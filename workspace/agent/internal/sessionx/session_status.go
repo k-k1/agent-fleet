@@ -401,7 +401,7 @@ func RecordSessionNotificationWithTurnEnd(sid, previous, state, turnText, endedA
 			verdict = chatx.TurnVerdictFor(m.Name, reason != "", key)
 		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
-		if reason == chatx.ReportReasonTurnFailed && endedAt != "" && m.QueueDelivery != "" && m.DriverKind() != session.DriverManaged && liveStateTraits(m.Kind).QueueTurnFailure {
+		if reason == chatx.ReportReasonTurnFailed && endedAt != "" && queueTurnFailureCounts(m) {
 			// The same turn can reach the Control Plane through the queue close
 			// and the outbox. The id agrees with memoCloseFailed in both orders.
 			ev.Kind = "turn-failed"
