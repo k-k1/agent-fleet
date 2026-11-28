@@ -107,19 +107,26 @@ describe("WatchesPanel", () => {
     expect(document.querySelector(".mw-end")).toBeNull();
   });
 
-  it("shows the due instant across midnight in the browser zone", async () => {
+  it("shows the due instant across midnight in the zone the member chose", async () => {
     expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("Asia/Tokyo");
     setFormatPrefs("ja-JP", "UTC");
     const watch = { ...timer, due: "2026-11-26T18:21:00Z" };
     const onEnd = vi.fn();
     mount([watch], onEnd);
     const label = rows()[0].querySelector(".mw-ref");
-    expect(label?.textContent).toBe("2026/11/27 03:21:00");
+    expect(label?.textContent).toBe("2026/11/26 18:21:00");
     expect(label?.getAttribute("title")).toBe(timer.ref);
     await act(async () => document.querySelector<HTMLButtonElement>(".mw-end")!.click());
     expect(confirmDialog()!.querySelector("pre.ui-confirm-code")?.textContent).toBe(timer.ref);
     await answerConfirm(true);
     expect(onEnd).toHaveBeenCalledExactlyOnceWith(watch);
+  });
+
+  it("falls back to the browser zone when the member chose none", () => {
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("Asia/Tokyo");
+    setFormatPrefs("ja-JP", "auto");
+    mount([{ ...timer, due: "2026-11-26T18:21:00Z" }]);
+    expect(rows()[0].querySelector(".mw-ref")?.textContent).toBe("2026/11/27 03:21:00");
   });
 
   it.each([undefined, "invalid"])("shows the timer ref when due is %s", (due) => {
