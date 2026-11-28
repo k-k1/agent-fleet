@@ -107,6 +107,7 @@ export const admin = {
   "admin.mcp_workspace": "Google Workspace プリセット",
   "admin.mcp_workspace_client_hint": "Google Auth Platform でウェブ アプリケーション用の OAuth クライアントを作成し、「このクライアントを AI エージェントに使用する」を選びます。選んだサービスすべてで同じクライアントを使います。",
   "admin.mcp_workspace_redirect": "承認済みのリダイレクト URI",
+  "admin.mcp_workspace_no_base_url": "この配備には PUBLIC_BASE_URL が設定されていないため、Google に登録するリダイレクト URI を組み立てられません。保存してもサインインは失敗するため、保存できません。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
   "admin.mcp_workspace_bundle": "スコープのセット",
   "admin.mcp_workspace_bundle_hint": "標準では、Gmail の下書き作成やドキュメントの編集など、一部の書き込み権限が加わります。",
   "admin.mcp_workspace_read_only": "読み取り専用",

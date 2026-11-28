@@ -97,7 +97,7 @@ it("tests the selected public endpoint and distributes it using the chosen bundl
 
 it("refreshes overlapping definitions and keeps the form ready to distribute the remaining service", async () => {
   setLocale("en");
-  const googleWorkspace: WorkspaceMcpPreset = { services: [gmailService, {
+  const googleWorkspace: WorkspaceMcpPreset = { redirect_uri: "https://af.example.com/oauth2/mcp/callback", services: [gmailService, {
     id: "drive", name: "google-drive", label: "Google Drive", host: "drivemcp.googleapis.com",
     url: "https://drivemcp.googleapis.com/mcp/v1self", read_only: ["drive.readonly"], standard: ["drive.readonly", "drive.file"],
   }] };
@@ -135,4 +135,23 @@ it("refreshes overlapping definitions and keeps the form ready to distribute the
     tenant_slug: "sales", client_id: "tenant-agent", client_secret: "dummy-secret",
     services: ["drive"], bundle: "read_only",
   });
+});
+
+it("warns instead of showing a placeholder redirect URI and blocks saving when PUBLIC_BASE_URL is unset", async () => {
+  setLocale("en");
+  vi.mocked(listTenantMcpServers).mockResolvedValue({ servers: [], google_workspace: { services: [gmailService] } });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => root!.render(<McpAdminView tenants={[{ slug: "sales", name: "Sales" }]} />));
+  await click(button("Google Workspace preset"));
+
+  expect(host.textContent).toContain("Ask the operator to set PUBLIC_BASE_URL");
+  expect(host.textContent).not.toContain("{PUBLIC_BASE_URL}");
+  const [gmail] = host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+  await click(gmail);
+  const [id, secret] = host.querySelectorAll<HTMLInputElement>("input.cinput");
+  await type(id, "tenant-agent");
+  await type(secret, "dummy-secret");
+  expect(button("Distribute").disabled).toBe(true);
 });
