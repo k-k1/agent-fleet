@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -359,5 +360,76 @@ func TestHeadOfCutsOnARuneBoundary(t *testing.T) {
 	}
 	if headOf("short") != "short" {
 		t.Fatal("a short text must pass through")
+	}
+}
+
+// stepIndexedAnswerAgent serves turns with sparse source indexes, the way agy numbers them.
+type stepIndexedAnswerAgent struct {
+	agents.Agent
+	turns *[]transcript.Turn
+}
+
+func (a stepIndexedAnswerAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
+	return agents.TranscriptData{Turns: *a.turns, StepIndexed: true}, true
+}
+
+// On a step-indexed kind before and firstLine are source indexes, so a turn that materializes
+// between two pages neither repeats one nor leaves a gap.
+func TestAnswerTurnsPagesStepIndexedAcrossInsertedTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var turns []transcript.Turn
+	text := func(idx int) transcript.Turn {
+		return transcript.Turn{Role: "assistant", Idx: idx, Parts: []transcript.Part{{Kind: "text", Text: "m" + strconv.Itoa(idx)}}}
+	}
+	for i := 0; i < 180; i += 3 {
+		turns = append(turns, text(i))
+	}
+	t.Cleanup(agentreg.SwapForTest(session.KindAgy, stepIndexedAnswerAgent{AgentOf(session.KindAgy), &turns}))
+	session.WriteMeta(session.Meta{Name: "answer-turns-step", Dir: t.TempDir(), Kind: session.KindAgy})
+	read := func(query string) answerTurnsReply {
+		t.Helper()
+		code, body := getAnswerTurns(t, "answer-turns-step", query)
+		var reply answerTurnsReply
+		if code != http.StatusOK || json.Unmarshal(body, &reply) != nil {
+			t.Fatalf("%s: status %d body %.200s", query, code, body)
+		}
+		return reply
+	}
+	tail := read("limit=50")
+	if !tail.HasMore || len(tail.Messages) != 50 || tail.FirstLine != 30 {
+		t.Fatalf("tail = %+v, want 50 turns from index 30", tail)
+	}
+	// A row lands inside the page already read and one below the next page's boundary.
+	turns = append(turns, text(31), text(7))
+	slices.SortFunc(turns, func(a, b transcript.Turn) int { return a.Idx - b.Idx })
+	older := read("limit=50&before=" + strconv.Itoa(tail.FirstLine))
+	var got []string
+	for _, m := range older.Messages {
+		got = append(got, m.Parts[0].Text)
+	}
+	want := []string{"m0", "m3", "m6", "m7", "m9", "m12", "m15", "m18", "m21", "m24", "m27"}
+	if older.HasMore || older.FirstLine != 0 || !slices.Equal(got, want) {
+		t.Fatalf("older = %v %+v, want %v ending at the start", got, older, want)
+	}
+}
+
+// The step-indexed window is not capped at the 1 MiB /messages cuts a window to: the Control
+// Plane has a few requests to walk back through, and the slim payload bounds the text anyway.
+func TestAnswerTurnsStepIndexedWindowIsNotCappedAtOneMiB(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	big := strings.Repeat("z", 1100<<10)
+	turns := []transcript.Turn{{Role: "assistant", Idx: 1, Parts: []transcript.Part{{Kind: "text", Text: "the answer"}}}}
+	for i := 0; i < 6; i++ {
+		turns = append(turns, transcript.Turn{Role: "user", Idx: 10 + 2*i, Text: big})
+	}
+	t.Cleanup(agentreg.SwapForTest(session.KindAgy, stepIndexedAnswerAgent{AgentOf(session.KindAgy), &turns}))
+	session.WriteMeta(session.Meta{Name: "answer-turns-step-big", Dir: t.TempDir(), Kind: session.KindAgy})
+	code, body := getAnswerTurns(t, "answer-turns-step-big", "limit=50")
+	var reply answerTurnsReply
+	if code != http.StatusOK || json.Unmarshal(body, &reply) != nil {
+		t.Fatalf("status %d body %.200s", code, body)
+	}
+	if len(reply.Messages) != 7 || reply.HasMore || reply.FirstLine != 0 || reply.Messages[0].Parts[0].Text != "the answer" {
+		t.Fatalf("reply = %d turns hasMore=%v firstLine=%d, want all 7 turns from the answer", len(reply.Messages), reply.HasMore, reply.FirstLine)
 	}
 }

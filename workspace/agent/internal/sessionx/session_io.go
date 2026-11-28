@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1577,10 +1578,56 @@ func outputTurnCursor(turns []transcript.Turn, state string) int {
 	return n
 }
 
+// stepCursorBase tags an /output cursor as a source index (Turn.Idx) instead of a turn count.
+// The MCP client keeps the cursor on disk across Agent upgrades, so a bare integer from before
+// this format would be read as an index and replay finished turns; below the base a cursor keeps
+// its count meaning. 2^40 stays exact as a JSON number.
+const stepCursorBase = 1 << 40
+
+// stepOutputCursor is outputTurnCursor in source coordinates, for a transcript whose turns can
+// materialize between already-read ones (TranscriptData.StepIndexed): a count would shift under
+// such an insertion and re-send a finished turn. The cursor is stepCursorBase plus the next
+// Turn.Idx to read.
+//
+// While the session is working the growing assistant turn is held back, and the cursor is the
+// index after the turn BEFORE it, not the growing turn's own Idx: agy can anchor that turn
+// provisionally (its database read failed) and later re-anchor it lower, which would leave a
+// cursor at the provisional index above the finished answer. Turns before the previous one are
+// never re-sent; only that user prompt or gap is, and it has no output.
+func stepOutputCursor(turns []transcript.Turn, state string) int {
+	n := len(turns)
+	if n == 0 {
+		return stepCursorBase
+	}
+	if turns[n-1].Role == "assistant" && state == "working" {
+		if n == 1 {
+			return stepCursorBase
+		}
+		return stepCursorBase + turns[n-2].Idx + 1
+	}
+	return stepCursorBase + turns[n-1].Idx + 1
+}
+
+// stepOutputFirst is the position of the first turn a step-indexed read at since has not sent.
+func stepOutputFirst(turns []transcript.Turn, since int) int {
+	if since < stepCursorBase {
+		return since // a count cursor saved before the index format
+	}
+	idx := since - stepCursorBase
+	// A cursor is at most one past the newest turn it was taken from. Beyond that the transcript
+	// is not the one the cursor came from (a managed resume that adopted a new conversation, or a
+	// re-anchored turn), so read it whole rather than skip unread output.
+	if n := len(turns); n > 0 && idx > turns[n-1].Idx+1 {
+		return 0
+	}
+	return sort.Search(len(turns), func(i int) bool { return turns[i].Idx >= idx })
+}
+
 // HandleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the
 // session's assistant text appended since the cursor, plus a new cursor and the
 // current status. cursor is a line index into claude's jsonl transcript, or a count of
-// completed turns for the other transcript-capable kinds (see outputTurnCursor).
+// completed turns for the other transcript-capable kinds (see outputTurnCursor), or
+// stepCursorBase plus a Turn.Idx for a step-indexed kind (see stepOutputCursor).
 //
 // peek_from=<session> makes it a peer peek (session_peek.go): the policy, the caps, the
 // rate limit and the audit record are all applied here, not by the caller.
@@ -1652,7 +1699,13 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	if !terminalTraits(meta.Kind).TranscriptLines {
 		td, _ := AgentOf(meta.Kind).Transcript(meta)
 		var gb strings.Builder
-		for i := since; i < len(td.Turns); i++ {
+		// A step-indexed transcript reads from the first turn whose Idx reaches since;
+		// the others read from the since-th turn.
+		first := since
+		if td.StepIndexed {
+			first = stepOutputFirst(td.Turns, since)
+		}
+		for i := first; i < len(td.Turns); i++ {
 			t := td.Turns[i]
 			if t.Role == "assistant" && t.Text != "" {
 				if gb.Len() > 0 {
@@ -1662,6 +1715,12 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		raw, cursor = gb.String(), outputTurnCursor(td.Turns, state)
+		if td.StepIndexed {
+			cursor = stepOutputCursor(td.Turns, state)
+			if len(td.Turns) == 0 && since > 0 {
+				cursor = since // an empty read must not rewind a cursor the caller holds
+			}
+		}
 	} else {
 		sid := session.UUID(meta.Dir, name)
 		tlines := claude.TranscriptLines(sid)

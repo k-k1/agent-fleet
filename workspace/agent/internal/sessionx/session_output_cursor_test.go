@@ -117,3 +117,194 @@ func TestOutputTurnCursor(t *testing.T) {
 		}
 	}
 }
+
+// stepTurnsAgent is turnsAgent for a StepIndexed kind.
+type stepTurnsAgent struct{ turnsAgent }
+
+func (a stepTurnsAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
+	return agents.TranscriptData{Turns: *a.turns, StepIndexed: true}, true
+}
+
+func TestOutputStepOutputCursor(t *testing.T) {
+	u := transcript.Turn{Role: "user", Idx: 4}
+	a := transcript.Turn{Role: "assistant", Idx: 9}
+	for _, tc := range []struct {
+		name  string
+		turns []transcript.Turn
+		state string
+		want  int
+	}{
+		{"empty", nil, "working", stepCursorBase},
+		{"working, the growing turn is held back from the previous turn's end", []transcript.Turn{u, a}, "working", stepCursorBase + 5},
+		{"working, a lone growing turn is read from the start", []transcript.Turn{a}, "working", stepCursorBase},
+		{"working, last is a user turn", []transcript.Turn{a, u}, "working", stepCursorBase + 5},
+		{"idle is one past the last index", []transcript.Turn{u, a}, "idle", stepCursorBase + 10},
+	} {
+		if got := stepOutputCursor(tc.turns, tc.state); got != tc.want {
+			t.Errorf("%s: cursor = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func stepFixture(t *testing.T, name string, turns *[]transcript.Turn, state *string) session.Meta {
+	t.Helper()
+	peekFixture(t, true)
+	// A tmux that says every session exists, so the session reads as alive.
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindAgy}
+	session.WriteMeta(m)
+	t.Cleanup(agentreg.SwapForTest(session.KindAgy, stepTurnsAgent{turnsAgent{agentreg.Of(session.KindAgy), turns, state}}))
+	return m
+}
+
+// A late turn that lands between two already-read ones shifts every later position, so a count
+// cursor would re-send the turn it had just read. The step cursor does neither that nor skip
+// the turn written after it.
+func TestOutputStepIndexedCursorSurvivesInsertedTurn(t *testing.T) {
+	turns := []transcript.Turn{
+		{Role: "user", Idx: 0, Text: "go"},
+		{Role: "assistant", Idx: 1, Text: "first"},
+		{Role: "user", Idx: 10, Text: "more"},
+		{Role: "assistant", Idx: 11, Text: "second"},
+	}
+	state := "idle"
+	m := stepFixture(t, "agy_step_cur", &turns, &state)
+
+	out, cur := outputRead(t, m.Name, "")
+	if out != "first\n\nsecond" || cur != stepCursorBase+12 {
+		t.Fatalf("first read = %q cursor %d, want both turns and index 12", out, cur)
+	}
+	// Two rows materialize before the cursor, then a new turn arrives after it.
+	turns = append(turns[:2], append([]transcript.Turn{
+		{Role: "user", Idx: 4, Text: "failed prompt"},
+		{Role: "assistant", Idx: 5},
+	}, turns[2:]...)...)
+	turns = append(turns, transcript.Turn{Role: "assistant", Idx: 13, Text: "third"})
+	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "third" || cur != stepCursorBase+14 {
+		t.Fatalf("read after the insertion = %q cursor %d, want only \"third\" and index 14", out, cur)
+	}
+	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "" || cur != stepCursorBase+14 {
+		t.Fatalf("a finished turn was re-sent: %q cursor %d", out, cur)
+	}
+	// A transient empty read does not rewind the caller's cursor.
+	turns = nil
+	if _, got := outputRead(t, m.Name, "since="+strconv.Itoa(cur)); got != cur {
+		t.Fatalf("empty read moved the cursor to %d", got)
+	}
+}
+
+// A growing assistant turn is re-read from the previous turn's end while working, so the next
+// read starts at its own Idx (Idx == since: its prompt sits at 40, as in native agy transcripts)
+// and sees the rest; once idle the cursor moves past it.
+func TestOutputStepIndexedGrowingTurnResumesAtItsIndex(t *testing.T) {
+	turns := []transcript.Turn{
+		{Role: "user", Idx: 40, Text: "go"},
+		{Role: "assistant", Idx: 41, Text: "part one"},
+	}
+	state := "working"
+	m := stepFixture(t, "agy_step_grow", &turns, &state)
+
+	out, cur := outputRead(t, m.Name, "")
+	if out != "part one" || cur != stepCursorBase+41 {
+		t.Fatalf("working read = %q cursor %d, want the turn held back at index 41", out, cur)
+	}
+	turns[1].Text = "part one and two"
+	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "part one and two" || cur != stepCursorBase+41 {
+		t.Fatalf("resume at the held-back index = %q cursor %d", out, cur)
+	}
+	turns[1].Text = "part one and two and three"
+	state = "idle"
+	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "part one and two and three" || cur != stepCursorBase+42 {
+		t.Fatalf("idle read = %q cursor %d, want the final text and index 42", out, cur)
+	}
+	if out, _ = outputRead(t, m.Name, "since="+strconv.Itoa(cur)); out != "" {
+		t.Fatalf("a finished turn was re-sent: %q", out)
+	}
+}
+
+// The growing turn can re-anchor to a lower Idx (agy reads the anchor from a database that was
+// briefly unreadable), and the answer can finish before the next poll: that very next poll is
+// idle, and still has to deliver the final text.
+func TestOutputStepIndexedDeliversAReanchoredTurnFinishedBeforeTheNextPoll(t *testing.T) {
+	turns := []transcript.Turn{
+		{Role: "assistant", Idx: 99, Text: "earlier"},
+		{Role: "assistant", Idx: 121, Text: "partial"},
+	}
+	state := "working"
+	m := stepFixture(t, "agy_step_anchor", &turns, &state)
+
+	out, cur := outputRead(t, m.Name, "")
+	if out != "earlier\n\npartial" {
+		t.Fatalf("first read = %q", out)
+	}
+	turns[1].Idx, turns[1].Text = 101, "partial and the rest"
+	state = "idle"
+	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "partial and the rest" || cur != stepCursorBase+102 {
+		t.Fatalf("idle read after the re-anchor = %q cursor %d, want the final text and index 102", out, cur)
+	}
+	if out, _ = outputRead(t, m.Name, "since="+strconv.Itoa(cur)); out != "" {
+		t.Fatalf("a finished turn was re-sent: %q", out)
+	}
+}
+
+// A cursor beyond the newest turn belongs to another transcript (a managed resume that adopted a
+// replacement conversation keeps the session name, and with it the saved cursor): the new
+// conversation is read from its start instead of being skipped.
+func TestOutputStepIndexedReadsAReplacedTranscriptFromItsStart(t *testing.T) {
+	turns := []transcript.Turn{
+		{Role: "user", Idx: 0, Text: "go"},
+		{Role: "assistant", Idx: 1, Text: "old"},
+		{Role: "user", Idx: 100, Text: "more"},
+		{Role: "assistant", Idx: 101, Text: "old second"},
+	}
+	state := "idle"
+	m := stepFixture(t, "agy_step_replaced", &turns, &state)
+
+	_, cur := outputRead(t, m.Name, "")
+	if cur != stepCursorBase+102 {
+		t.Fatalf("cursor = %d", cur)
+	}
+	turns = []transcript.Turn{
+		{Role: "assistant", Idx: 1, Text: "new one"},
+		{Role: "assistant", Idx: 7, Text: "new two"},
+		{Role: "assistant", Idx: 13, Text: "new three"},
+	}
+	out, cur := outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "new one\n\nnew two\n\nnew three" || cur != stepCursorBase+14 {
+		t.Fatalf("replacement read = %q cursor %d, want the whole new transcript and index 14", out, cur)
+	}
+	if out, _ = outputRead(t, m.Name, "since="+strconv.Itoa(cur)); out != "" {
+		t.Fatalf("a consumed turn was re-sent: %q", out)
+	}
+}
+
+// A cursor saved by the MCP client before the index format is a turn count: it keeps that
+// meaning for the read that replaces it, then the cursor is an index.
+func TestOutputStepIndexedKeepsASavedCountCursor(t *testing.T) {
+	turns := []transcript.Turn{
+		{Role: "user", Idx: 0, Text: "go"},
+		{Role: "assistant", Idx: 1, Text: "first"},
+		{Role: "user", Idx: 10, Text: "more"},
+		{Role: "assistant", Idx: 11, Text: "second"},
+	}
+	state := "idle"
+	m := stepFixture(t, "agy_step_legacy", &turns, &state)
+
+	out, cur := outputRead(t, m.Name, "since=4")
+	if out != "" || cur != stepCursorBase+12 {
+		t.Fatalf("count cursor 4 replayed %q (cursor %d): it was read as index 4", out, cur)
+	}
+	turns = append(turns, transcript.Turn{Role: "assistant", Idx: 13, Text: "third"})
+	if out, _ = outputRead(t, m.Name, "since=3"); out != "second\n\nthird" {
+		t.Fatalf("count cursor 3 = %q, want the turns from position 3", out)
+	}
+}
