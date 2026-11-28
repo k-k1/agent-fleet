@@ -2084,3 +2084,12 @@ button.start-place-chip--gone {
   outline: 2px solid var(--accent, #3b82f6);
   outline-offset: 1px;
 }
+
+/* Held-draft retry toast: "Review draft" and, while an upload or send runs, a cancel button sit
+   beside the message. On a ~320px toast they wrap under it instead of running past the edge. */
+.launch-retry-toast {
+  flex-wrap: wrap;
+}
+.launch-retry-toast-txt {
+  flex: 1 1 12em;
+}

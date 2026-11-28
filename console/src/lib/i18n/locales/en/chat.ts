@@ -121,6 +121,7 @@ export const chat: Record<keyof typeof jaChat, string> = {
   "chat.suggest_none": "Couldn't suggest replies (too little conversation, or no AI backend available)",
   "chat.suggest_failed": "Failed to generate reply suggestions",
   "chat.remove": "Remove",
+  "chat.remove_named": "Remove {name}",
   "chat.uploading": "Uploading…",
   "chat.stop": "Stop",
   "chat.send": "Send",
