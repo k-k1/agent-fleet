@@ -56,6 +56,17 @@ var pushOrigins = map[string]struct {
 	"schedule": {"schedule", false}, "schedule-child": {"schedule", true},
 }
 
+// notificationOrigin is the (root, child) a notification is switched on. turn-failed is raised only
+// for the root session of an auto-run delivery, so it is always auto-run and never a child: the
+// Agent fills the origin from a metadata read that can fail (an unreadable meta reads as own), and
+// a failure that arrived first through the outbox would otherwise follow the wrong switch.
+func notificationOrigin(n store.Notification) (string, bool) {
+	if n.Kind == "turn-failed" {
+		return "autorun", false
+	}
+	return n.OriginRoot, n.OriginChild
+}
+
 // originKey is the switch name a notification falls under; an unknown or empty root is own.
 func originKey(root string, child bool) string {
 	switch root {
@@ -344,7 +355,7 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 	// read pushes: a stall must not silence a member.
 	if err != nil {
 		log.Printf("web push: preferences: %v", err)
-	} else if slices.Contains(off, n.Kind) || slices.Contains(offOrigins, originKey(n.OriginRoot, n.OriginChild)) {
+	} else if slices.Contains(off, n.Kind) || slices.Contains(offOrigins, originKey(notificationOrigin(n))) {
 		return
 	}
 	lctx, lcancel := read()
@@ -356,7 +367,7 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		}
 		return
 	}
-	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName, Tenant: dc.TenantSlug, Origin: originKey(n.OriginRoot, n.OriginChild)}
+	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName, Tenant: dc.TenantSlug, Origin: originKey(notificationOrigin(n))}
 	body, _ := json.Marshal(pl)
 	if len(body) > webpush.MaxPayload {
 		// The display name is stored as the Agent sent it. A name that makes even the base payload

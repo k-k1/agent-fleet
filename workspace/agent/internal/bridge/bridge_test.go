@@ -595,7 +595,7 @@ func TestFullTextBodyOnly(t *testing.T) {
 
 func TestTurnFailedHeadlines(t *testing.T) {
 	m := Message{Kind: "turn-failed"}
-	for _, c := range []struct{ lang, want string }{{"en", "A session turn failed"}, {"ja", "セッションのターンが失敗しました"}} {
+	for _, c := range []struct{ lang, want string }{{"en", "An auto-run turn failed"}, {"ja", "自動実行のターンが失敗しました"}} {
 		if got := m.Text(c.lang); got != c.want {
 			t.Errorf("%s: %q", c.lang, got)
 		}

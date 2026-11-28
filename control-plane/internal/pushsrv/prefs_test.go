@@ -37,6 +37,53 @@ func TestTurnFailedIsAPrefKindOfItsOwn(t *testing.T) {
 	}
 }
 
+// turn-failed belongs to the auto-run row whatever origin the notification carries: an outbox event
+// whose Agent-side metadata read failed arrives as own (or with none), and must still follow the
+// auto-run switch, in both directions.
+func TestTurnFailedFollowsAutorunSwitchWhateverOriginItCarries(t *testing.T) {
+	ctx := context.Background()
+	for _, carried := range []struct {
+		root  string
+		child bool
+	}{{"own", false}, {"", false}, {"own", true}, {"schedule", false}} {
+		f := newFixture(t)
+		d := f.subscribe(t, "m1")
+		_ = f.st.PutPushOffOrigins(ctx, "m1", []string{"autorun"})
+		f.deliver(noteFrom("turn-failed", carried.root, carried.child))
+		if f.count() != 0 {
+			t.Fatalf("carried %+v: pushed with Auto-run off", carried)
+		}
+		_ = f.st.PutPushOffOrigins(ctx, "m1", []string{"own", "own-child", "schedule", "autorun-child"})
+		f.deliver(noteFrom("turn-failed", carried.root, carried.child))
+		if f.count() != 1 {
+			t.Fatalf("carried %+v: not pushed with only Auto-run on: %d", carried, f.count())
+		}
+		if got := d.open(t, f.bodies[0]); !strings.Contains(got, `"origin":"autorun"`) {
+			t.Fatalf("carried %+v: payload origin is not autorun: %s", carried, got)
+		}
+	}
+}
+
+// The saved off list goes through the public PUT: turn-failed is accepted, kept next to the other
+// off kinds, and then stops that kind only.
+func TestTurnFailedOffSavedThroughPutPrefs(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	w := httptest.NewRecorder()
+	f.svc.PutPrefs(w, httptest.NewRequest("PUT", "/", strings.NewReader(`{"off":["answer-ready","turn-failed"]}`)), "m1")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `["answer-ready","turn-failed"]`) {
+		t.Fatalf("PUT turn-failed: %d %s", w.Code, w.Body)
+	}
+	f.deliver(note("turn-failed"))
+	if f.count() != 0 {
+		t.Fatal("turn-failed pushed after the member saved it off")
+	}
+	f.deliver(note("question"))
+	if f.count() != 1 {
+		t.Fatalf("another kind was silenced: %d", f.count())
+	}
+}
+
 func TestOffKindIsNotPushedOthersAre(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")

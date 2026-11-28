@@ -406,6 +406,8 @@ func RecordSessionNotificationWithTurnEnd(sid, previous, state, turnText, endedA
 			// and the outbox. The id agrees with memoCloseFailed in both orders.
 			ev.Kind = "turn-failed"
 			ev.ID = "turn-failed:" + m.Name + ":" + endedAt
+			// Fixed here, not left to Put's metadata re-read: a failed read there reads as own.
+			ev.OriginRoot, ev.OriginChild = notice.OriginRootAutorun, false
 		}
 		// Full-text bridge (docs/log/37, the future direction): carry the turn's final
 		// prose on the answer-ready event so a full-text-mode provider can post it. Only

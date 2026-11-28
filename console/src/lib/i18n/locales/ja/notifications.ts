@@ -295,7 +295,7 @@ export const notifications = {
   "noti.kind_memo_queue_pr_stale": "自動実行のメモが PR を待機",
   "noti.kind_memo_delivery_unconfirmed": "実行を確認できませんでした",
   "noti.row_auto_run": "自動実行",
-  "noti.row_auto_run_hint": "実行の期限超過、自動実行の一時停止・操作待ち、実行を確認できなかったとき",
+  "noti.row_auto_run_hint": "実行の期限超過、自動実行の一時停止・操作待ち、ターンの失敗、実行を確認できなかったとき",
   "push.title": "この端末へのプッシュ通知",
   "push.note": "Console を閉じていても、スマホやパソコンに通知を届けます。iPhone では先に Console をホーム画面に追加してください。別の Console で開いているセッションにはプッシュしません。",
   "push.this_device": "この端末でプッシュ通知を受け取る",

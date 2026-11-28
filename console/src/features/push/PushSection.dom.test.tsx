@@ -114,6 +114,14 @@ describe("PushSection", () => {
     await flush();
     expect(puts).toEqual([{ off: ["answer-ready", "question"] }]);
   });
+  it("saves the auto-run failure switch by its own label and keeps the kinds already off", async () => {
+    const host = await mount();
+    const box = [...host.querySelectorAll<HTMLLabelElement>(".push-kind")].find((l) => l.textContent?.includes(t("push.kind_turn_failed")))!.querySelector("input")!;
+    expect(box.checked).toBe(true);
+    await act(async () => void box.click());
+    await flush();
+    expect(puts).toEqual([{ off: ["answer-ready", "turn-failed"] }]);
+  });
   it("shows the origin switches as three rows of two, from the saved list", async () => {
     offOrigins = ["autorun-child"];
     const host = await mount();

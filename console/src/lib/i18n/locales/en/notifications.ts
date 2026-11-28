@@ -297,7 +297,7 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "noti.kind_memo_queue_pr_stale": "Auto-run memo waiting for a pull request",
   "noti.kind_memo_delivery_unconfirmed": "A run could not be confirmed",
   "noti.row_auto_run": "Auto-run",
-  "noti.row_auto_run_hint": "A run is overdue, auto-run paused or is waiting for you, or a run could not be confirmed",
+  "noti.row_auto_run_hint": "A run is overdue, auto-run paused or is waiting for you, a run's turn failed, or a run could not be confirmed",
   "push.title": "Push to this device",
   "push.note": "Get a notification on your phone or computer even when the Console is closed. On iPhone, add the Console to the Home Screen first. A session you are looking at in another Console is not pushed.",
   "push.this_device": "Push notifications on this device",
