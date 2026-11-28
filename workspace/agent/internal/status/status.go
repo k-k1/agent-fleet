@@ -280,18 +280,30 @@ func PersistTurnEndFor(sid, state, reason, promptID string) {
 	defer unlock()
 	at := observed
 	if at == "" {
-		// A repeated Stop for the same turn (no working write between) must not move TurnEndAt:
-		// the completion key is already the turn's identity, and a watch or the stalled-tree
-		// signature would read a newer stamp as a second turn ending. A working write removes the
-		// key, so the next turn stamps afresh.
-		if key, ok := completionKeys.Read(sid); ok {
-			at = key
-		} else {
-			at = time.Now().Format(time.RFC3339Nano)
-		}
+		at = sameSecondEnd(sid, time.Now())
 	}
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
 	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
+}
+
+// sameSecondEnd is the stamp for a turn end nobody observed first: now with nanoseconds, except
+// that a Stop repeated for an end already recorded within the same wall-clock second keeps that
+// end's stamp. Whole-second stamps made such a repeat write an identical TurnEndAt, and a
+// watcher or the stalled-tree signature reads a changed one as another turn ending. An end that
+// comes later, even with no working write between (a rejected queued input), still stamps afresh.
+// Must run under the session lock so the record it reads is the one the caller then replaces.
+func sameSecondEnd(sid string, now time.Time) string {
+	prior := ""
+	if st, ok := Read(sid); ok && st.TurnEnd {
+		prior = st.TurnEndAt
+	}
+	if prior == "" {
+		prior, _ = completionKeys.Read(sid) // survives status.Remove
+	}
+	if t, err := time.Parse(time.RFC3339Nano, prior); err == nil && t.Unix() == now.Unix() {
+		return prior
+	}
+	return now.Format(time.RFC3339Nano)
 }
 
 // WriteCompletionKey sets the answer-ready dedup key for the current turn-end.

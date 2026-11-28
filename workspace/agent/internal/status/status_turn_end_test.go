@@ -402,8 +402,22 @@ func TestPersistTurnEndRepeatedStopKeepsTheStamp(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		Persist(sid, "working")
 		PersistTurnEnd(sid, "idle")
-		if next, _ := LatestTurnEnd(sid); next == first {
+		next, _ := LatestTurnEnd(sid)
+		if next == first {
 			t.Fatalf("a new turn reused the previous end %q", first)
+		}
+
+		// An end in a later second with no working write between (a queued input the host
+		// rejected) is a new end for watchers, as it was with whole-second stamps; the
+		// completion key still keeps the first end's identity.
+		key, _ := ReadCompletionKey(sid)
+		time.Sleep(2 * time.Second)
+		PersistTurnEnd(sid, "idle")
+		if later, _ := LatestTurnEnd(sid); later == next {
+			t.Fatalf("an end two seconds later kept the stamp %q", next)
+		}
+		if k2, _ := ReadCompletionKey(sid); k2 != key {
+			t.Fatalf("completion key changed from %q to %q", key, k2)
 		}
 	})
 }
