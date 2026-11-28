@@ -142,7 +142,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		recordPolledTurnEnd(m, li.State)
 	}
 	turnEndAt, turnEndReason := status.LatestTurnEnd(session.UUID(m.Dir, m.Name))
-	if m.QueueDelivery == "" || m.DriverKind() == session.DriverManaged || !liveStateTraits(m.Kind).QueueTurnFailure {
+	if !queueTurnFailureCounts(m) {
 		turnEndReason = ""
 	}
 	s := session.Session{
@@ -275,6 +275,15 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		s.CarriedLive = c.Kind
 	}
 	return s
+}
+
+// queueTurnFailureCounts reports whether a failed turn of m is an outcome the queue acts on: a
+// queue-delivered Terminal session of a kind that opts in (LiveStateTraits.QueueTurnFailure). A
+// Managed driver records its own outcome (RecordTurnOutcome), so a poll never reads one for it.
+// The list's reason and the notification's turn-failed id must agree on this, or the same turn is
+// closed under one identity and notified under another.
+func queueTurnFailureCounts(m session.Meta) bool {
+	return m.QueueDelivery != "" && m.DriverKind() != session.DriverManaged && liveStateTraits(m.Kind).QueueTurnFailure
 }
 
 // lastTurnEndAt reads the moment this session's newest turn ENDED off the status store, or

@@ -2048,11 +2048,12 @@ const (
 	memoAnswerSlimPages = 6
 	// memoAnswerReplyMax bounds one page's reply: a page of tool output can be large.
 	memoAnswerReplyMax = 8 << 20
-	// memoAnswerPinSlack makes the pinned turn end the first instant of the next second: the Agent
-	// stamps a turn end to the second, truncated (measured: status.go writes it with time.RFC3339),
-	// and the turn's start and lines carry fractions. A turn that starts at that instant or later
-	// is a later turn's (kiro stamps a user turn to the second as well): no more, or a person's
-	// quick resume is read as the run.
+	// memoAnswerPinSlack makes the pinned turn end the first instant of the second after the
+	// end's own second. An Agent stamps a turn end to the second (older ones, kiro) or with
+	// fractions (status.go now writes RFC3339Nano), and the turn's start and lines carry
+	// fractions; memoAnswerPin truncates the stamp to the second first, so both forms give the same
+	// boundary. A turn that starts at that instant or later is a later turn's: no more, or a
+	// person's quick resume is read as the run.
 	memoAnswerPinSlack = time.Second
 )
 
@@ -2657,7 +2658,7 @@ func memoAnswerPin(d store.MemoDelivery) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	t, err := time.Parse(time.RFC3339Nano, d.CloseTurnEndAt)
-	return t.Add(memoAnswerPinSlack), err == nil
+	return t.Truncate(time.Second).Add(memoAnswerPinSlack), err == nil
 }
 
 // memoTurnAfterClose reports whether the session's latest turn (the Agent's clock) started after

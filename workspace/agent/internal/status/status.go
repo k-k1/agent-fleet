@@ -40,7 +40,8 @@ type SessionStatus struct {
 	// unknown and the report waits for the next real end-of-turn (a miss costs a delay, a
 	// wrong answer costs a misdelivered report).
 	TurnEnd bool `json:"turnEnd,omitempty"`
-	// TurnEndAt is WHEN this turn ended (RFC3339) — the source of the listing's
+	// TurnEndAt is WHEN this turn ended (RFC3339 with nanoseconds, so it can double as the
+	// completion key: two turns ending in one second must not share a notification id) — the source of the listing's
 	// lastTurnEndAt (docs/log/89 §89.3). Set by PersistTurnEnd alongside TurnEnd, so it
 	// carries exactly that bit's evidence, and it is a field of its own because the value
 	// can be OBSERVED EARLIER than it is settled: on the four hook-less TUI kinds a poll of
@@ -268,10 +269,11 @@ func PersistTurnEndReason(sid, state, reason string) {
 // PersistTurnEndFor is PersistTurnEndReason that also closes turn promptID in the ledger
 // (SessionStatus.PromptID). An empty promptID writes no ledger entry.
 func PersistTurnEndFor(sid, state, reason, promptID string) {
-	at := ObservedTurnEnd(sid)
-	if at == "" {
-		at = time.Now().Format(time.RFC3339)
-	}
+	observed := ObservedTurnEnd(sid)
+	// Taken here, before any wait for the lock: a duplicate Stop that reached this point in the
+	// same second as the end it repeats must compare against that second even if the lock only
+	// comes free in the next one.
+	now := time.Now()
 	// The key goes first, and in the same critical section: the record is what a reconciler sweep
 	// settles a scheduled run on, and it stores what the late hook for this end must raise under
 	// this key. A key written after the record leaves a window where the sweep finds none, stores
@@ -280,8 +282,32 @@ func PersistTurnEndFor(sid, state, reason, promptID string) {
 	// and the closed turn would be left without one.
 	unlock, _ := lockSid(sid) // a lock timeout still writes: the hook's record is authoritative, only the heal (PersistIf) gives way
 	defer unlock()
+	at := observed
+	if at == "" {
+		at = sameSecondEnd(sid, now)
+	}
 	WriteCompletionKey(sid, at) // idempotent — first write wins; survives status.Remove
 	persistLocked(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason, PromptID: promptID})
+}
+
+// sameSecondEnd is the stamp for a turn end nobody observed first: now with nanoseconds, except
+// that a Stop repeated for an end already recorded within the same wall-clock second keeps that
+// end's stamp. Whole-second stamps made such a repeat write an identical TurnEndAt, and a
+// watcher or the stalled-tree signature reads a changed one as another turn ending. An end that
+// comes later, even with no working write between (a rejected queued input), still stamps afresh.
+// Must run under the session lock so the record it reads is the one the caller then replaces.
+func sameSecondEnd(sid string, now time.Time) string {
+	prior := ""
+	if st, ok := Read(sid); ok && st.TurnEnd {
+		prior = st.TurnEndAt
+	}
+	if prior == "" {
+		prior, _ = completionKeys.Read(sid) // survives status.Remove
+	}
+	if t, err := time.Parse(time.RFC3339Nano, prior); err == nil && t.Unix() == now.Unix() {
+		return prior
+	}
+	return now.Format(time.RFC3339Nano)
 }
 
 // WriteCompletionKey sets the answer-ready dedup key for the current turn-end.
