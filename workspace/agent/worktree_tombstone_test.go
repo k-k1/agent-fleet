@@ -380,6 +380,36 @@ func TestWorktreeRestoreKeepsAReshelvedOnceUnreadableSession(t *testing.T) {
 	}
 }
 
+// The same holds when the member shelves it again while the first attempt is still scanning
+// and the clock has moved on by the time the scan ends.
+func TestWorktreeRestoreKeepsASessionReshelvedDuringTheFirstScan(t *testing.T) {
+	e := tombstoneSetup(t)
+	id := worktreeDeletedWithEntry(t, e)
+	good := unreadableShelvedMeta(t)
+	worktreeRestoreScanned = func() {
+		good.ShelfRevision = "member-reshelved"
+		good.ArchivedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := session.WriteMetaChecked(good); err != nil {
+			t.Error(err)
+		}
+		later := time.Now().UTC().Add(time.Hour)
+		nowUTC = func() time.Time { return later }
+	}
+	t.Cleanup(func() {
+		worktreeRestoreScanned = nil
+		nowUTC = func() time.Time { return time.Now().UTC() }
+	})
+	path := "/cleanup/archives/" + id + "/restore"
+	if code := errCodeOf(t, e.srv, "POST", path, http.StatusConflict); code != "restore_incomplete" {
+		t.Fatalf("restore code = %q, want restore_incomplete", code)
+	}
+	worktreeRestoreScanned = nil
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	if m, ok := session.ReadMeta("aisub01"); !ok || !m.Archived {
+		t.Fatalf("the retry undid the shelf action taken during the scan: %+v", m)
+	}
+}
+
 // A purge of an id whose tarball an earlier purge already removed clears the restore record
 // that purge could not.
 func TestPurgeClearsARestoreRecordLeftWithoutItsArchive(t *testing.T) {

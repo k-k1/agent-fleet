@@ -91,9 +91,10 @@ type worktreeRestoreRecord struct {
 
 func worktreeRestoreRecordName(id string) string { return id + ".worktree-restore" }
 
-// Test seams: after the folder is back and before its sessions are, and after the sessions are
-// back and before the record says so. Nil in production.
-var worktreeRestoreRecreated, worktreeBeforeRestoreComplete func()
+// Test seams: after the first attempt's shelf scan, after the folder is back and before its
+// sessions are, and after the sessions are back and before the record says so. Nil in
+// production.
+var worktreeRestoreScanned, worktreeRestoreRecreated, worktreeBeforeRestoreComplete func()
 
 // restoreDeletedWorktree puts a deleted worktree back from its tombstone, then takes the
 // sessions its delete shelved off the shelf. A folder already back (recreated since) is left
@@ -163,13 +164,19 @@ func loadWorktreeRestoreRecord(trash *os.Root, id string, t gitx.WorktreeTombsto
 	case errors.Is(err, fs.ErrNotExist):
 		// An unreadable meta does not hold the folder back: it stays unread in the record and
 		// the restore reports it after putting back everything else.
+		// Since is read before the scan: a member's shelf action does not wait for this restore,
+		// and one taken while the scan runs must not date from before it.
+		since := nowUTC().Format(time.RFC3339)
 		shelved, unread, err := shelfRevisionsOf(id, t.Shelved)
 		if err != nil {
 			return record, err
 		}
+		if worktreeRestoreScanned != nil {
+			worktreeRestoreScanned()
+		}
 		record = worktreeRestoreRecord{ID: id, Ref: t.Ref, Shelved: shelved, Unread: unread}
 		if len(unread) > 0 {
-			record.Since = nowUTC().Format(time.RFC3339)
+			record.Since = since
 		}
 		return record, writeRestoreRecord(trash, name, record)
 	case err != nil:
