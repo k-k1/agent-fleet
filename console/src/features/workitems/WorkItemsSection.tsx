@@ -56,6 +56,7 @@ import {
   shortKey,
   shortLocal,
   sortWorkItems,
+  stateBadge,
   stateLabel,
   stateTone,
   workItemIcon,
@@ -92,6 +93,8 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
   const stateText = stateLabel(item.state);
   const jira = item.provider === "jira";
   const jiraState = ["open", "in_progress", "done"].includes(item.state) ? item.state : "other";
+  // The cue's colour is the detail pill's fixed tone, so both read the same in every theme.
+  const jiraTone = stateBadge(item).tone;
   const busy = started.length > 0;
   // The row shows only what differs between rows (docs/log/80 §80.18.2). An assignee or repo
   // that is the same on every row is dropped, and if nothing is left the second line is not
@@ -117,7 +120,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
     // inside it are controls of their own, so each stops propagation before acting; otherwise
     // one press would open two things.
     <div
-      className={"wi-row" + (item.state === "done" ? " wi-row--done" : "") + (jira ? " wi-row--jira" : "") + (unread ? " is-unread" : "")}
+      className={"wi-row" + (item.state === "done" ? " wi-row--done" : "") + (unread ? " is-unread" : "")}
       role="button"
       tabIndex={0}
       aria-label={label}
@@ -140,7 +143,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
           <span className="wi-key" title={item.key}>
             {shortKey(item.key)}
           </span>
-          {jira && <span className={`wi-jira-state wi-jira-state--${jiraState}`} title={stateText} aria-hidden="true" />}
+          {jira && <span className={`wi-jira-state wi-jira-state--${jiraState} tone-${jiraTone}`} title={stateText} aria-hidden="true" />}
           <span className="wi-title" title={item.assignee ? `${item.title} — @${item.assignee}` : item.title}>
             {item.title}
           </span>
