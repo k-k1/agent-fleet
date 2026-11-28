@@ -56,15 +56,19 @@ func TestMemoWriteResultStartAfter(t *testing.T) {
 		t.Error("an existing note without the time was not reported")
 	}
 	// A note a run has taken cannot be edited: update_memo is not offered for it.
-	for _, answer := range []string{`{"id":"m0","existing":true,"state":"claimed","deliveryId":"d1"}`, `{"id":"m0","existing":true,"state":"pending","deliveryId":"d1"}`} {
+	for _, answer := range []string{`{"id":"m0","existing":true,"state":"claimed","deliveryId":"d1"}`, `{"id":"m0","existing":true,"state":"claimed"}`, `{"id":"m0","existing":true,"state":"pending","deliveryId":"d1"}`} {
 		if p := problem(future, answer); !strings.Contains(p, "already taken") || strings.Contains(p, "update_memo") {
 			t.Errorf("%s: %q", answer, p)
 		}
 	}
 	for _, answer := range []string{`{"id":"m0","existing":true,"state":"held"}`, `{"id":"m0","existing":true,"state":"pending"}`} {
-		if p := problem(future, answer); !strings.Contains(p, "update_memo") {
+		if p := problem(future, answer); !strings.Contains(p, "update_memo") || !strings.Contains(p, "not being sent") {
 			t.Errorf("%s: %q", answer, p)
 		}
+	}
+	// An answer with no state claims nothing about the note: no "taken", no update_memo.
+	if p := problem(future, `{"id":"m0","existing":true}`); p == "" || strings.Contains(p, "update_memo") || strings.Contains(p, "already taken") {
+		t.Errorf("an existing note without a state: %q", p)
 	}
 	if p := problem(future, `{"id":"m0","existing":true,"startAfter":"2026-12-04T00:00:00.000000Z"}`); p != "" {
 		t.Errorf("an existing note with the same time was reported: %s", p)
