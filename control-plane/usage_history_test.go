@@ -782,6 +782,9 @@ func TestStopIsNotHeldByTheAccountingRead(t *testing.T) {
 // When the caller's own deadline is nearer than usageStopProbeTimeout, the read gets at most half
 // of what is left, and the Stop still runs on a live context.
 func TestStopKeepsHalfOfACloseDeadline(t *testing.T) {
+	old := usageStopMinRemaining
+	usageStopMinRemaining = 0
+	t.Cleanup(func() { usageStopMinRemaining = old })
 	st, mgr, ws, _, rt := historyFixture(t, "running")
 	if err := st.BeginLaunch(context.Background(), store.Launch{ID: "L", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
 		TenantID: ws.TenantID, StartedAt: time.Now().Add(-10 * time.Minute).Unix()}); err != nil {
@@ -805,5 +808,41 @@ func TestStopKeepsHalfOfACloseDeadline(t *testing.T) {
 	}
 	if *rt.stops != 2 || stopErr != nil {
 		t.Fatalf("stops=%d, stop context err=%v", *rt.stops, stopErr)
+	}
+}
+
+// countingStateRT counts State calls; a nil-deadline-free read would block on slowStateRT.
+type countingStateRT struct {
+	slowStateRT
+	reads *int
+}
+
+func (r countingStateRT) State(ctx context.Context) string {
+	*r.reads++
+	return r.slowStateRT.State(ctx)
+}
+
+// Below usageStopMinRemaining the accounting read is skipped altogether, so a Stop with a close
+// deadline keeps all of it; the launch then counts to the stop, as for any read that cannot tell.
+func TestStopSkipsTheAccountingReadNearTheDeadline(t *testing.T) {
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	if err := st.BeginLaunch(context.Background(), store.Launch{ID: "L", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
+		TenantID: ws.TenantID, StartedAt: time.Now().Add(-10 * time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	var stopErr error
+	reads := 0
+	srt := countingStateRT{slowStateRT{taskBoxRT: taskBoxRT{boxRT: rt}, stopCtxErr: &stopErr}, &reads}
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	begin := time.Now()
+	if err := mgr.stopRecorded(ctx, ws, srt, false); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 0 || *rt.stops != 1 || stopErr != nil || time.Since(begin) > 100*time.Millisecond {
+		t.Fatalf("reads=%d stops=%d stopErr=%v after %v, want no read and a prompt live Stop", reads, *rt.stops, stopErr, time.Since(begin))
+	}
+	if l, _, _ := st.GetLaunch(context.Background(), "L"); l.StoppedAt-l.StartedAt < 9*60 {
+		t.Fatalf("closed %ds after its start, want the stop", l.StoppedAt-l.StartedAt)
 	}
 }
