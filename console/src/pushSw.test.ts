@@ -37,6 +37,14 @@ describe("push handler", () => {
     expect(sw.shown[0].opts.body).toBe("質問があります");
     expect(sw.shown[0].opts.data.session).toBe("my-sess");
   });
+  it("words a failed auto-run turn in both languages, not as the generic fallback", async () => {
+    const ja = loadSw("ja");
+    await push(ja, { v: 1, kind: "turn-failed", session: "my-sess", name: "My session" });
+    expect(ja.shown[0].opts.body).toBe("自動実行のターンが失敗しました");
+    const en = loadSw("en");
+    await push(en, { v: 1, kind: "turn-failed", session: "my-sess", name: "My session" });
+    expect(en.shown[0].opts.body).toBe("An auto-run turn failed");
+  });
   it("prefixes the title with a localized origin label, none for own", async () => {
     const want: Record<string, [string, string]> = {
       own: ["S", "S"],

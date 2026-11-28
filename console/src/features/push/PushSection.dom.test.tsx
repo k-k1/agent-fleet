@@ -104,7 +104,7 @@ describe("PushSection", () => {
   it("shows the per-kind choices from the server and the device list", async () => {
     const host = await mount();
     const boxes = [...host.querySelectorAll<HTMLInputElement>(".push-kind input")];
-    expect(boxes.map((b) => b.checked)).toEqual([true, true, true, false]);
+    expect(boxes.map((b) => b.checked)).toEqual([true, true, true, false, true]);
     expect(host.querySelector(".push-devices")?.textContent).toContain("Safari / iOS");
   });
   it("saves a turned-off kind as the full off list", async () => {

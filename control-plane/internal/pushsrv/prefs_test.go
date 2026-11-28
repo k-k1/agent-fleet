@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 
@@ -15,6 +16,26 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
+
+// A failed auto-run turn is its own kind: the member can turn it off apart from answer-ready, and
+// a saved off list that names it is accepted rather than refused as an unknown kind.
+func TestTurnFailedIsAPrefKindOfItsOwn(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	if !slices.Contains(PrefKinds(), "turn-failed") {
+		t.Fatalf("PrefKinds %v lacks turn-failed", PrefKinds())
+	}
+	_ = f.st.PutPushOffKinds(context.Background(), "m1", []string{"answer-ready"})
+	f.deliver(note("turn-failed"))
+	if f.count() != 1 {
+		t.Fatalf("turn-failed was not pushed while only answer-ready is off: %d", f.count())
+	}
+	_ = f.st.PutPushOffKinds(context.Background(), "m1", []string{"turn-failed"})
+	f.deliver(note("turn-failed"))
+	if f.count() != 1 {
+		t.Fatal("turn-failed was pushed after the member turned it off")
+	}
+}
 
 func TestOffKindIsNotPushedOthersAre(t *testing.T) {
 	f := newFixture(t)

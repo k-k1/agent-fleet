@@ -19,6 +19,7 @@ const KIND_LABEL = {
   "plan-approval": "push.kind_plan",
   "permission-request": "push.kind_permission",
   "answer-ready": "push.kind_answer",
+  "turn-failed": "push.kind_turn_failed",
 } as const;
 
 // The three origin rows; each has a switch for the session itself and one for the sessions it starts.

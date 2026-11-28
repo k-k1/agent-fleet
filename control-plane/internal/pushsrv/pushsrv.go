@@ -36,9 +36,12 @@ import (
 
 // pushKinds are the notification kinds that reach a phone: the ones the desktop notification and
 // the chat bridge treat as "a session needs you or finished". Everything else (schedules,
-// usage, image refresh, ...) stays in the notification center.
+// usage, image refresh, ...) stays in the notification center. turn-failed stands in for the
+// answer-ready a failed auto-run turn used to raise: leaving it out silences a failure on the
+// phone while a success still pushes.
 var pushKinds = map[string]bool{
 	"question": true, "plan-approval": true, "permission-request": true, "answer-ready": true,
+	"turn-failed": true,
 }
 
 // pushOrigins are the origin switches a member may turn off, each with the (root, child) pair it

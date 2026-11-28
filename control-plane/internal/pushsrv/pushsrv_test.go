@@ -472,15 +472,16 @@ func TestOnNotificationFilters(t *testing.T) {
 	if f.count() != 0 {
 		t.Fatalf("pushed %d messages that must not be pushed", f.count())
 	}
-	for _, k := range []string{"question", "plan-approval", "permission-request", "answer-ready"} {
+	kinds := []string{"question", "plan-approval", "permission-request", "answer-ready", "turn-failed"}
+	for _, k := range kinds {
 		f.svc.onNotification(note(k))
 	}
 	deadline := time.Now().Add(3 * time.Second)
-	for f.count() < 4 && time.Now().Before(deadline) {
+	for f.count() < len(kinds) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if f.count() != 4 {
-		t.Fatalf("pushed %d of 4 kinds", f.count())
+	if f.count() != len(kinds) {
+		t.Fatalf("pushed %d of %d kinds", f.count(), len(kinds))
 	}
 }
 

@@ -46,6 +46,12 @@ func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any {
 
 // LiveStateTraits is agents.LiveStater: the classification of events.jsonl (LiveState); no hooks,
 // so that poll is where a Terminal turn ends.
+//
+// QueueTurnFailure stays off on purpose: it makes a failed turn retire an auto-run as failed, and
+// that is only safe where a failure read off the source was verified to be final for the turn.
+// That was done for agy's typed executor-error step; a copilot session.error has not been shown
+// to end the turn (the CLI can go on after one), so it is reported as a turn failure only, never
+// as a reason to close the run. Opt in together with a live check of that.
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 30 * time.Second, TurnFailure: TurnFailure}
 }
