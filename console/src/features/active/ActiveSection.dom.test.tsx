@@ -22,6 +22,15 @@ vi.mock("../../core/api/client.ts", () => ({
   getUser: () => "",
 }));
 
+// The kinds the ▼ menu offers and the quick launch are the Repositories rows' own (useRepoRail /
+// useQuickLaunch, tested with them); here only what the heading does with them.
+const { rail, quickLaunch } = vi.hoisted(() => ({
+  rail: { launchKinds: ["claude", "codex"] as string[], access: { kinds: null, refresh: async () => {} } },
+  quickLaunch: vi.fn(async (..._args: unknown[]): Promise<void | "dialog"> => undefined),
+}));
+vi.mock("../repos/useRepoRail.ts", () => ({ useRepoRailContext: () => rail }));
+vi.mock("../repos/useQuickLaunch.ts", () => ({ useQuickLaunch: () => quickLaunch }));
+
 const { ActiveSection } = await import("./ActiveSection.tsx");
 const { ACTIVE_EXPANDED_KEY, ACTIVE_EXPANDED_MAX, ACTIVE_GROUPS_FOLDED_KEY, ACTIVE_GROUPS_OPENED_KEY } = await import("./store.ts");
 const { readFoldValue, setFoldScope, writeFoldValue } = await import("../../lib/foldStore.ts");
@@ -307,11 +316,17 @@ describe("ActiveSection", () => {
     const base = { ...remote, name: "app-clone", path: "/home/dev/repos/app-clone", branch: "main" };
     const worktree = { ...remote, name: "app@task", path: "/home/dev/repos/app@task", branch: "task", worktree: true, parent: base.name };
     const second = { ...base, name: "second-clone", path: "/home/dev/repos/second-clone", branch: "develop" };
-    const launchButton = () => host.querySelector<HTMLButtonElement>(".act-launch")!;
-    const menuItems = () => [...document.querySelectorAll<HTMLButtonElement>('.act-launch-menu [role="menuitem"]')];
+    const mainButton = () => host.querySelector<HTMLButtonElement>(".launch-split .launch-main")!;
+    const caretButton = () => host.querySelector<HTMLButtonElement>(".launch-split .launch-caret")!;
+    const cloneItems = () => [...document.querySelectorAll<HTMLButtonElement>('.act-launch-menu [role="menuitem"]')];
+    const kindItems = () => [...document.querySelectorAll<HTMLButtonElement>('.launch-menu [role="menuitem"]')];
+    const anyMenu = () => document.querySelectorAll(".act-launch-menu, .launch-menu").length;
     let restoreLayout: () => void;
 
     beforeEach(() => {
+      quickLaunch.mockClear();
+      quickLaunch.mockResolvedValue(undefined);
+      rail.launchKinds = ["claude", "codex"];
       const layout = vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockImplementation(function (this: HTMLElement) {
         return this.parentElement;
       });
@@ -320,77 +335,159 @@ describe("ActiveSection", () => {
 
     afterEach(() => restoreLayout());
 
-    async function openCloneMenu() {
+    async function openCloneMenu(part: "main" | "caret") {
       useReposStore.setState({ repos: [second, worktree, base] });
       await render([sess("wt", { repo: worktree.name, worktree: true })]);
-      const button = launchButton();
+      const button = part === "main" ? mainButton() : caretButton();
       button.focus();
       await act(async () => button.click());
       expect(button.getAttribute("aria-haspopup")).toBe("menu");
       expect(button.getAttribute("aria-expanded")).toBe("true");
-      expect(document.activeElement).toBe(menuItems()[0]);
+      expect(document.activeElement).toBe(cloneItems()[0]);
       return button;
     }
+
+    it("is the Repositories row's split button: same classes, play icon, Launch label and a caret", async () => {
+      useReposStore.setState({ repos: [worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      expect(host.querySelectorAll(".launch-split")).toHaveLength(1);
+      expect(mainButton().textContent?.trim()).toBe("Launch");
+      expect(mainButton().querySelector(".codicon-play")).not.toBeNull();
+      expect(caretButton().querySelector(".codicon-chevron-down")).not.toBeNull();
+      // The generic Button (which grows to 44px on touch and sticks out of the heading) is not used.
+      expect(host.querySelector(".act-gtitle .ui-btn")).toBeNull();
+    });
 
     it("opens the actual base checkout from a folded group with only a worktree session", async () => {
       const unrelated = { remote: "github.com", remotePath: "other/app", name: "app", path: "/home/dev/repos/app" };
       useReposStore.setState({ repos: [worktree, unrelated, base] });
       await render([sess("wt", { repo: worktree.name, worktree: true }), sess("sp", { space: "q3-abcdef" }), sess("home")]);
-      expect(host.querySelectorAll(".act-launch")).toHaveLength(1);
+      expect(host.querySelectorAll(".launch-split")).toHaveLength(1);
       const fold = host.querySelector<HTMLButtonElement>(".act-gfold")!;
       await act(async () => fold.click());
-      const button = launchButton();
-      expect(button.textContent).toBe("Launch");
+      const button = mainButton();
       expect(button.getAttribute("aria-label")).toBe("Launch in github.com/acme/app");
       expect(button.disabled).toBe(false);
       expect(button.getAttribute("aria-haspopup")).toBe("dialog");
       expect(button.hasAttribute("aria-expanded")).toBe(false);
       await act(async () => button.click());
       expect(useLaunchTarget.getState().target).toEqual(base);
+      expect(useLaunchTarget.getState().initialKind).toBe("");
       expect(fold.getAttribute("aria-expanded")).toBe("false");
       expect(cards()).toEqual(["sp", "home"]);
     });
 
-    it("offers folder names for multiple local clones and opens the selected one", async () => {
-      const button = await openCloneMenu();
-      expect(menuItems().map((item) => item.textContent)).toEqual(["app-clone", "second-clone"]);
+    it("quick-launches a kind from the caret in the base checkout, in a split pane on Ctrl-click, leaving the fold alone", async () => {
+      useReposStore.setState({ repos: [worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      const fold = host.querySelector<HTMLButtonElement>(".act-gfold")!;
+      await act(async () => fold.click());
+      expect(caretButton().getAttribute("aria-label")).toBe("Quick launch in github.com/acme/app");
+      await act(async () => caretButton().click());
+      expect(kindItems().map((item) => item.textContent?.trim())).toEqual(["Claude", "Codex"]);
+      expect(document.activeElement).toBe(kindItems()[0]);
+      await act(async () => kindItems()[1].click());
+      expect(quickLaunch).toHaveBeenCalledWith(base, "codex", false);
+      expect(anyMenu()).toBe(0);
+      expect(document.activeElement).toBe(caretButton());
       expect(useLaunchTarget.getState().target).toBeNull();
-      await act(async () => menuItems()[1].click());
+      expect(fold.getAttribute("aria-expanded")).toBe("false");
+      await act(async () => caretButton().click());
+      await act(async () => kindItems()[0].dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+      expect(quickLaunch).toHaveBeenLastCalledWith(base, "claude", true);
+    });
+
+    it("opens the dialog on the kind when the quick launch hands the choice back", async () => {
+      quickLaunch.mockResolvedValue("dialog");
+      useReposStore.setState({ repos: [worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      await act(async () => caretButton().click());
+      await act(async () => kindItems()[1].click());
+      expect(useLaunchTarget.getState().target).toEqual(base);
+      expect(useLaunchTarget.getState().initialKind).toBe("codex");
+    });
+
+    it("asks which clone first for the main button, then opens the selected one in the dialog", async () => {
+      const button = await openCloneMenu("main");
+      expect(cloneItems().map((item) => item.textContent)).toEqual(["app-clone", "second-clone"]);
+      expect(useLaunchTarget.getState().target).toBeNull();
+      await act(async () => cloneItems()[1].click());
       expect(useLaunchTarget.getState().target).toEqual(second);
       expect(button.getAttribute("aria-expanded")).toBe("false");
       expect(document.activeElement).toBe(button);
     });
 
-    it.each(["Escape", "Tab", "outside press"])("closes the clone menu on %s without launching", async (action) => {
-      const button = await openCloneMenu();
+    it("asks which clone first for the caret too, then lists the kinds for that clone", async () => {
+      const caret = await openCloneMenu("caret");
+      expect(mainButton().getAttribute("aria-expanded")).toBe("false");
+      await act(async () => cloneItems()[1].click());
+      expect(cloneItems()).toHaveLength(0);
+      expect(kindItems()).toHaveLength(2);
+      expect(document.activeElement).toBe(kindItems()[0]);
+      expect(caret.getAttribute("aria-expanded")).toBe("true");
+      expect(quickLaunch).not.toHaveBeenCalled();
+      await act(async () => kindItems()[0].click());
+      expect(quickLaunch).toHaveBeenCalledWith(second, "claude", false);
+      expect(useLaunchTarget.getState().target).toBeNull();
+      expect(document.activeElement).toBe(caret);
+    });
+
+    it.each(["main", "caret"] as const)("pressing the other part while the %s's clone menu is open switches menus", async (part) => {
+      await openCloneMenu(part);
+      const other = part === "main" ? caretButton() : mainButton();
+      await act(async () => other.click());
+      expect(other.getAttribute("aria-expanded")).toBe("true");
+      expect(cloneItems()).toHaveLength(2);
+    });
+
+    it.each([
+      ["main", "Escape"], ["main", "Tab"], ["main", "outside press"],
+      ["caret", "Escape"], ["caret", "Tab"], ["caret", "outside press"],
+    ] as const)("closes the %s's clone menu on %s without launching", async (part, action) => {
+      const button = await openCloneMenu(part);
       await act(async () => {
         if (action === "outside press") {
           for (const type of ["mousedown", "mouseup", "click"]) {
             host.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, detail: 1 }));
           }
         } else {
-          menuItems()[0].dispatchEvent(new KeyboardEvent("keydown", { key: action, bubbles: true }));
+          cloneItems()[0].dispatchEvent(new KeyboardEvent("keydown", { key: action, bubbles: true }));
         }
       });
-      expect(menuItems()).toHaveLength(0);
+      expect(anyMenu()).toBe(0);
       expect(button.getAttribute("aria-expanded")).toBe("false");
       expect(document.activeElement).toBe(button);
       expect(useLaunchTarget.getState().target).toBeNull();
+      expect(quickLaunch).not.toHaveBeenCalled();
+    });
+
+    it("closes the kind menu on Escape and Tab, returning focus to the caret", async () => {
+      useReposStore.setState({ repos: [worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      for (const key of ["Escape", "Tab"]) {
+        await act(async () => caretButton().click());
+        expect(kindItems()).toHaveLength(2);
+        await act(async () => kindItems()[0].dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })));
+        expect(anyMenu()).toBe(0);
+        expect(document.activeElement).toBe(caretButton());
+      }
+      expect(quickLaunch).not.toHaveBeenCalled();
     });
 
     it.each(["one clone", "no clones", "stopped"])("restores heading focus when the open menu becomes unavailable with %s", async (change) => {
-      const button = await openCloneMenu();
+      const button = await openCloneMenu("main");
       await act(async () => {
         if (change === "stopped") useWorkspaceStore.setState({ state: "stopped" });
         else useReposStore.setState({ repos: change === "one clone" ? [worktree, base] : [worktree] });
       });
-      expect(menuItems()).toHaveLength(0);
+      expect(anyMenu()).toBe(0);
       expect(document.activeElement).toBe(change === "one clone" ? button : host.querySelector(".act-gfold"));
       await act(async () => {
         useReposStore.setState({ repos: [worktree, base, second] });
         useWorkspaceStore.setState({ state: "running" });
       });
       expect(button.getAttribute("aria-expanded")).toBe("false");
+      expect(anyMenu()).toBe(0);
       expect(useLaunchTarget.getState().target).toBeNull();
     });
 
@@ -398,27 +495,42 @@ describe("ActiveSection", () => {
       const local = { name: "local", path: "/home/dev/repos/local" };
       useReposStore.setState({ repos: [{ name: "local@task", path: "/home/dev/repos/local@task", worktree: true, parent: local.name }, local] });
       await render([sess("wt", { repo: "local@task", worktree: true })]);
-      await act(async () => launchButton().click());
+      await act(async () => mainButton().click());
       expect(useLaunchTarget.getState().target).toEqual(local);
     });
 
-    it("disables launch while the workspace is stopped or a base checkout cannot be resolved", async () => {
+    it("disables both parts while the workspace is stopped or a base checkout cannot be resolved", async () => {
       useWorkspaceStore.setState({ state: "stopped" });
       useReposStore.setState({ repos: [worktree, base] });
       await render([sess("wt", { repo: worktree.name, worktree: true })]);
-      expect(launchButton().disabled).toBe(true);
-      expect(launchButton().getAttribute("aria-description")).toBe("Start the workspace to launch a session.");
-      await act(async () => launchButton().click());
+      for (const part of [mainButton, caretButton]) {
+        expect(part().disabled).toBe(true);
+        expect(part().getAttribute("aria-description")).toBe("Start the workspace to launch a session.");
+        await act(async () => part().click());
+      }
       expect(useLaunchTarget.getState().target).toBeNull();
+      expect(anyMenu()).toBe(0);
 
       await act(async () => {
         useWorkspaceStore.setState({ state: "running" });
         useReposStore.setState({ repos: [worktree, { ...base, path: undefined }] });
       });
-      expect(launchButton().disabled).toBe(true);
-      expect(launchButton().getAttribute("aria-description")).toBe("No local checkout is available for this repository.");
-      await act(async () => launchButton().click());
+      for (const part of [mainButton, caretButton]) {
+        expect(part().disabled).toBe(true);
+        expect(part().getAttribute("aria-description")).toBe("No local checkout is available for this repository.");
+        await act(async () => part().click());
+      }
       expect(useLaunchTarget.getState().target).toBeNull();
+      expect(anyMenu()).toBe(0);
+    });
+
+    it("leaves Launch disabled when no agent can start in a directory", async () => {
+      rail.launchKinds = [];
+      useReposStore.setState({ repos: [worktree, base] });
+      await render([sess("wt", { repo: worktree.name, worktree: true })]);
+      expect(mainButton().disabled).toBe(true);
+      expect(mainButton().title).toBe("No available agents");
+      expect(caretButton().disabled).toBe(true);
     });
   });
 

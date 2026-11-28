@@ -1,68 +1,150 @@
+// ActiveRepoLaunch — the Launch split button on an Active repository heading: the Repositories
+// row's own LaunchSplit (▷ Launch opens the dialog, ▼ the per-kind quick menu). A heading stands
+// for every local clone of one remote, so with several of them the choice of clone comes first
+// for both parts, as a small menu of folder names.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../../lib/i18n/index.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
-import { Button } from "../../ui/Button.tsx";
+import { LaunchKindItems, LaunchSplit } from "../repos/LaunchSplit.tsx";
 import { useLaunchTarget, type Repo } from "../repos/store.ts";
+import type { QuickLaunch } from "../repos/useQuickLaunch.ts";
 
-export function ActiveRepoLaunch({ label, copies, running }: { label: string; copies: Repo[]; running: boolean }) {
+/** What is open under the split button: the choice of clone (then = what the choice is for), or
+ *  the per-kind menu of one clone. */
+type Step = { menu: "clone"; then: "dialog" | "kinds" } | { menu: "kinds"; copy: string };
+
+export interface ActiveRepoLaunchProps {
+  label: string;
+  /** The local checkouts of this remote, base clones only. */
+  copies: Repo[];
+  running: boolean;
+  /** Kinds the ▼ menu offers (connection- and policy-gated, as on a Repositories row). */
+  kinds: string[];
+  /** At least one of them runs in a directory: without one the dialog has nothing to offer. */
+  hasAgents: boolean;
+  quickLaunch: QuickLaunch;
+}
+
+export function ActiveRepoLaunch({ label, copies, running, kinds, hasAgents, quickLaunch }: ActiveRepoLaunchProps) {
   const tr = useT();
-  const [choosing, setChoosing] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const menu = useRef<HTMLUListElement>(null);
+  const [step, setStep] = useState<Step | null>(null);
+  const split = useRef<HTMLDivElement>(null);
+  const mainBtn = useRef<HTMLButtonElement>(null);
+  const caretBtn = useRef<HTMLButtonElement>(null);
+  // The button that opened the current menu: focus goes back to it when the menu closes.
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const cloneMenu = useRef<HTMLUListElement>(null);
+  const kindMenu = useRef<HTMLDivElement>(null);
   const multiple = copies.length > 1;
-  const open = choosing && running && multiple;
-  const disabled = !running || copies.length === 0;
-  const unavailable = disabled ? tr(!running ? "active.launch_stopped" : "active.launch_missing") : undefined;
+  const kindsCopy = step?.menu === "kinds" ? copies.find((c) => c.name === step.copy) : undefined;
+  const cloneOpen = step?.menu === "clone" && running && multiple;
+  const kindsOpen = step?.menu === "kinds" && running && !!kindsCopy && kinds.length > 0;
+  const open = cloneOpen || kindsOpen;
+  const noCopy = copies.length === 0;
+  const unavailable = !running ? tr("active.launch_stopped") : noCopy ? tr("active.launch_missing") : undefined;
   const close = () => {
-    setChoosing(false);
-    trigger.current?.focus({ preventScroll: true });
+    setStep(null);
+    opener.current?.focus({ preventScroll: true });
   };
+  // A menu whose conditions no longer hold (a clone went away, the workspace stopped) is dropped
+  // rather than left to reopen when they come back.
   useEffect(() => {
-    if (!running || !multiple) setChoosing(false);
-  }, [running, multiple]);
-  useDismiss([trigger, menu], open, close);
+    if (step && !open) setStep(null);
+  }, [step, open]);
+  useDismiss([split, cloneMenu, kindMenu], open, close);
   useLayoutEffect(() => {
-    if (!open || !trigger.current || !menu.current) return;
-    const anchor = trigger.current.getBoundingClientRect();
-    placeFixed(menu.current, anchor.right - menu.current.offsetWidth, anchor.bottom + 2, trigger.current.closest<HTMLElement>(".app-rail"));
+    const menu = cloneMenu.current ?? kindMenu.current;
+    if (!open || !split.current || !menu) return;
+    const anchor = split.current.getBoundingClientRect();
+    placeFixed(menu, anchor.right - menu.offsetWidth, anchor.bottom + 2, split.current.closest<HTMLElement>(".app-rail"));
   });
   useLayoutEffect(() => {
     if (!open) return;
-    const opener = trigger.current;
+    const from = opener.current;
     return () => {
       // A catalogue update can remove the focused menu item and disable its opener at once.
-      if (!opener?.isConnected || document.activeElement !== document.body) return;
-      const fallback = opener.disabled ? opener.closest(".act-gtitle")?.querySelector<HTMLButtonElement>(".act-gfold") : opener;
+      if (!from?.isConnected || document.activeElement !== document.body) return;
+      const fallback = from.disabled ? from.closest(".act-gtitle")?.querySelector<HTMLButtonElement>(".act-gfold") : from;
       fallback?.focus({ preventScroll: true });
     };
   }, [open]);
-  useMenuRoving(menu, open);
+  // One instance per menu: the roving focus starts when a menu opens, and the move from the clone
+  // menu to the kind menu keeps `open` true.
+  useMenuRoving(cloneMenu, cloneOpen);
+  useMenuRoving(kindMenu, kindsOpen);
 
-  const launch = (copy: Repo) => {
+  const openDialog = (copy: Repo) => {
     close();
     useLaunchTarget.getState().open(copy);
   };
+  const pick = (copy: Repo, kind: string, newPane: boolean) => {
+    close();
+    void Promise.resolve(quickLaunch(copy, kind, newPane)).then((res) => {
+      if (res === "dialog") useLaunchTarget.getState().open(copy, "", false, kind);
+    });
+  };
+  const toggle = (from: HTMLButtonElement | null, next: Step, matches: (s: Step) => boolean) => {
+    opener.current = from;
+    setStep(step && open && matches(step) ? null : next);
+  };
+  // The caret's own menus: pressing it with the dialog's clone choice open switches to its menu.
+  const forKinds = (s: Step) => s.menu === "kinds" || s.then === "kinds";
   const action = tr("active.launch_repo", { repo: label });
+  const mainOpen = cloneOpen && step?.menu === "clone" && step.then === "dialog";
+  const caretOpen = open && !mainOpen;
   return (
     <>
-      <Button small className="act-launch" ref={trigger} disabled={disabled}
-        aria-label={action} aria-description={unavailable} title={unavailable || action}
-        aria-haspopup={multiple ? "menu" : "dialog"} aria-expanded={multiple ? open : undefined}
-        onClick={() => multiple ? setChoosing(!open) : launch(copies[0])}>
-        {tr("active.launch")}
-      </Button>
-      {open && createPortal(
-        <ul className="ui-menu act-launch-menu" ref={menu} role="menu" aria-label={tr("active.launch_choose")}
+      <LaunchSplit
+        running={running}
+        hasAgents={hasAgents}
+        unavailable={unavailable}
+        caretDisabled={noCopy || kinds.length === 0}
+        mainLabel={action}
+        splitRef={split}
+        mainRef={mainBtn}
+        caretRef={caretBtn}
+        mainProps={{
+          "aria-description": unavailable,
+          "aria-haspopup": multiple ? "menu" : "dialog",
+          "aria-expanded": multiple ? mainOpen : undefined,
+        }}
+        caretProps={{
+          "aria-label": tr("active.launch_quick_repo", { repo: label }),
+          "aria-description": unavailable,
+          "aria-haspopup": "menu",
+          "aria-expanded": caretOpen,
+        }}
+        onMain={() => {
+          if (multiple) toggle(mainBtn.current, { menu: "clone", then: "dialog" }, (s) => s.menu === "clone" && s.then === "dialog");
+          else if (copies[0]) openDialog(copies[0]);
+        }}
+        onCaret={() => {
+          if (multiple) toggle(caretBtn.current, { menu: "clone", then: "kinds" }, forKinds);
+          else if (copies[0]) toggle(caretBtn.current, { menu: "kinds", copy: copies[0].name }, forKinds);
+        }}
+      />
+      {cloneOpen && createPortal(
+        <ul className="ui-menu act-launch-menu" ref={cloneMenu} role="menu" aria-label={tr("active.launch_choose")}
           onKeyDown={(e) => { if (e.key === "Tab") close(); }}>
           {copies.map((copy) => (
             <li key={copy.name} role="none">
-              <button type="button" className="ui-menu-item" role="menuitem" tabIndex={-1} onClick={() => launch(copy)}>{copy.name}</button>
+              <button type="button" className="ui-menu-item" role="menuitem" tabIndex={-1}
+                onClick={() => (step?.menu === "clone" && step.then === "kinds" ? setStep({ menu: "kinds", copy: copy.name }) : openDialog(copy))}>
+                {copy.name}
+              </button>
             </li>
           ))}
         </ul>,
+        document.body,
+      )}
+      {kindsOpen && kindsCopy && createPortal(
+        <div className="ui-menu launch-menu" ref={kindMenu} onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => { if (e.key === "Tab") close(); }}>
+          <LaunchKindItems kinds={kinds} onPick={(kind, newPane) => pick(kindsCopy, kind, newPane)} />
+        </div>,
         document.body,
       )}
     </>

@@ -620,6 +620,10 @@
 }
 .launch-split {
   display: flex;
+  flex: none;
+  /* The buttons take their font from here (font: inherit); a bold heading would otherwise make the
+     Active view's copy wider than a Repositories row's. */
+  font-weight: 400;
 }
 /* Old .chip.launch look: accent text on the chip base, teal-ish border. */
 .launch-main,
