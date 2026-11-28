@@ -8,7 +8,8 @@ import "github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 // falls back to a weaker identity instead of guessing between two slots.
 //
 // slotID reads a slot's mapped id ("" for a slot that cannot match) and is where a caller puts
-// its cheap pre-filters (kind, working directory), because it runs for every live meta.
+// its cheap pre-filters (kind, working directory), because it runs for every non-archived,
+// validly named meta until a second match makes the answer ambiguous.
 // accept runs only on a slot whose id already matched, for the checks that cost a probe; nil
 // accepts all. A rejected match does not count towards ambiguity.
 func UniqueSlotForSessionID(metas []session.Meta, id string, slotID func(session.Meta) string, accept func(session.Meta) bool) (string, bool) {
