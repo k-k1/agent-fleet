@@ -191,6 +191,12 @@ func (m *manager) stopRecordedAt(ctx context.Context, ws store.Workspace, rt run
 // after them always keeps at least half its time. A variable so a test can shrink it.
 var usageStopProbeTimeout = 5 * time.Second
 
+// usageStopMinRemaining is the least time a caller's deadline must have left for noTaskUp to read
+// at all. Below it the read is skipped and the launch counts to the stop: the half-of-what-is-left
+// rule alone still lets a slow read use its whole share and starve a Stop that needs more than the
+// other half (600 ms left, a 300 ms read, a 400 ms stop). A variable so a test can shrink it.
+var usageStopMinRemaining = 2 * time.Second
+
 // noTaskUp reports whether rt is about to be stopped with no task up and not running (a launch
 // still waiting for a placement, or one whose start claim lapsed back to stopped), so its launch
 // ends at its last sighting rather than at the stop: minutes spent waiting for a placement that
@@ -204,7 +210,11 @@ func noTaskUp(ctx context.Context, rt runtime.Runtime) bool {
 	}
 	budget := usageStopProbeTimeout
 	if dl, ok := ctx.Deadline(); ok {
-		budget = min(budget, time.Until(dl)/2)
+		left := time.Until(dl)
+		if left < usageStopMinRemaining {
+			return false
+		}
+		budget = min(budget, left/2)
 	}
 	pctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()

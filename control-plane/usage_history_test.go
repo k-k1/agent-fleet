@@ -782,6 +782,9 @@ func TestStopIsNotHeldByTheAccountingRead(t *testing.T) {
 // When the caller's own deadline is nearer than usageStopProbeTimeout, the read gets at most half
 // of what is left, and the Stop still runs on a live context.
 func TestStopKeepsHalfOfACloseDeadline(t *testing.T) {
+	old := usageStopMinRemaining
+	usageStopMinRemaining = 0
+	t.Cleanup(func() { usageStopMinRemaining = old })
 	st, mgr, ws, _, rt := historyFixture(t, "running")
 	if err := st.BeginLaunch(context.Background(), store.Launch{ID: "L", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
 		TenantID: ws.TenantID, StartedAt: time.Now().Add(-10 * time.Minute).Unix()}); err != nil {
@@ -805,5 +808,76 @@ func TestStopKeepsHalfOfACloseDeadline(t *testing.T) {
 	}
 	if *rt.stops != 2 || stopErr != nil {
 		t.Fatalf("stops=%d, stop context err=%v", *rt.stops, stopErr)
+	}
+}
+
+// countingStateRT counts State calls; a nil-deadline-free read would block on slowStateRT.
+type countingStateRT struct {
+	slowStateRT
+	reads *int
+}
+
+func (r countingStateRT) State(ctx context.Context) string {
+	*r.reads++
+	return r.slowStateRT.State(ctx)
+}
+
+// Below usageStopMinRemaining the accounting read is skipped altogether, so a Stop with a close
+// deadline keeps all of it; the launch then counts to the stop, as for any read that cannot tell.
+func TestStopSkipsTheAccountingReadNearTheDeadline(t *testing.T) {
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	if err := st.BeginLaunch(context.Background(), store.Launch{ID: "L", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
+		TenantID: ws.TenantID, StartedAt: time.Now().Add(-10 * time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	var stopErr error
+	reads := 0
+	srt := countingStateRT{slowStateRT{taskBoxRT: taskBoxRT{boxRT: rt}, stopCtxErr: &stopErr}, &reads}
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	if err := mgr.stopRecorded(ctx, ws, srt, false); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 0 || *rt.stops != 1 || stopErr != nil {
+		t.Fatalf("reads=%d stops=%d stopErr=%v, want no read and a live Stop", reads, *rt.stops, stopErr)
+	}
+	if l, _, _ := st.GetLaunch(context.Background(), "L"); l.StoppedAt-l.StartedAt < 9*60 {
+		t.Fatalf("closed %ds after its start, want the stop", l.StoppedAt-l.StartedAt)
+	}
+}
+
+// probeRT records the context State is read with and reports a launch that never came up.
+type probeRT struct {
+	taskBoxRT
+	reads    int
+	budget   time.Duration
+	hasLimit bool
+}
+
+func (r *probeRT) State(ctx context.Context) string {
+	r.reads++
+	if dl, ok := ctx.Deadline(); ok {
+		r.hasLimit, r.budget = true, time.Until(dl)
+	}
+	return "stopped"
+}
+
+// With the default margin and enough deadline left, the read still happens and gets at most half
+// of what is left; with no deadline it gets the plain probe timeout. Guards against the skip
+// swallowing every deadline-carrying context.
+func TestNoTaskUpReadsWhenTheDeadlineAllowsIt(t *testing.T) {
+	_, _, _, _, rt := historyFixture(t, "stopped")
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	p := &probeRT{taskBoxRT: taskBoxRT{boxRT: rt}}
+	if !noTaskUp(ctx, p) {
+		t.Fatal("noTaskUp = false, want true: stopped with no task up")
+	}
+	if p.reads != 1 || !p.hasLimit || p.budget > 4*time.Second+50*time.Millisecond {
+		t.Fatalf("reads=%d limited=%v budget=%v, want one read bounded to about half of 8s", p.reads, p.hasLimit, p.budget)
+	}
+	p2 := &probeRT{taskBoxRT: taskBoxRT{boxRT: rt}}
+	if !noTaskUp(context.Background(), p2) || p2.reads != 1 || !p2.hasLimit || p2.budget > usageStopProbeTimeout {
+		t.Fatalf("no deadline: reads=%d limited=%v budget=%v", p2.reads, p2.hasLimit, p2.budget)
 	}
 }
