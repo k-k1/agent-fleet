@@ -63,7 +63,7 @@ The dialog asks what, then with what, then where, then the details.
 1. If you want, write an instruction in **First prompt (optional)**. It is sent once, automatically, as soon as the session is ready. Left empty, the session just opens
 2. Check the **run-with strip** under the prompt ([Run with](#run-with)): the agent, the model route and the model
 3. **Location** shows where the session will run: a new worktree by default. Press **Change** only to change it
-4. **Details** shows any setting that is not at its default. Press **Change** to change the rest ([Details](#details))
+4. While folded, **Details** summarises settings such as reasoning effort, start mode and approvals, defaults included (for example "effort default · Normal start · Approvals skipped"). Press **Change** to change them ([Details](#details))
 5. Press the launch button. It names what will run, for example **Start in a worktree with Claude Code · Opus**
    (**Start with Claude Code · Opus** when you start directly in this copy)
 
@@ -179,7 +179,7 @@ committing or switching branches.
 If your tenant administrator set launch defaults, the dialog opens with them filled in: the team's agent, model, execution method, permission prompts and budget. **Start** lists the team's repositories first, marked "Team". A team repository you have not cloned yet is listed there too; pick it to clone it and continue. It is offered only when exactly one of GitHub and Bitbucket is connected for you, because that decides where it is cloned from. With both connected, or neither, clone it with **Clone a new repository…** instead.
 
 - Your own choices win. The last choice in a repository and the values you set in ⚙ Settings → Agents are used before the team's. A Settings value that equals Agent Fleet's built-in one counts as not set, so to keep such a value against a team default, save it with **Use as my default**
-- Under **More**, **Use as my default** saves the dialog's current agent, model, execution method, permission prompts and budget as your starting point whenever you start that agent. The model applies to that agent only. A model or budget you leave empty is not set, so the team's value is used. A value the server would refuse (an agent outside the team list, a budget over $10000) disables the button and says why. **Clear my default** puts the team's back. Your Settings are not changed
+- In **Details**, **Use as my default** saves the dialog's current agent, model, execution method, permission prompts and budget as your starting point whenever you start that agent. The model applies to that agent only. A model or budget you leave empty is not set, so the team's value is used. A value the server would refuse (an agent outside the team list, a budget over $10000) disables the button and says why. **Clear my default** puts the team's back. Your Settings are not changed
 - The defaults are kept in your browser from the last time Agent Fleet answered, so they still apply while your workspace is stopped or Agent Fleet cannot be reached
 
 ## When it goes wrong
