@@ -575,17 +575,22 @@ func unpinPurged(man cleanupManifest) {
 // message it had already run. The remaining archives are read once for the whole batch.
 func dropPurgedLedgers(purged []cleanupManifest) {
 	held := map[string]bool{}
+	var trashed []session.Meta
 	for _, a := range listCleanupArchives() {
 		for _, s := range a.Sessions {
 			held[s.Name] = true
+			var meta session.Meta
+			if json.Unmarshal([]byte(s.Meta), &meta) == nil && meta.Name != "" {
+				trashed = append(trashed, meta)
+			}
 		}
 	}
 	for _, man := range purged {
-		dropLedgersOf(man, held)
+		dropLedgersOf(man, held, trashed)
 	}
 }
 
-func dropLedgersOf(man cleanupManifest, held map[string]bool) {
+func dropLedgersOf(man cleanupManifest, held map[string]bool, trashed []session.Meta) {
 	for _, s := range man.Sessions {
 		var meta session.Meta
 		if json.Unmarshal([]byte(s.Meta), &meta) != nil || meta.Name == "" {
@@ -594,7 +599,7 @@ func dropLedgersOf(man cleanupManifest, held map[string]bool) {
 		if _, ok := session.ReadMeta(meta.Name); ok || held[meta.Name] {
 			continue
 		}
-		sessionx.RemoveManagedLedger(meta)
+		sessionx.RemoveManagedLedger(meta, trashed)
 	}
 }
 

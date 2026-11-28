@@ -251,9 +251,18 @@ func diffStrings(cur []string, prev map[string]bool) []string {
 }
 
 func (agentImpl) ClearResume(sid string) {
+	dropSlotCommandSteps(sid, nil) // before the sid that names the conversation goes
 	sids.Remove(sid)
 	clearHook(sid)
 	launchGens.Remove(sid)
 	prelaunch.Remove(sid)
 	brainPrelaunch.Remove(sid)
+}
+
+// PurgeSlot drops what the slot's conversation left under the Agent's state when the session
+// is purged from the trash (agents.SlotPurger). Command steps are keyed by conversation, which
+// only the slot's sid file (or, before the poll adopted it, the launch's hook record) names, so
+// this has to run while those files still exist.
+func (agentImpl) PurgeSlot(m session.Meta, trashed []session.Meta) {
+	dropSlotCommandSteps(session.UUID(m.Dir, m.Name), trashed)
 }
