@@ -63,7 +63,7 @@ The dialog asks what, then with what, then where, then the details.
 1. If you want, write an instruction in **First prompt (optional)**. It is sent once, automatically, as soon as the session is ready. Left empty, the session just opens
 2. Check the **run-with strip** under the prompt ([Run with](#run-with)): the agent, the model route and the model
 3. **Location** shows where the session will run: a new worktree by default. Press **Change** only to change it
-4. **Details** shows any setting that is not at its default. Press **Change** to change the rest ([Details](#details))
+4. **Details** summarises every setting the launch will use, defaults included (for example "effort default · Normal start · Approvals skipped"). Press **Change** to change any of them ([Details](#details))
 5. Press the launch button. It names what will run, for example **Start in a worktree with Claude Code · Opus**
    (**Start with Claude Code · Opus** when you start directly in this copy)
 
