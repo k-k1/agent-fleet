@@ -119,8 +119,10 @@
 .wi-row:hover {
   background: var(--hover, rgba(127, 127, 127, 0.08));
 }
-/* One rule for every provider: a completed row is dimmed as a whole. */
-.wi-row--done {
+/* One rule for every provider: a completed row dims its text parts. The row itself is not
+   faded, because opacity would also wash out the focus ring, hover background, unread dot,
+   state/type cues, started badge and external link (measured: focus ring 6.1:1 -> 2.5:1). */
+.wi-row--done :is(.wi-key, .wi-title, .wi-meta, .wi-when, .wi-comments) {
   opacity: 0.55;
 }
 

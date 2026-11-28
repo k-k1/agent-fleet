@@ -430,6 +430,23 @@ describe("WorkItemsSection", () => {
     expect(document.querySelector(".wi-dmodal")?.textContent).toContain("Customer Bug");
   });
 
+  it("marks done rows of every provider with the one dimming class, and open rows not", async () => {
+    const payload = { queries: [query], sessions: [], fetchedAt: query.fetchedAt, running: true };
+    workItemList.mockResolvedValue({
+      ...payload,
+      items: [
+        item({ key: "acme/web#1", state: "done" }),
+        item({ key: "acme/web#2", state: "open" }),
+        item({ provider: "jira", key: "PROJ-1", type: "Task", state: "done" }),
+        item({ provider: "jira", key: "PROJ-2", type: "Task", state: "in_progress" }),
+      ],
+    });
+    await render();
+    const done = (key: string) => [...host.querySelectorAll<HTMLElement>(".wi-row")]
+      .find((row) => row.querySelector(".wi-key")?.getAttribute("title") === key)!.classList.contains("wi-row--done");
+    expect([done("acme/web#1"), done("acme/web#2"), done("PROJ-1"), done("PROJ-2")]).toEqual([true, false, true, false]);
+  });
+
   it("renders Jira workflow cues independently of the type in the rail and detail", async () => {
     const payload = { queries: [query], sessions: [], fetchedAt: query.fetchedAt, running: true };
     const task = item({ provider: "jira", key: "PROJ-1", type: "タスク" });
