@@ -531,7 +531,7 @@ func purgeCleanupArchiveIn(root *os.Root, id string) (cleanupManifest, error) {
 	if err := rmtree.RemoveAllIn(root, spaceTrashName(id)); err != nil {
 		return empty, err
 	}
-	for _, name := range []string{spaceRestoreRecordName(id), id + ".json", id + ".tar.gz"} {
+	for _, name := range []string{spaceRestoreRecordName(id), worktreeRestoreRecordName(id), id + ".json", id + ".tar.gz"} {
 		if err := root.Remove(name); err != nil && (!errors.Is(err, fs.ErrNotExist) || name == id+".tar.gz") {
 			return empty, err
 		}
@@ -852,7 +852,7 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	restored["sessions"] = sessions
 	restored["branches"] = branches
 	if m.Worktree != nil {
-		if err := restoreDeletedWorktree(*m.Worktree); err != nil {
+		if err := restoreDeletedWorktree(root, id, archiveInfo, *m.Worktree); err != nil {
 			return nil, err
 		}
 		restored["worktree"] = m.Worktree.Name

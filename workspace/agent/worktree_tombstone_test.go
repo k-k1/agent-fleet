@@ -11,6 +11,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 type tombstoneEnv struct {
@@ -36,6 +37,7 @@ func tombstoneSetup(t *testing.T) tombstoneEnv {
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
 	mux.HandleFunc("GET /repos/{name}/recreate", handleRecreatePlan)
 	mux.HandleFunc("POST /repos/{name}/recreate", handleRecreateWorktree)
+	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -141,6 +143,67 @@ func TestDeletedWorktreeRoundTripsThroughTheTrash(t *testing.T) {
 	}
 	if !gitx.IsGitRepo(e.wt) {
 		t.Error("purging the entry touched the restored worktree")
+	}
+}
+
+// A worktree restore that stopped after its sessions were back, retried after the member shelved
+// one of them again, leaves that one on the shelf; so does pressing restore again once it has
+// finished. Older Agents wrote no shelf revision, and the empty one still counts.
+func TestWorktreeRestoreRetryKeepsALaterShelfAction(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	e := tombstoneSetup(t)
+	do(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil, http.StatusOK, nil)
+	arcs := worktreeArchives(t, e.srv)
+	if len(arcs) != 1 {
+		t.Fatalf("delete_worktree archives = %+v, want one", arcs)
+	}
+	legacy, _ := session.ReadMeta("aisub01")
+	legacy.ShelfRevision = ""
+	if err := session.WriteMetaChecked(legacy); err != nil {
+		t.Fatal(err)
+	}
+	store := cleanupStoreDir()
+	worktreeBeforeRestoreComplete = func() {
+		if err := os.Chmod(store, 0o500); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { worktreeBeforeRestoreComplete = nil; _ = os.Chmod(store, 0o700) })
+	path := "/cleanup/archives/" + arcs[0].ID + "/restore"
+	if code := errCodeOf(t, e.srv, "POST", path, http.StatusConflict); code != "restore_incomplete" {
+		t.Fatalf("restore code = %q, want restore_incomplete", code)
+	}
+	worktreeBeforeRestoreComplete = nil
+	if err := os.Chmod(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"aiaaaa1", "aisub01"} {
+		if m, ok := session.ReadMeta(name); !ok || m.Archived {
+			t.Fatalf("session %s was not back before the failed completion: %+v", name, m)
+		}
+	}
+
+	do(t, e.srv, "POST", "/sessions/aiaaaa1/archive", nil, http.StatusOK, nil)
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	if m, ok := session.ReadMeta("aiaaaa1"); !ok || !m.Archived {
+		t.Fatalf("the retry undid the newer shelf action: %+v", m)
+	}
+	if !gitx.IsGitRepo(e.wt) {
+		t.Fatal("the worktree is not back")
+	}
+
+	do(t, e.srv, "POST", "/sessions/aisub01/archive", nil, http.StatusOK, nil)
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	if m, ok := session.ReadMeta("aisub01"); !ok || !m.Archived {
+		t.Fatalf("restoring a finished entry again undid a shelf action: %+v", m)
+	}
+
+	do(t, e.srv, "DELETE", "/cleanup/archives/"+arcs[0].ID, nil, http.StatusOK, nil)
+	record := filepath.Join(store, worktreeRestoreRecordName(arcs[0].ID))
+	if _, err := os.Lstat(record); !os.IsNotExist(err) {
+		t.Fatalf("purge left the restore record behind: %v", err)
 	}
 }
 
