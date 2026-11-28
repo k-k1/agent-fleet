@@ -79,6 +79,8 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const [busy, setBusy] = useState(false);
   const [viewingSession, setViewingSession] = useState(false);
   const returnToEditRef = useRef<HTMLButtonElement>(null);
+  // Closes a session menu open over the form; see onBack below.
+  const closeMenuRef = useRef<(() => boolean) | null>(null);
   // On a phone the opened session's composer and send button are at the bottom right, where the
   // return button sits on a desktop. It goes below the top bars instead, like the toasts, and is
   // marked as a floor so that a toast lands under it rather than over it (a toast is in front of
@@ -299,10 +301,13 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
 
   return (
     // Session links get a context menu only under a host; none above the Schedules rail.
-    <SessionLinkMenuHost>
+    <SessionLinkMenuHost closeRef={closeMenuRef}>
       <Modal
         title={tr("sched.detail_title", { name: scheduleTitle(s) })}
         onClose={onClose}
+        // The device's Back peels an open session menu first; without this it would close the
+        // dialog and the unsaved form with it.
+        onBack={() => (closeMenuRef.current?.() ? "hold" : onClose())}
         className="sched-detail-modal"
         as="form"
         onSubmit={(e) => {

@@ -5,11 +5,10 @@
 // Opt-in by surface: only a subtree under this host gets the menu. The mirror and the assistant
 // chat mount one; the shared-session view must not (a recipient gets no owner actions) and the
 // file viewer has no reason to, so their links keep the browser's own menu.
-import { createContext, useCallback, useContext, useState } from "react";
-import type { ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
-import { useBackClose } from "../../lib/backClose.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
@@ -29,13 +28,30 @@ export function useSessionLinkMenu(): OpenSessionLinkMenu | null {
 
 type MenuState = { name: string; x: number; y: number; open: boolean };
 
-export function SessionLinkMenuHost({ children }: { children: ReactNode }) {
+/** `closeRef`, when given, is filled with a function that closes the menu if one is open and says
+ *  whether it did. A dialog hosting the links uses it for the device's Back, so the press closes
+ *  the menu rather than the dialog. The menu takes no history entry of its own: an action that
+ *  navigates (the generated-images gallery) would leave that entry in front of its own. */
+export function SessionLinkMenuHost({ children, closeRef }: { children: ReactNode; closeRef?: MutableRefObject<(() => boolean) | null> }) {
   const tr = useT();
   const toast = useToast();
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Looked up live, not from the menu state: a rename or a stop while the menu is open must show
   // the session as it is now. Gone (deleted) → the menu goes with it.
   const s = useSessionsStore((st) => (menu ? st.sessions.find((x) => x.name === menu.name) : undefined));
+  const isOpen = useRef(false);
+  isOpen.current = !!menu && menu.open && !!s;
+  useEffect(() => {
+    if (!closeRef) return;
+    closeRef.current = () => {
+      if (!isOpen.current) return false;
+      setMenu((m) => (m ? { ...m, open: false } : m));
+      return true;
+    };
+    return () => {
+      closeRef.current = null;
+    };
+  }, [closeRef]);
 
   // The link was built when the document rendered; the session may have been deleted since.
   // Answer that the same way a click on a stale commit / conversation link does.
@@ -67,9 +83,6 @@ export function SessionLinkMenuHost({ children }: { children: ReactNode }) {
 function LinkMenu({ s, menu, onClose }: { s: Session; menu: MenuState; onClose: () => void }) {
   const running = useWorkspaceStore((st) => st.state) === "running";
   const actions = useSessionActions();
-  // The device's Back closes the menu first. Over a modal (the schedule detail) it would otherwise
-  // reach the modal's own Back layer and close it together with its unsaved form.
-  useBackClose(menu.open ? onClose : undefined, menu.open);
   return (
     <SessionMenu
       s={s}

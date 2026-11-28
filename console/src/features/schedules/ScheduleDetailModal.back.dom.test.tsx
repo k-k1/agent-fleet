@@ -24,6 +24,7 @@ const { ScheduleDetailModal } = await import("./ScheduleDetailModal.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
+const { t } = await import("../../lib/i18n/index.ts");
 
 let root: Root;
 let host: HTMLDivElement;
@@ -66,8 +67,12 @@ describe("ScheduleDetailModal session menu and Back", () => {
       label.dispatchEvent(new Event("input", { bubbles: true }));
     });
     const link = document.querySelector<HTMLElement>(".sched-dd a.md-session-link")!;
+    const entries = history.length;
     await act(async () => void link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 40, clientY: 50 })));
     expect(document.querySelector(".sess-menu")).not.toBeNull();
+    // The menu takes no history entry of its own: an action that navigates or opens a dialog
+    // (the gallery, Share) would leave it in front of the entry that action pushes.
+    expect(history.length).toBe(entries);
 
     await act(async () => void history.back());
     await settle();
@@ -76,6 +81,30 @@ describe("ScheduleDetailModal session menu and Back", () => {
     expect(document.querySelector<HTMLInputElement>("#sched-label")?.value).toBe("Draft");
 
     // The next Back is the modal's own.
+    await act(async () => void history.back());
+    await settle();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("closes only the Share dialog on Back, then the modal, with the menu's Share chosen", async () => {
+    const label = document.querySelector<HTMLInputElement>("#sched-label")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Draft");
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const link = document.querySelector<HTMLElement>(".sched-dd a.md-session-link")!;
+    await act(async () => void link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 40, clientY: 50 })));
+    const share = [...document.querySelectorAll<HTMLElement>(".sess-menu button")].find((b) => b.textContent?.includes(t("srow.share")))!;
+    await act(async () => share.click());
+    await settle();
+    expect(document.querySelector(".sess-menu")).toBeNull();
+    const dialogs = () => document.querySelectorAll(".ui-modal, [role=dialog]").length;
+    expect(dialogs()).toBeGreaterThan(1); // the detail and the Share dialog
+
+    await act(async () => void history.back());
+    await settle();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector<HTMLInputElement>("#sched-label")?.value).toBe("Draft");
     await act(async () => void history.back());
     await settle();
     expect(onClose).toHaveBeenCalledOnce();
