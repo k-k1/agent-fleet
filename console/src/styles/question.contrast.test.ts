@@ -109,9 +109,8 @@ describe("generic disabled-button opacity", () => {
     const fading = parse(shell).filter((b) => /opacity\s*:\s*(?!1\s*;)/.test(b.body) && /button:disabled/.test(b.selector));
     expect(fading.length).toBeGreaterThan(0);
     for (const b of fading) {
-      const parts = b.selector.split(/,(?![^(]*\))/).map((x) => x.trim());
-      expect(parts.length).toBeGreaterThanOrEqual(1);
-      for (const part of parts) expect(part, part).toMatch(/button:disabled:where\(:not\(\.mq-opt\)\)$/);
+      // Whole selector, so a scope that adds specificity (`:is()` for `:where()`) is caught too.
+      expect(b.selector, b.selector).toMatch(/^:where\([^()]*\) button:disabled:where\(:not\(\.mq-opt\)\)$/);
     }
   });
 });
