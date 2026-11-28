@@ -275,10 +275,10 @@ export function LaunchModal(props: LaunchModalProps) {
   // Held here because the Modal's close lock needs it; the form below sets it.
   const [busy, setBusy] = useState(false);
   // The form is remounted for each target (working copy, work item, preselected branch or
-  // location): every field, draft and resolved branch name belongs to the target it was opened
+  // location, or an agent kind handed over by a quick launch): every field, draft and resolved branch name belongs to the target it was opened
   // for. The Modal around it is not — remounting it in the same commit costs its back-button
   // guard (see StartHost).
-  const target = [props.home ? "home" : "", props.newSpace ? "space" : "", repo, workItem?.provider ?? "", workItem?.key ?? "", props.initialExistingBranch ?? "", String(props.initialWorktree ?? "")].join("\u0000");
+  const target = [props.home ? "home" : "", props.newSpace ? "space" : "", repo, workItem?.provider ?? "", workItem?.key ?? "", props.initialExistingBranch ?? "", String(props.initialWorktree ?? ""), props.initialKind ?? ""].join("\u0000");
   return (
     <Modal
       title={

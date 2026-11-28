@@ -31,6 +31,7 @@ export function StartHost() {
   const launch = useLaunchTarget((s) => s.target);
   const launchExisting = useLaunchTarget((s) => s.existingBranch);
   const launchInPlace = useLaunchTarget((s) => s.inPlace);
+  const launchKind = useLaunchTarget((s) => s.initialKind);
   const openLaunch = useLaunchTarget((s) => s.open);
   const clearLaunch = useLaunchTarget((s) => s.clear);
   // First-prompt seed (memo send modal -> launch a new session). Read once into the
@@ -268,6 +269,7 @@ export function StartHost() {
           workItem={seedWorkItem && !launchExisting ? branchItemOf(seedWorkItem) : undefined}
           initialWorktree={launchInPlace ? false : undefined}
           initialExistingBranch={launchExisting || undefined}
+          initialKind={launchKind || undefined}
           // Closed over the hub, it goes back to the hub like Back: the seed stays with the hub's
           // draft, so a launch from there still finishes the memo it holds.
           onClose={() => {

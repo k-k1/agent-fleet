@@ -212,7 +212,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # When comparing versions, read the same index on both sides (docs/decisions/0068 decision 3):
 # the security and main suites point at different versions, so reading one side from each
 # invents a version gap that does not exist. The pin here is always the security suite's version.
-ARG CHROMIUM_VERSION=156.0.8078.108-1~deb13u1
+ARG CHROMIUM_VERSION=156.0.8078.114-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0 (the native lean rootfs) bakes neither chromium nor the CJK fonts and
 # leaves them to the on-demand download (install-chromium, pinned by CHROMIUM_DL_VERSION), but
 # the runtime libraries that download needs, plus fontconfig/DejaVu, are installed here

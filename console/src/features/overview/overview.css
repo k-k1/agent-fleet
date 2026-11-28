@@ -367,11 +367,6 @@
   margin-left: auto;
   color: var(--warn);
 }
-.act-launch {
-  flex: none;
-  min-height: 24px;
-  font-size: inherit;
-}
 .act-launch-menu {
   max-width: calc(100vw - 16px);
 }
@@ -380,7 +375,7 @@
   overflow-wrap: anywhere;
 }
 @media (pointer: coarse) {
-  .act-launch, .act-launch-menu [role="menuitem"] {
+  .act-launch-menu [role="menuitem"] {
     min-height: 44px;
   }
 }

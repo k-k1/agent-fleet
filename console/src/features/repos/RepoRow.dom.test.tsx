@@ -24,6 +24,9 @@ vi.mock("../../core/api/client.ts", () => ({
 // The real modal pulls the skills viewer (and its own client calls); the row only has to open it.
 vi.mock("./RepoSkillsModal.tsx", () => ({ RepoSkillsModal: ({ repo }: { repo: string }) => <div>skills-modal:{repo}</div> }));
 
+// The studio dialog pulls the image-generation stack; the row only has to open it.
+vi.mock("../imagegen/parts/StartStudioModal.tsx", () => ({ StartStudioModal: ({ repo }: { repo: { name: string } }) => <div>studio-modal:{repo.name}</div> }));
+
 const { RepoRow } = await import("./RepoRow.tsx");
 import { setLocale } from "../../lib/i18n/index.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -130,6 +133,37 @@ describe("RepoRow worktree row", () => {
     expect(itemFor("画像スタジオを始める")).toBeTruthy();
     _imagegenAvailability.reset();
     useWorkspaceStore.setState({ state: "…" });
+  });
+});
+
+describe("RepoRow ▼ quick-launch menu", () => {
+  const items = () => [...document.querySelectorAll<HTMLElement>(".launch-menu .ui-menu-item")];
+  const openCaret = async () => {
+    await render(WT);
+    await act(async () => host.querySelector<HTMLButtonElement>(".launch-caret")!.click());
+  };
+  afterEach(() => {
+    _imagegenAvailability.reset();
+    useWorkspaceStore.setState({ state: "…" });
+  });
+
+  it("lists the kinds and no studio entry or separator while there is no image engine", async () => {
+    useWorkspaceStore.setState({ state: "running" });
+    await openCaret();
+    expect(items().map((b) => b.textContent?.trim())).toEqual(["Claude", "Codex", "Shell"]);
+    expect(document.querySelector(".launch-menu .ui-menu-sep")).toBeNull();
+  });
+
+  it("adds a separator and the studio entry after the kinds while an image engine exists, and opens the studio", async () => {
+    useWorkspaceStore.setState({ state: "running" });
+    noteImagegenStatus({ providers: [{ id: "comfy", kind: "comfy", fleet: true, ready: true, models: [] }] } as never);
+    await openCaret();
+    const menu = document.querySelector(".launch-menu")!;
+    const kids = [...menu.children];
+    expect(kids.map((c) => (c.getAttribute("role") === "separator" ? "-" : c.textContent?.trim()))).toEqual(["Claude", "Codex", "Shell", "-", "画像スタジオを始める"]);
+    await act(async () => items().at(-1)!.click());
+    expect(document.querySelector(".launch-menu")).toBeNull();
+    await vi.waitFor(() => expect(document.body.textContent).toContain("studio-modal:app@wip-x"));
   });
 });
 

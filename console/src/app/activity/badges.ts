@@ -13,7 +13,8 @@
 // A badge counts only rows its view lists. With a working set active that is the set's rows: a
 // count the member cannot find a row for, in the view the badge sends them to, is worse than no
 // count, and the set's own bar is what says the rest is out of sight. Auto-run usage counts
-// occupied slots across the member's whole queue; its waiting and failure cues stay scoped.
+// occupied slots across the member's whole queue, in the neutral running tone; its waiting and
+// failure cues stay scoped and are drawn as a separate dot beside the count.
 import { create } from "zustand";
 import type { RailView } from "../../core/store/leftRail.ts";
 import type { Session } from "../../types/session.ts";
