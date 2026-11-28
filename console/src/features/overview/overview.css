@@ -111,9 +111,9 @@
   text-align: left;
   color: var(--fg);
 }
-/* "Open the session": one button stretched over the whole card, so the whole card is still the
-   click target. Positioned elements paint above the card's plain content, which therefore
-   sits under it; the controls that must stay clickable are lifted back over it below. */
+/* "Open the session": one button stretched under the whole card — the Tab stop and the
+   accessible name. Everything else in the card is lifted above it so it keeps its own tooltips
+   and hit-testing; a click on that content opens the session through the article's handlers. */
 .ovw-open {
   position: absolute;
   inset: 0;
@@ -126,13 +126,13 @@
   color: inherit;
   cursor: pointer;
 }
-.ovw-card--dead .ovw-open {
-  cursor: default;
-}
-.ovw-fold,
-.ovw-menu-wrap,
-.ovw-ords {
+.ovw-card > :not(.ovw-open) {
   position: relative;
+  cursor: pointer;
+}
+.ovw-card--dead .ovw-open,
+.ovw-card--dead > :not(.ovw-open) {
+  cursor: default;
 }
 .ovw-card:hover,
 .ovw-card.ovw-card-hover {

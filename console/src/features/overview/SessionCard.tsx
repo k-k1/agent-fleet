@@ -18,8 +18,11 @@
 // The card is NOT itself a button. A button that holds buttons (the family fold, the ⋯, the
 // pane numbers) is announced as disabled, with everything inside it, when the card cannot be
 // opened. So the article is plain, "open the session" is one transparent button stretched over
-// it (.ovw-open), and the other controls are its siblings, lifted above it in CSS. Nothing in
-// here has to stop a click or a key from reaching the card, because they never pass through it.
+// it (.ovw-open: the Tab stop and the name assistive technology reads), and the other controls
+// are its siblings. The content is lifted above that button so it keeps its own tooltips, and a
+// pointer click anywhere on the card that is not another control reaches the article's
+// delegating handlers below — a button's own Enter / Space arrives there as its click too.
+// Nothing has to stop a click from reaching the card: the handlers read where it came from.
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
@@ -141,15 +144,22 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
     if (inert) return;
     openSessionFromList(s, newPane || beside, running);
   };
-  // Enter / Space reach openIt as the button's own click, modifiers included.
+  // Menu key on the focused open button. Enter / Space need no code: they are its click.
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (isContextMenuKey(e) && menuAvailable) {
       e.preventDefault();
       setMenuAt(menuAnchor(e.currentTarget));
     }
   };
+  const onCard = (e: MouseEvent<HTMLElement>) => {
+    const t = e.target as Element;
+    if (!e.currentTarget.contains(t)) return false;
+    const control = t.closest("button");
+    return !control || control.classList.contains("ovw-open");
+  };
   const onContextMenu = (e: MouseEvent<HTMLElement>) => {
-    if (!menuAvailable) return;
+    // Any control of the card may be right-clicked; only the portal'd menu's own events are not ours.
+    if (!menuAvailable || !e.currentTarget.contains(e.target as Node)) return;
     e.preventDefault();
     setMenuAt({ x: e.clientX, y: e.clientY });
   };
@@ -168,7 +178,15 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         (selected ? " ovw-card--selected" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
-      aria-current={selected || undefined}
+      onClick={(e) => {
+        if (onCard(e)) openIt(e.ctrlKey || e.metaKey);
+      }}
+      onAuxClick={(e) => {
+        if (e.button !== 1 || !onCard(e)) return;
+        e.preventDefault();
+        openIt(true);
+      }}
+      onContextMenu={onContextMenu}
       onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
       onMouseLeave={open ? () => setHover(null) : undefined}
     >
@@ -179,6 +197,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         className="ovw-open"
         aria-disabled={inert || undefined}
         aria-label={displayName(s)}
+        aria-current={selected || undefined}
         title={
           displayName(s) +
           "\n" +
@@ -189,14 +208,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
               : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
-        onClick={(e) => openIt(e.ctrlKey || e.metaKey)}
-        onAuxClick={(e) => {
-          if (e.button !== 1) return;
-          e.preventDefault();
-          openIt(true);
-        }}
         onKeyDown={onKeyDown}
-        onContextMenu={onContextMenu}
       />
       <header className="ovw-head">
         {onFold && (
@@ -349,6 +361,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           {s.lastSay}
         </div>
       )}
+      <span className="ovw-menu-host">
       {menuAvailable && <SessionMenu
         s={s}
         actions={actions}
@@ -365,6 +378,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         keepOpenRefs={[menuWrapRef]}
         onClose={() => setMenuAt(null)}
       />}
+      </span>
     </article>
   );
 }

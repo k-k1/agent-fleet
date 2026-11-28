@@ -422,4 +422,36 @@ describe("SessionCard", () => {
     expect(menuItems()).toContain(t("srow.copy_id", { name: "s1" }));
     expect(openSessionFromList).not.toHaveBeenCalled();
   });
+
+  // Content sits above the open button (so it keeps its tooltips); a click on it, on the card's
+  // border or between the controls still opens the session, and another control never does.
+  it("opens from a click on the card's content, but not from the controls inside it", async () => {
+    await render({ lastSay: "長い最終発言" }, true, 0, [{ ordinal: 2, id: "p2" }], true);
+    const say = host.querySelector<HTMLElement>(".ovw-say")!;
+    expect(say.getAttribute("title")).toContain(t("ovw.last_say_hint"));
+    await act(async () => say.click());
+    expect(openSessionFromList).toHaveBeenCalledTimes(1);
+    await act(async () => card().click());
+    expect(openSessionFromList).toHaveBeenCalledTimes(2);
+    await act(async () => say.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true })));
+    expect(openSessionFromList).toHaveBeenCalledTimes(3);
+    await act(async () => host.querySelector<HTMLElement>(".ovw-menu-btn")!.click());
+    await act(async () => host.querySelector<HTMLElement>(".rail-ord")!.click());
+    expect(openSessionFromList).toHaveBeenCalledTimes(3);
+  });
+
+  it("right-click anywhere on the card opens the menu, also over the pane numbers", async () => {
+    await render({}, true, 0, [{ ordinal: 2, id: "p2" }], true);
+    await act(async () => {
+      host.querySelector<HTMLElement>(".rail-ord")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    });
+    expect(menuItems()).toContain(t("srow.stop"));
+  });
+
+  it("the open button is the focusable control and carries the current-session mark", async () => {
+    await render({});
+    expect(openBtn().tagName).toBe("BUTTON");
+    expect(openBtn().tabIndex).toBe(0);
+    expect(card().getAttribute("tabindex")).toBeNull();
+  });
 });
