@@ -855,6 +855,7 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 			kept++
 			continue
 		}
+		unpinPurged(man)
 		gone = append(gone, man)
 		purged++
 		bytes += m.Bytes
@@ -866,9 +867,12 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 
 func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var err error
 	var man cleanupManifest
-	sessionx.WithCleanupLock(func() { man, err = purgeCleanupArchive(id) })
+	root, err := os.OpenRoot(cleanupStoreDir())
+	if err == nil {
+		defer root.Close()
+		sessionx.WithCleanupLock(func() { man, err = purgeCleanupArchiveIn(root, id) })
+	}
 	if errors.Is(err, errTrashPending) {
 		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), err.Error())
 		return
@@ -881,6 +885,7 @@ func handlePurgeCleanupArchive(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "purge_failed", err.Error())
 		return
 	}
+	unpinPurged(man)
 	dropPurgedLedgers([]cleanupManifest{man})
 	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"purged": id})

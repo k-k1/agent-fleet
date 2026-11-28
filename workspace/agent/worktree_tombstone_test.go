@@ -207,6 +207,125 @@ func TestWorktreeRestoreRetryKeepsALaterShelfAction(t *testing.T) {
 	}
 }
 
+// worktreeDeletedWithEntry deletes app@wt-x and answers its trash entry's id.
+func worktreeDeletedWithEntry(t *testing.T, e tombstoneEnv) string {
+	t.Helper()
+	do(t, e.srv, "DELETE", "/repos/app@wt-x?force=true", nil, http.StatusOK, nil)
+	arcs := worktreeArchives(t, e.srv)
+	if len(arcs) != 1 {
+		t.Fatalf("delete_worktree archives = %+v, want one", arcs)
+	}
+	return arcs[0].ID
+}
+
+// A purge that stops before the archive is gone keeps the restore's progress, so restoring the
+// entry again does not take off the shelf a session the member shelved after the first restore.
+func TestWorktreePurgeStoppedPartWayKeepsRestoreProgress(t *testing.T) {
+	e := tombstoneSetup(t)
+	id := worktreeDeletedWithEntry(t, e)
+	path := "/cleanup/archives/" + id + "/restore"
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	do(t, e.srv, "POST", "/sessions/aiaaaa1/archive", nil, http.StatusOK, nil)
+
+	// The sidecar turned into a directory that cannot be removed: the purge stops there.
+	sidecar := filepath.Join(cleanupStoreDir(), id+".json")
+	data, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(sidecar); err != nil {
+		t.Fatal(err)
+	}
+	writeAt(t, filepath.Join(sidecar, "x"), "")
+	if code := httpStatus(t, e.srv, "DELETE", "/cleanup/archives/"+id, nil); code == http.StatusOK {
+		t.Fatal("the purge removed a directory it should have stopped at")
+	}
+	if err := os.RemoveAll(sidecar); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sidecar, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	if m, ok := session.ReadMeta("aiaaaa1"); !ok || !m.Archived {
+		t.Fatalf("restoring after a stopped purge undid the newer shelf action: %+v", m)
+	}
+}
+
+// A purge of the same entry that wins between the folder coming back and its sessions does not
+// strand the sessions on the shelf, and leaves no restore record behind.
+func TestWorktreeRestoreFinishesItsSessionsAfterAPurgeWins(t *testing.T) {
+	e := tombstoneSetup(t)
+	id := worktreeDeletedWithEntry(t, e)
+	worktreeRestoreRecreated = func() {
+		if code := httpStatus(t, e.srv, "DELETE", "/cleanup/archives/"+id, nil); code != http.StatusOK {
+			t.Errorf("purge between folder and sessions = %d, want 200", code)
+		}
+	}
+	t.Cleanup(func() { worktreeRestoreRecreated = nil })
+	do(t, e.srv, "POST", "/cleanup/archives/"+id+"/restore", nil, http.StatusOK, nil)
+	if !gitx.IsGitRepo(e.wt) {
+		t.Fatal("the worktree is not back")
+	}
+	for _, name := range []string{"aiaaaa1", "aisub01"} {
+		if m, ok := session.ReadMeta(name); !ok || m.Archived {
+			t.Errorf("session %s was left on the shelf: %+v", name, m)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), worktreeRestoreRecordName(id))); !os.IsNotExist(err) {
+		t.Errorf("a restore record outlived the purged entry: %v", err)
+	}
+	if refs := pinnedRefs(t, e.parent); refs != "" {
+		t.Errorf("pins after purge = %q", refs)
+	}
+}
+
+// A purge drops the worktree pin after releasing the cleanup lock: update-ref runs the
+// repository's reference-transaction hook, and a hook that calls back into the Agent must not
+// wait behind the lock the purge holds (a restore holding the deletion gate waits on it too).
+func TestWorktreePurgeUnpinsOutsideTheCleanupLock(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not available")
+	}
+	e := tombstoneSetup(t)
+	id := worktreeDeletedWithEntry(t, e)
+	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		sessionx.WithCleanupLock(func() {})
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(probe.Close)
+	hooks := filepath.Join(e.home, "hooks")
+	answer := filepath.Join(e.home, "hook-answer")
+	writeAt(t, filepath.Join(hooks, "reference-transaction"),
+		"#!/bin/sh\ncat >/dev/null\ncurl -s -m 3 -o /dev/null -w '%{http_code}' '"+probe.URL+"' >'"+answer+"'\n")
+	if err := os.Chmod(filepath.Join(hooks, "reference-transaction"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, e.parent, "config", "core.hooksPath", hooks)
+	do(t, e.srv, "DELETE", "/cleanup/archives/"+id, nil, http.StatusOK, nil)
+	if got, _ := os.ReadFile(answer); string(got) != "204" {
+		t.Fatalf("the hook's call back into the Agent answered %q, want 204", got)
+	}
+	if refs := pinnedRefs(t, e.parent); refs != "" {
+		t.Errorf("pins after purge = %q", refs)
+	}
+}
+
+// A record a purge left behind under the same id, from another delete, is not this entry's
+// progress: its "complete" must not keep this entry's sessions on the shelf.
+func TestWorktreeRestoreIgnoresAnotherEntrysRecord(t *testing.T) {
+	e := tombstoneSetup(t)
+	id := worktreeDeletedWithEntry(t, e)
+	stale := `{"id":"` + id + `","ref":"refs/af-deleted/other","shelved":{},"complete":true}`
+	writeAt(t, filepath.Join(cleanupStoreDir(), worktreeRestoreRecordName(id)), stale)
+	do(t, e.srv, "POST", "/cleanup/archives/"+id+"/restore", nil, http.StatusOK, nil)
+	for _, name := range []string{"aiaaaa1", "aisub01"} {
+		if m, ok := session.ReadMeta(name); !ok || m.Archived {
+			t.Errorf("session %s was left on the shelf: %+v", name, m)
+		}
+	}
+}
+
 // Recording comes before removing: when the trash cannot take the entry, nothing is deleted
 // and no pin is left behind.
 func TestWorktreeStaysWhenItsTombstoneCannotBeWritten(t *testing.T) {

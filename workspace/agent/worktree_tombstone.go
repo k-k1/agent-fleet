@@ -72,16 +72,20 @@ var worktreeRestoreChecked func()
 // worktreeRestoreRecord is a worktree restore's progress, kept next to its archive from the first
 // attempt on. Shelved holds the shelf revision of each session still on the shelf when the
 // first attempt began, so a retry after the member shelved one again leaves it on the shelf.
+// Ref is the tombstone's pin, unique per delete: a record a purge failed to remove can never
+// stand in for a later entry that reuses the id.
 type worktreeRestoreRecord struct {
 	ID       string            `json:"id"`
+	Ref      string            `json:"ref"`
 	Shelved  map[string]string `json:"shelved"`
 	Complete bool              `json:"complete,omitempty"`
 }
 
 func worktreeRestoreRecordName(id string) string { return id + ".worktree-restore" }
 
-// Tests pause or fail a worktree restore after its folder and sessions are back.
-var worktreeBeforeRestoreComplete func()
+// Test seams: after the folder is back and before its sessions are, and after the sessions are
+// back and before the record says so. Nil in production.
+var worktreeRestoreRecreated, worktreeBeforeRestoreComplete func()
 
 // restoreDeletedWorktree puts a deleted worktree back from its tombstone, then takes the
 // sessions its delete shelved off the shelf. A folder already back (recreated since) is left
@@ -113,11 +117,15 @@ func restoreDeletedWorktree(trash *os.Root, id string, archive os.FileInfo, t gi
 		if err = recreateFromTombstone(dir, t); err != nil || record.Complete {
 			return
 		}
+		if worktreeRestoreRecreated != nil {
+			worktreeRestoreRecreated()
+		}
 		sessionx.WithCleanupLock(func() {
-			if err = checkRestoreArchive(trash, id, archive); err != nil {
-				return
-			}
-			if err = restoreShelvedRevisions(dir, t.Shelved, record.Shelved); err != nil {
+			// A purge that won since the first check has taken the record with the archive. The
+			// folder is back by now, so its sessions still come back as the record read above
+			// says; only the progress has nowhere left to go.
+			purged := checkRestoreArchive(trash, id, archive) != nil
+			if err = restoreShelvedRevisions(dir, t.Shelved, record.Shelved); err != nil || purged {
 				return
 			}
 			if worktreeBeforeRestoreComplete != nil {
@@ -142,13 +150,20 @@ func loadWorktreeRestoreRecord(trash *os.Root, id string, t gitx.WorktreeTombsto
 		if err != nil {
 			return record, err
 		}
-		record = worktreeRestoreRecord{ID: id, Shelved: shelved}
+		record = worktreeRestoreRecord{ID: id, Ref: t.Ref, Shelved: shelved}
 		return record, writeRestoreRecord(trash, name, record)
 	case err != nil:
 		return record, fmt.Errorf("%w: could not read worktree restore progress: %w", errRestoreStopped, err)
 	}
 	if err := json.Unmarshal(data, &record); err != nil || record.ID != id || record.Shelved == nil {
 		return record, fmt.Errorf("%w: invalid worktree restore progress for %s", errRestoreStopped, id)
+	}
+	if record.Ref != t.Ref {
+		// Left by a purged entry that had this id: not this entry's progress.
+		if err := trash.Remove(name); err != nil {
+			return record, fmt.Errorf("%w: could not drop stale worktree restore progress: %w", errRestoreStopped, err)
+		}
+		return loadWorktreeRestoreRecord(trash, id, t)
 	}
 	return record, nil
 }
