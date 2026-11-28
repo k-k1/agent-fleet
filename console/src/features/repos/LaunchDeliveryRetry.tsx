@@ -188,8 +188,11 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
     edit({ files: [...currentFiles(), ...added.map((file) => ({ file, path: "" }))] });
   };
   const removeFile = (i: number) => {
-    const shown = built.source[i]?.file;
-    if (shown) edit({ files: currentFiles().filter((entry) => entry.file !== shown) });
+    // By entry, not by File: the same File can be staged twice, and only the shown entry goes.
+    // An entry the draft no longer holds (replaced by an upload write-back) is left alone.
+    const shown = built.source[i];
+    const now = currentFiles();
+    if (shown && now.includes(shown)) edit({ files: now.filter((entry) => entry !== shown) });
   };
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const pasted = Array.from(e.clipboardData?.files || []);

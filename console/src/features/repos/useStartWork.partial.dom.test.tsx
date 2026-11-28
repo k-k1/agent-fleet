@@ -240,6 +240,19 @@ describe("partial draft delivery", () => {
       .toEqual(["a.png", "pasted.png", "dropped.png"]);
   });
 
+  it("removes only the entry whose x was pressed when the same File is staged twice", async () => {
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" }).mockResolvedValueOnce({ status: 413 });
+    const twice = file("a.png");
+    await launch([twice, twice]);
+    await act(async () => reviewButton()!.click());
+    const dialog = recoveryDialog()!;
+    expect(chipInfo(dialog)).toEqual([["a.png", ""], ["a.png", pending]]);
+    await act(async () => dialog.querySelectorAll<HTMLButtonElement>(".ma-del")[1].click());
+    expect(chipInfo(dialog)).toEqual([["a.png", ""]]);
+    expect(useHeldLaunchDrafts.getState().drafts[draftKey()].files.map(({ path }) => path)).toEqual(["/p/a.png"]);
+  });
+
   it("offers no attachment edits while an upload runs or after its outcome is unknown", async () => {
     apiJSON.mockImplementation((path: string, _method, _body, _headers, init) =>
       path === "api/sessions" ? created(path) : waitForAbort(init.signal));
@@ -250,8 +263,10 @@ describe("partial draft delivery", () => {
     const dialog = recoveryDialog()!;
     const prompt = dialog.querySelector("textarea")!;
     const filesNow = () => useHeldLaunchDrafts.getState().drafts[key].files;
-    const before = filesNow();
+    // Paste, drop and dragover must all be refused: a cancelled dragover is the browser's
+    // signal that a drop is welcome, so it has to stay uncancelled too.
     const tryEdits = async () => {
+      const before = filesNow();
       const pasted = new Event("paste", { bubbles: true, cancelable: true });
       Object.defineProperty(pasted, "clipboardData", { value: { files: [file("late.png")] } });
       const dropped = new Event("drop", { bubbles: true, cancelable: true });
@@ -264,6 +279,7 @@ describe("partial draft delivery", () => {
         prompt.dispatchEvent(over);
       });
       expect(over.defaultPrevented).toBe(false);
+      expect(dropped.defaultPrevented).toBe(false);
       expect(filesNow()).toBe(before);
     };
 
@@ -290,11 +306,7 @@ describe("partial draft delivery", () => {
     expect(dialog.querySelector("button.launch-attach-btn, input[type=file], .ma-del")).toBeNull();
     expect(chips(dialog)).toHaveLength(2);
     expect([...chips(dialog)].map((chip) => chip.getAttribute("title"))).toEqual(["a.png", "b.png"]);
-    const unknownFiles = filesNow();
-    const pasted = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(pasted, "clipboardData", { value: { files: [file("late.png")] } });
-    await act(async () => prompt.dispatchEvent(pasted));
-    expect(filesNow()).toBe(unknownFiles);
+    await tryEdits();
   });
 
   it("restores edits and unsent bytes after reload, then sends to the original session", async () => {

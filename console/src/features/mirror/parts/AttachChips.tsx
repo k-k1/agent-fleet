@@ -33,7 +33,7 @@ export function AttachChips({
         <div className={"ma-chip" + (a.image ? "" : " ma-file")} key={a.id} title={a.name}>
           {a.image && onOpen ? (
             <button type="button" className="ma-thumb-btn" title={tr("chat.click_to_zoom")} onClick={() => onOpen(a.url)}>
-              <img className="ma-thumb" src={a.url} alt={a.name} />
+              <img className="ma-thumb" src={a.url} alt="" />
             </button>
           ) : a.image ? (
             <img className="ma-thumb" src={a.url} alt={a.name} />
