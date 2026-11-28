@@ -254,7 +254,7 @@ describe("session menu sections", () => {
       );
     });
     await act(async () => {
-      host.querySelector<HTMLElement>(".ovw-card")!.dispatchEvent(
+      host.querySelector<HTMLElement>(".ovw-open")!.dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }),
       );
     });

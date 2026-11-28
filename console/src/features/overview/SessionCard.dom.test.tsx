@@ -42,6 +42,8 @@ const render = async (over: Partial<Session>, beside = true, waitingAt = 0, open
 };
 
 const card = () => host.querySelector<HTMLElement>(".ovw-card")!;
+// The one "open the session" button stretched over the card; the card itself is not interactive.
+const openBtn = () => host.querySelector<HTMLElement>(".ovw-open")!;
 const menuItems = () => [...document.querySelectorAll<HTMLElement>(".ui-menu .ui-menu-item")].map((el) => el.textContent?.trim());
 
 beforeEach(() => {
@@ -221,13 +223,12 @@ describe("SessionCard", () => {
 
   it("opens the session beside the grid on click, Enter and middle-click when there is room beside", async () => {
     await render({});
-    await act(async () => card().click());
+    await act(async () => openBtn().click());
     expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), true, true);
+    // Enter / Space on a focused button arrive as its click.
+    await act(async () => openBtn().click());
     await act(async () => {
-      card().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    });
-    await act(async () => {
-      card().dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+      openBtn().dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
     });
     expect(openSessionFromList).toHaveBeenCalledTimes(3);
     expect(openSessionFromList.mock.calls.every((c) => c[1] === true)).toBe(true);
@@ -235,22 +236,20 @@ describe("SessionCard", () => {
 
   it("on a phone a plain tap opens in this pane, and the modifier or the wheel still opens another", async () => {
     await render({}, false);
-    await act(async () => card().click());
+    await act(async () => openBtn().click());
+    expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), false, true);
+    await act(async () => openBtn().click());
     expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), false, true);
     await act(async () => {
-      card().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    });
-    expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), false, true);
-    await act(async () => {
-      card().dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+      openBtn().dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
     });
     expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), true, true);
     await act(async () => {
-      card().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+      openBtn().dispatchEvent(new MouseEvent("click", { metaKey: true, bubbles: true }));
     });
     expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), true, true);
     await act(async () => {
-      card().dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+      openBtn().dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
     });
     expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), true, true);
     expect(openSessionFromList).toHaveBeenCalledTimes(5);
@@ -258,15 +257,16 @@ describe("SessionCard", () => {
 
   it("does not try to open a session whose folder is gone and has no transcript", async () => {
     await render({ kind: "shell", alive: false, resumable: false });
-    await act(async () => card().click());
+    await act(async () => openBtn().click());
     expect(openSessionFromList).not.toHaveBeenCalled();
-    expect(card().getAttribute("aria-disabled")).toBe("true");
+    expect(openBtn().getAttribute("aria-disabled")).toBe("true");
+    expect(card().getAttribute("role")).toBeNull();
   });
 
   it("right-click opens the shared session menu with the row's items", async () => {
     await render({});
     await act(async () => {
-      card().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+      openBtn().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     });
     const items = menuItems();
     expect(items).toContain(t("srow.stop"));
@@ -391,8 +391,35 @@ describe("SessionCard", () => {
   it("the Menu key on a focused card opens it too", async () => {
     await render({});
     await act(async () => {
-      card().dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true }));
+      openBtn().dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true }));
     });
     expect(menuItems()).toContain(t("srow.stop"));
+  });
+
+  // The card is not a button, so a card that cannot be opened has exactly one disabled control.
+  // aria-disabled on an ancestor button would be reported for the fold and the menu as well.
+  it("keeps the fold and the menu working, and not announced as disabled, on a card that cannot be opened", async () => {
+    const onFold = vi.fn();
+    const s: Session = { name: "s1", kind: "shell", alive: false, resumable: false, state: "", title: "x" };
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <PaneHoverProvider>
+            <SessionCard s={s} opens={[{ ordinal: 1, id: "p1" }]} rail beside running waitingAt={0} actions={actions} fold={{ hasChildren: true, hidden: 2 }} onFold={onFold} />
+          </PaneHoverProvider>
+        </ToastProvider>,
+      );
+    });
+    expect(openBtn().getAttribute("aria-disabled")).toBe("true");
+    expect(card().querySelector("[role=button], [aria-disabled]:not(.ovw-open)")).toBeNull();
+    // No ancestor of any other button is disabled or a button itself.
+    const others = [...card().querySelectorAll<HTMLElement>("button:not(.ovw-open)")];
+    expect(others.length).toBeGreaterThanOrEqual(3);
+    for (const b of others) expect(b.closest("[aria-disabled], [role=button], button:not(:scope)")).toBeNull();
+    await act(async () => host.querySelector<HTMLElement>(".ovw-fold")!.click());
+    expect(onFold).toHaveBeenCalledTimes(1);
+    await act(async () => host.querySelector<HTMLElement>(".ovw-menu-btn")!.click());
+    expect(menuItems()).toContain(t("srow.copy_id", { name: "s1" }));
+    expect(openSessionFromList).not.toHaveBeenCalled();
   });
 });

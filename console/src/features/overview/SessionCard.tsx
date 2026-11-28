@@ -14,6 +14,12 @@
 //
 // Right-click, the ⋯ button and the Menu key open SessionMenu — the very same items as the row
 // and the tab.
+//
+// The card is NOT itself a button. A button that holds buttons (the family fold, the ⋯, the
+// pane numbers) is announced as disabled, with everything inside it, when the card cannot be
+// opened. So the article is plain, "open the session" is one transparent button stretched over
+// it (.ovw-open), and the other controls are its siblings, lifted above it in CSS. Nothing in
+// here has to stop a click or a key from reaching the card, because they never pass through it.
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
@@ -135,12 +141,9 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
     if (inert) return;
     openSessionFromList(s, newPane || beside, running);
   };
+  // Enter / Space reach openIt as the button's own click, modifiers included.
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      openIt(e.ctrlKey || e.metaKey);
-    } else if (isContextMenuKey(e) && menuAvailable) {
+    if (isContextMenuKey(e) && menuAvailable) {
       e.preventDefault();
       setMenuAt(menuAnchor(e.currentTarget));
     }
@@ -165,31 +168,36 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         (selected ? " ovw-card--selected" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
-      role="button"
-      tabIndex={0}
-      aria-disabled={inert || undefined}
       aria-current={selected || undefined}
-      title={
-        displayName(s) +
-        "\n" +
-        (inert
-          ? tr("srow.cant_resume")
-          : s.alive
-            ? tr(beside ? "ovw.open_hint" : "ovw.open_hint_here")
-            : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
-        `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
-      }
-      onClick={(e) => openIt(e.ctrlKey || e.metaKey)}
-      onAuxClick={(e) => {
-        if (e.button !== 1) return;
-        e.preventDefault();
-        openIt(true);
-      }}
-      onKeyDown={onKeyDown}
-      onContextMenu={onContextMenu}
       onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
       onMouseLeave={open ? () => setHover(null) : undefined}
     >
+      {/* aria-disabled, not disabled: a disabled button takes no focus and, in some browsers,
+          no right-click, and a card that cannot be opened still has its menu. */}
+      <button
+        type="button"
+        className="ovw-open"
+        aria-disabled={inert || undefined}
+        aria-label={displayName(s)}
+        title={
+          displayName(s) +
+          "\n" +
+          (inert
+            ? tr("srow.cant_resume")
+            : s.alive
+              ? tr(beside ? "ovw.open_hint" : "ovw.open_hint_here")
+              : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
+          `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
+        }
+        onClick={(e) => openIt(e.ctrlKey || e.metaKey)}
+        onAuxClick={(e) => {
+          if (e.button !== 1) return;
+          e.preventDefault();
+          openIt(true);
+        }}
+        onKeyDown={onKeyDown}
+        onContextMenu={onContextMenu}
+      />
       <header className="ovw-head">
         {onFold && (
           <button
@@ -197,15 +205,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             className="ovw-fold"
             aria-expanded={!fold?.hidden}
             title={fold?.hidden ? tr("ovw.expand") : tr("ovw.collapse")}
-            onClick={(e) => {
-              // The card itself opens the session; the fold must not do both.
-              e.preventDefault();
-              e.stopPropagation();
-              onFold();
-            }}
-            // A middle click on the card opens the session in another pane; on this button it
-            // must do nothing.
-            onAuxClick={(e) => e.stopPropagation()}
+            onClick={onFold}
           >
             <Icon name={fold?.hidden ? "chevron-right" : "chevron-down"} />
           </button>
@@ -240,15 +240,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             className="ui-btn ui-btn-ghost ui-iconbtn ovw-menu-btn"
             title={tr("srow.menu")}
             ref={menuBtnRef}
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuAt((m) => (m ? null : "button"));
-            }}
-            // Enter / Space activate this button, not the card. Escape has to reach the
-            // document, where the open menu's esc layer closes it.
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-            }}
+            onClick={() => setMenuAt((m) => (m ? null : "button"))}
           >
             <Icon name="ellipsis" />
           </button>
@@ -265,14 +257,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
                 className={"rail-ord " + ordClass(o.ordinal)}
                 title={tr("common.focus_pane", { ordinal: o.ordinal })}
                 aria-label={tr("common.focus_pane", { ordinal: o.ordinal })}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setActive(o.id);
-                }}
-                onAuxClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-                }}
+                onClick={() => setActive(o.id)}
                 onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
                 onMouseLeave={() => setHover({ session: s.name })}
               >
@@ -364,24 +349,6 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           {s.lastSay}
         </div>
       )}
-      {/* The menu is a CHILD of the card, and a React event bubbles through the component
-          tree even out of a portal — so without this boundary every menu item also counted as
-          a click on the card: choosing "Stop" opened the session in another pane behind the
-          confirmation dialog (reported 2026-09-12). The rail's row never had this because its
-          menu is a SIBLING of the clickable button; a card is clickable as a whole, so the
-          boundary has to be explicit. Keys stop only when they are the ones the card acts on
-          (Enter / Space): a React stopPropagation also stops the native event at the root, and
-          Escape has to reach the document, where the menu's and its dialogs' esc layers close
-          them. */}
-      <span
-        className="ovw-menu-host"
-        onClick={(e) => e.stopPropagation()}
-        onAuxClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-        }}
-        onContextMenu={(e) => e.stopPropagation()}
-      >
       {menuAvailable && <SessionMenu
         s={s}
         actions={actions}
@@ -398,7 +365,6 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         keepOpenRefs={[menuWrapRef]}
         onClose={() => setMenuAt(null)}
       />}
-      </span>
     </article>
   );
 }
