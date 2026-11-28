@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import { useEffect, useId, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { agentOf } from "../../agents/registry.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { makeAttachment, type Attachment } from "../../lib/attachDraft.ts";
@@ -12,7 +12,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { dismissToast } from "../../ui/toast.ts";
 import { AttachChips } from "../mirror/parts/AttachChips.tsx";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
-import { deliverLaunchPrompt, uploadLaunchFiles } from "./launchDelivery.ts";
+import { deliverLaunchPrompt, uploadLaunchFiles, type LaunchFile } from "./launchDelivery.ts";
 import {
   clearLaunchDraft, editLaunchDraft, launchDraftOwner, markLaunchDraftDelivery, restoreLaunchDrafts, useHeldLaunchDrafts,
   withLaunchDraft, type HeldLaunchDraft,
@@ -100,12 +100,16 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
   // Chips are rebuilt from the draft's files whenever they change. The object URLs behind the
   // thumbnails are minted in the effect, not during render, so StrictMode's mount/unmount/mount
   // cannot leave a chip pointing at a URL its own cleanup already revoked.
-  const [chips, setChips] = useState<Attachment[]>([]);
+  // `built` remembers which entries the chips were made from: for one render after `files`
+  // changes the chips still show the previous list, and a click on one must not be read as an
+  // index into the new list (it would delete a neighbour).
+  const [built, setBuilt] = useState<{ source: LaunchFile[]; chips: Attachment[] }>({ source: [], chips: [] });
   useEffect(() => {
     const made = files.map(({ file, path }) => makeAttachment(file, { path }));
-    setChips(made);
+    setBuilt({ source: files, chips: made });
     return () => made.forEach((a) => a.url && URL.revokeObjectURL(a.url));
   }, [files]);
+  const promptId = useId();
   const operation = useHeldLaunchDrafts((s) => s.operations[key]);
   const busy = !!operation;
   const inScope = () => {
@@ -176,9 +180,16 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
   };
 
   const locked = busy || deliveryPending;
+  // Both edits read the draft's current files rather than this render's: a pick, paste or
+  // removal that lands between an upload's write-back and the next render must not undo it.
+  const currentFiles = () => useHeldLaunchDrafts.getState().drafts[key]?.files ?? [];
   const addFiles = (added: File[]) => {
     if (locked || !added.length) return;
-    edit({ files: [...files, ...added.map((file) => ({ file, path: "" }))] });
+    edit({ files: [...currentFiles(), ...added.map((file) => ({ file, path: "" }))] });
+  };
+  const removeFile = (i: number) => {
+    const shown = built.source[i]?.file;
+    if (shown) edit({ files: currentFiles().filter((entry) => entry.file !== shown) });
   };
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const pasted = Array.from(e.clipboardData?.files || []);
@@ -202,8 +213,8 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
 
   return (
     <>
-      <span className="update-toast">
-        <span className="update-toast-txt">
+      <span className="update-toast launch-retry-toast">
+        <span className="update-toast-txt launch-retry-toast-txt">
           {tr(deliveryPending && !busy ? "rp.delivery_unknown" : "rp.delivery_held", { session })}
         </span>
         <button type="button" className="update-toast-btn" disabled={busy} onClick={() => toggleDialog(true)}>{tr("rp.delivery_review")}</button>
@@ -221,52 +232,54 @@ function RetryDialog({ draft, dialog }: { draft: HeldLaunchDraft; dialog: Dialog
               : operation.phase === "uploading" ? "rp.delivery_uploading" : "rp.delivery_sending")}</p>}
             {status && <p role="status">{tr(actionMessage[status])}</p>}
             {deliveryPending && !busy && <p role="status">{tr("rp.delivery_unknown", { session })}</p>}
-            <div className="launch-prompt-label">
-              <span>{tr("rp.delivery_prompt")}</span>
-              {!deliveryPending && (
-                <span className="launch-prompt-tools">
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    multiple
-                    hidden
-                    onChange={(e) => {
-                      const picked = Array.from(e.target.files || []);
-                      e.target.value = ""; // allow re-picking the same file
-                      addFiles(picked);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="ghost launch-attach-btn"
-                    title={tr("launch.attach_file")}
-                    aria-label={tr("launch.attach_file")}
-                    disabled={busy}
-                    onClick={() => fileRef.current?.click()}
-                  >
-                    <Icon name="add" />
-                  </button>
-                </span>
-              )}
+            <div className="ui-field">
+              <div className="launch-prompt-label">
+                <label htmlFor={promptId}>{tr("rp.delivery_prompt")}</label>
+                {!deliveryPending && (
+                  <span className="launch-prompt-tools">
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      multiple
+                      hidden
+                      onChange={(e) => {
+                        const picked = Array.from(e.target.files || []);
+                        e.target.value = ""; // allow re-picking the same file
+                        addFiles(picked);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="ghost launch-attach-btn"
+                      title={tr("launch.attach_file")}
+                      aria-label={tr("launch.attach_file")}
+                      disabled={busy}
+                      onClick={() => fileRef.current?.click()}
+                    >
+                      <Icon name="add" />
+                    </button>
+                  </span>
+                )}
+              </div>
+              <AttachChips
+                attachments={built.chips}
+                pasting={false}
+                readOnly={locked || built.source !== files}
+                note={(a) => (a.path ? undefined : tr("rp.delivery_pending"))}
+                onRemove={removeFile}
+              />
+              <textarea
+                {...NO_AUTOFILL}
+                id={promptId}
+                rows={5}
+                value={prompt}
+                readOnly={locked}
+                onChange={(e) => edit({ prompt: e.target.value })}
+                onPaste={onPaste}
+                onDragOver={onDragOver}
+                onDrop={onDrop}
+              />
             </div>
-            <AttachChips
-              attachments={chips}
-              pasting={false}
-              readOnly={locked}
-              note={(a) => (a.path ? undefined : tr("rp.delivery_pending"))}
-              onRemove={(i) => edit({ files: files.filter((_, index) => index !== i) })}
-            />
-            <textarea
-              {...NO_AUTOFILL}
-              aria-label={tr("rp.delivery_prompt")}
-              rows={5}
-              value={prompt}
-              readOnly={locked}
-              onChange={(e) => edit({ prompt: e.target.value })}
-              onPaste={onPaste}
-              onDragOver={onDragOver}
-              onDrop={onDrop}
-            />
           </div>
           <footer className="ui-modal-foot">
             {cancel("ghost")}

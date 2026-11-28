@@ -42,7 +42,10 @@ const draftKey = () => launchDraftOwner(useTenantStore.getState()).prefix + "s1"
 const reviewButton = () => document.querySelector<HTMLButtonElement>(".ui-toast-msg button");
 const recoveryDialog = () => document.querySelector<HTMLFormElement>("form[role=dialog]");
 const chips = (dialog: Element) => dialog.querySelectorAll(".ma-chip");
-const pendingNotes = (dialog: Element) => [...dialog.querySelectorAll(".ma-note")].map((n) => n.textContent);
+// Each chip as [file name, status note]: the name and the note must sit on the same chip.
+const chipInfo = (dialog: Element) =>
+  [...chips(dialog)].map((chip) => [chip.getAttribute("title"), chip.querySelector(".ma-note")?.textContent ?? ""]);
+const pending = t("rp.delivery_pending");
 const focusTarget = () => document.querySelector<HTMLButtonElement>("[data-launch-delivery-focus]");
 const submit = (dialog: HTMLFormElement) => dialog.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 const dialogButton = (label: string) => [...recoveryDialog()!.querySelectorAll("button")].find((button) => button.textContent === label);
@@ -150,20 +153,17 @@ describe("partial draft delivery", () => {
     await act(async () => review.click());
     let dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
     expect(dialog.querySelector("textarea")?.value).toBe("look at these");
-    expect(chips(dialog)).toHaveLength(2);
-    expect(pendingNotes(dialog)).toEqual([t("rp.delivery_pending")]);
+    expect(chipInfo(dialog)).toEqual([["a.png", ""], ["b.png", pending]]);
     pasteImage.mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large" } });
     await submitRetry(dialog);
-    expect(chips(dialog)).toHaveLength(2);
-    expect(pendingNotes(dialog)).toEqual([t("rp.delivery_pending")]);
+    expect(chipInfo(dialog)).toEqual([["a.png", ""], ["b.png", pending]]);
     expect(apiJSON).toHaveBeenCalledTimes(1);
 
     await act(async () => dialog.querySelector<HTMLButtonElement>("header button")!.click());
     expect(dialog.isConnected).toBe(false);
     await act(async () => review.click());
     dialog = document.querySelector<HTMLFormElement>("form[role=dialog]")!;
-    expect(chips(dialog)).toHaveLength(2);
-    expect(pendingNotes(dialog)).toEqual([t("rp.delivery_pending")]);
+    expect(chipInfo(dialog)).toEqual([["a.png", ""], ["b.png", pending]]);
     await act(async () => dialog.querySelectorAll<HTMLButtonElement>(".ma-del")[1].click());
     const picker = dialog.querySelector<HTMLInputElement>('input[type="file"]')!;
     Object.defineProperty(picker, "files", { value: [file("smaller.png")] });
@@ -206,14 +206,22 @@ describe("partial draft delivery", () => {
     Object.defineProperty(pasted, "clipboardData", { value: { files: [file("pasted.png")] } });
     await act(async () => prompt.dispatchEvent(pasted));
     expect(pasted.defaultPrevented).toBe(true);
-    expect(chips(dialog)).toHaveLength(3);
+    expect(chipInfo(dialog)).toEqual([["a.png", ""], ["b.png", pending], ["pasted.png", pending]]);
 
     const dropped = new Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(dropped, "dataTransfer", { value: { types: ["Files"], files: [file("dropped.png")] } });
     await act(async () => prompt.dispatchEvent(dropped));
     expect(dropped.defaultPrevented).toBe(true);
-    expect(chips(dialog)).toHaveLength(4);
-    expect(pendingNotes(dialog)).toEqual(Array(3).fill(t("rp.delivery_pending")));
+    expect(chipInfo(dialog)).toEqual([["a.png", ""], ["b.png", pending], ["pasted.png", pending], ["dropped.png", pending]]);
+    // The browser only allows a drop where dragover was cancelled.
+    const dragOver = (types: string[]) => {
+      const ev = new Event("dragover", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "dataTransfer", { value: { types } });
+      prompt.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    expect(dragOver(["Files"])).toBe(true);
+    expect(dragOver(["text/plain"])).toBe(false);
 
     const textPaste = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(textPaste, "clipboardData", { value: { files: [] } });
@@ -221,8 +229,72 @@ describe("partial draft delivery", () => {
     expect(textPaste.defaultPrevented).toBe(false);
     expect(chips(dialog)).toHaveLength(4);
 
-    await act(async () => dialog.querySelectorAll<HTMLButtonElement>(".ma-del")[3].click());
-    expect(chips(dialog)).toHaveLength(3);
+    // Each x names its file and removes that file, not its neighbour.
+    const removers = [...dialog.querySelectorAll<HTMLButtonElement>(".ma-del")];
+    expect(removers.map((x) => x.getAttribute("aria-label"))).toEqual(
+      ["a.png", "b.png", "pasted.png", "dropped.png"].map((name) => t("chat.remove_named", { name })),
+    );
+    await act(async () => removers[1].click());
+    expect(chipInfo(dialog)).toEqual([["a.png", ""], ["pasted.png", pending], ["dropped.png", pending]]);
+    expect(useHeldLaunchDrafts.getState().drafts[draftKey()].files.map(({ file }) => file.name))
+      .toEqual(["a.png", "pasted.png", "dropped.png"]);
+  });
+
+  it("offers no attachment edits while an upload runs or after its outcome is unknown", async () => {
+    apiJSON.mockImplementation((path: string, _method, _body, _headers, init) =>
+      path === "api/sessions" ? created(path) : waitForAbort(init.signal));
+    pasteImage.mockResolvedValue({ status: 413 });
+    await launch([file("a.png"), file("b.png")]);
+    const key = draftKey();
+    await act(async () => reviewButton()!.click());
+    const dialog = recoveryDialog()!;
+    const prompt = dialog.querySelector("textarea")!;
+    const filesNow = () => useHeldLaunchDrafts.getState().drafts[key].files;
+    const before = filesNow();
+    const tryEdits = async () => {
+      const pasted = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(pasted, "clipboardData", { value: { files: [file("late.png")] } });
+      const dropped = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(dropped, "dataTransfer", { value: { types: ["Files"], files: [file("late.png")] } });
+      const over = new Event("dragover", { bubbles: true, cancelable: true });
+      Object.defineProperty(over, "dataTransfer", { value: { types: ["Files"] } });
+      await act(async () => {
+        prompt.dispatchEvent(pasted);
+        prompt.dispatchEvent(dropped);
+        prompt.dispatchEvent(over);
+      });
+      expect(over.defaultPrevented).toBe(false);
+      expect(filesNow()).toBe(before);
+    };
+
+    // Uploading: the + button is disabled and the chips carry no x.
+    pasteImage.mockImplementationOnce((_s, _f, signal: AbortSignal) => waitForAbort(signal));
+    await act(async () => submit(dialog));
+    await act(async () => vi.waitFor(() => expect(useHeldLaunchDrafts.getState().operations[key]?.phase).toBe("uploading")));
+    expect(dialog.querySelector<HTMLButtonElement>("button.launch-attach-btn")!.disabled).toBe(true);
+    expect(dialog.querySelector(".ma-del")).toBeNull();
+    expect(chipInfo(dialog)).toEqual([["a.png", pending], ["b.png", pending]]);
+    await tryEdits();
+    await act(async () => dialogButton(t("rp.delivery_cancel_upload"))!.click());
+    await waitForRetry();
+
+    // Idle again: editable, and the same drop is accepted.
+    expect(dialog.querySelector(".ma-del")).not.toBeNull();
+    pasteImage.mockResolvedValue({ status: 200, path: "/p/x.png" });
+    await act(async () => submit(dialog));
+    await act(async () => vi.waitFor(() => expect(apiJSON).toHaveBeenCalledTimes(2)));
+    await act(async () => dialogButton(t("rp.delivery_stop_waiting"))!.click());
+    await waitForRetry();
+
+    // Outcome unknown: no + button, no x, names still identify the files, edits are refused.
+    expect(dialog.querySelector("button.launch-attach-btn, input[type=file], .ma-del")).toBeNull();
+    expect(chips(dialog)).toHaveLength(2);
+    expect([...chips(dialog)].map((chip) => chip.getAttribute("title"))).toEqual(["a.png", "b.png"]);
+    const unknownFiles = filesNow();
+    const pasted = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasted, "clipboardData", { value: { files: [file("late.png")] } });
+    await act(async () => prompt.dispatchEvent(pasted));
+    expect(filesNow()).toBe(unknownFiles);
   });
 
   it("restores edits and unsent bytes after reload, then sends to the original session", async () => {
@@ -245,8 +317,7 @@ describe("partial draft delivery", () => {
     await act(async () => review.click());
     const restored = recoveryDialog()!;
     expect(restored.querySelector("textarea")?.value).toBe("edited after refusal");
-    expect(chips(restored)).toHaveLength(2);
-    expect(pendingNotes(restored)).toEqual([t("rp.delivery_pending")]);
+    expect(chipInfo(restored)).toEqual([["a.png", ""], ["new.png", pending]]);
     expect(apiJSON).toHaveBeenCalledTimes(1);
     pasteImage.mockImplementationOnce(async (_session: string, uploaded: File) => {
       expect(uploaded.type).toBe("image/png");
