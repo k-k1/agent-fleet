@@ -536,17 +536,24 @@ func purgeCleanupArchiveIn(root *os.Root, id string) (cleanupManifest, error) {
 	if err := rmtree.RemoveAllIn(root, spaceTrashName(id)); err != nil {
 		return empty, err
 	}
+	// Restore progress goes only once the archive cannot be restored any more: a purge that stops
+	// before that keeps an entry whose next restore must still find what it already did. A
+	// purge of an id whose tarball is already gone still clears what an earlier purge left.
+	// Left behind, a record blocks its id for a space (entryIDFree) and is ignored by a worktree
+	// entry with another pin.
+	dropProgress := func() {
+		_ = root.Remove(spaceRestoreRecordName(id))
+		_ = root.Remove(worktreeRestoreRecordName(id))
+	}
 	for _, name := range []string{id + ".json", id + ".tar.gz"} {
 		if err := root.Remove(name); err != nil && (!errors.Is(err, fs.ErrNotExist) || name == id+".tar.gz") {
+			if errors.Is(err, fs.ErrNotExist) {
+				dropProgress()
+			}
 			return empty, err
 		}
 	}
-	// Restore progress goes only once the archive cannot be restored any more: a purge that stops
-	// before that keeps an entry whose next restore must still find what it already did. Left
-	// behind, a record blocks its id for a space (entryIDFree) and is ignored by a worktree entry
-	// with another pin.
-	_ = root.Remove(spaceRestoreRecordName(id))
-	_ = root.Remove(worktreeRestoreRecordName(id))
+	dropProgress()
 	return man, nil
 }
 

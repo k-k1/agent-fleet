@@ -311,6 +311,64 @@ func TestWorktreePurgeUnpinsOutsideTheCleanupLock(t *testing.T) {
 	}
 }
 
+// A shelved session whose meta cannot be read does not hold the folder back: the restore puts
+// the worktree and the readable sessions back and reports the unreadable one, and once its meta
+// reads again a retry takes it off the shelf without undoing a shelf action taken meanwhile.
+func TestWorktreeRestoreWithAnUnreadableShelvedMeta(t *testing.T) {
+	e := tombstoneSetup(t)
+	id := worktreeDeletedWithEntry(t, e)
+	good, err := os.ReadFile(session.MetaPath("aisub01"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(session.MetaPath("aisub01"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := "/cleanup/archives/" + id + "/restore"
+	if code := errCodeOf(t, e.srv, "POST", path, http.StatusConflict); code != "restore_incomplete" {
+		t.Fatalf("restore code = %q, want restore_incomplete", code)
+	}
+	if got, _ := os.ReadFile(filepath.Join(e.wt, "f")); string(got) != "edited" {
+		t.Fatalf("f = %q, want the uncommitted edit back", got)
+	}
+	if m, ok := session.ReadMeta("aiaaaa1"); !ok || m.Archived {
+		t.Fatalf("the readable session was left on the shelf: %+v", m)
+	}
+
+	do(t, e.srv, "POST", "/sessions/aiaaaa1/archive", nil, http.StatusOK, nil)
+	if err := os.WriteFile(session.MetaPath("aisub01"), good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	if m, ok := session.ReadMeta("aisub01"); !ok || m.Archived {
+		t.Fatalf("the session readable again was left on the shelf: %+v", m)
+	}
+	if m, ok := session.ReadMeta("aiaaaa1"); !ok || !m.Archived {
+		t.Fatalf("the retry undid the newer shelf action: %+v", m)
+	}
+}
+
+// A purge of an id whose tarball an earlier purge already removed clears the restore record
+// that purge could not.
+func TestPurgeClearsARestoreRecordLeftWithoutItsArchive(t *testing.T) {
+	e := tombstoneSetup(t)
+	id := worktreeDeletedWithEntry(t, e)
+	do(t, e.srv, "POST", "/cleanup/archives/"+id+"/restore", nil, http.StatusOK, nil)
+	record := filepath.Join(cleanupStoreDir(), worktreeRestoreRecordName(id))
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	do(t, e.srv, "DELETE", "/cleanup/archives/"+id, nil, http.StatusOK, nil)
+	writeAt(t, record, string(data)) // as if its unlink had failed
+	if code := httpStatus(t, e.srv, "DELETE", "/cleanup/archives/"+id, nil); code == http.StatusOK {
+		t.Fatalf("purging a gone archive = %d, want an error", code)
+	}
+	if _, err := os.Lstat(record); !os.IsNotExist(err) {
+		t.Fatalf("the left record is still there: %v", err)
+	}
+}
+
 // A record a purge left behind under the same id, from another delete, is not this entry's
 // progress: its "complete" must not keep this entry's sessions on the shelf.
 func TestWorktreeRestoreIgnoresAnotherEntrysRecord(t *testing.T) {

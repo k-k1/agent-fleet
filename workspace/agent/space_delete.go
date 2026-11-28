@@ -401,9 +401,12 @@ func resumeSpaceRestore(trash *os.Root, id, dir string, t spaceTombstone) error 
 		if err != nil {
 			return spaceRestoreMoveError(err, t.Folder)
 		}
-		shelved, err := shelfRevisionsOf(id, t.Shelved)
+		shelved, unread, err := shelfRevisionsOf(id, t.Shelved)
 		if err != nil {
 			return err
+		}
+		if len(unread) > 0 {
+			return fmt.Errorf("%w: could not read session %s", errRestoreStopped, unread[0])
 		}
 		record = spaceRestoreRecord{ID: id, Folder: t.Folder, Identity: identity, Shelved: shelved}
 		if err := writeRestoreRecord(trash, name, record); err != nil {
