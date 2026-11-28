@@ -14,6 +14,15 @@
 //
 // Right-click, the ⋯ button and the Menu key open SessionMenu — the very same items as the row
 // and the tab.
+//
+// The card is NOT itself a button. A button that holds buttons (the family fold, the ⋯, the
+// pane numbers) is announced as disabled, with everything inside it, when the card cannot be
+// opened. So the article is plain, "open the session" is one transparent button stretched over
+// it (.ovw-open: the Tab stop and the name assistive technology reads), and the other controls
+// are its siblings. The content is lifted above that button so it keeps its own tooltips, and a
+// pointer click anywhere on the card that is not another control reaches the article's
+// delegating handlers below — a button's own Enter / Space arrives there as its click too.
+// Nothing has to stop a click from reaching the card: the handlers read where it came from.
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
@@ -135,25 +144,41 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
     if (inert) return;
     openSessionFromList(s, newPane || beside, running);
   };
+  // Menu key on the focused open button. Enter / Space need no code: they are its click.
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      openIt(e.ctrlKey || e.metaKey);
-    } else if (isContextMenuKey(e) && menuAvailable) {
+    if (isContextMenuKey(e) && menuAvailable) {
       e.preventDefault();
       setMenuAt(menuAnchor(e.currentTarget));
     }
   };
+  const onCard = (e: MouseEvent<HTMLElement>) => {
+    const t = e.target as Element;
+    if (!e.currentTarget.contains(t)) return false;
+    const control = t.closest("button");
+    return !control || control.classList.contains("ovw-open");
+  };
   const onContextMenu = (e: MouseEvent<HTMLElement>) => {
-    if (!menuAvailable) return;
+    // Any control of the card may be right-clicked; only the portal'd menu's own events are not ours.
+    if (!menuAvailable || !e.currentTarget.contains(e.target as Node)) return;
     e.preventDefault();
     setMenuAt({ x: e.clientX, y: e.clientY });
   };
 
+  // The tooltip of the card's plain content (the name); the open button and the article carry it.
+  const tip =
+    displayName(s) +
+    "\n" +
+    (inert
+      ? tr("srow.cant_resume")
+      : s.alive
+        ? tr(beside ? "ovw.open_hint" : "ovw.open_hint_here")
+        : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
+    `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`;
+
   return (
     <article
       ref={cardRef}
+      title={tip}
       className={
         stateClass("ovw-card", st.cls) +
         (open ? " open" : "") +
@@ -165,31 +190,32 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         (selected ? " ovw-card--selected" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
-      role="button"
-      tabIndex={0}
-      aria-disabled={inert || undefined}
-      aria-current={selected || undefined}
-      title={
-        displayName(s) +
-        "\n" +
-        (inert
-          ? tr("srow.cant_resume")
-          : s.alive
-            ? tr(beside ? "ovw.open_hint" : "ovw.open_hint_here")
-            : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
-        `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
-      }
-      onClick={(e) => openIt(e.ctrlKey || e.metaKey)}
+      onClick={(e) => {
+        if (!onCard(e)) return;
+        // A click on plain content is not focusable, so the Menu key would find nothing.
+        cardRef.current?.querySelector<HTMLElement>(".ovw-open")?.focus({ preventScroll: true });
+        openIt(e.ctrlKey || e.metaKey);
+      }}
       onAuxClick={(e) => {
-        if (e.button !== 1) return;
+        if (e.button !== 1 || !onCard(e)) return;
         e.preventDefault();
         openIt(true);
       }}
-      onKeyDown={onKeyDown}
       onContextMenu={onContextMenu}
       onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
       onMouseLeave={open ? () => setHover(null) : undefined}
     >
+      {/* aria-disabled, not disabled: a disabled button takes no focus and, in some browsers,
+          no right-click, and a card that cannot be opened still has its menu. */}
+      <button
+        type="button"
+        className="ovw-open"
+        aria-disabled={inert || undefined}
+        aria-label={displayName(s)}
+        aria-current={selected || undefined}
+        title={tip}
+        onKeyDown={onKeyDown}
+      />
       <header className="ovw-head">
         {onFold && (
           <button
@@ -197,15 +223,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             className="ovw-fold"
             aria-expanded={!fold?.hidden}
             title={fold?.hidden ? tr("ovw.expand") : tr("ovw.collapse")}
-            onClick={(e) => {
-              // The card itself opens the session; the fold must not do both.
-              e.preventDefault();
-              e.stopPropagation();
-              onFold();
-            }}
-            // A middle click on the card opens the session in another pane; on this button it
-            // must do nothing.
-            onAuxClick={(e) => e.stopPropagation()}
+            onClick={onFold}
           >
             <Icon name={fold?.hidden ? "chevron-right" : "chevron-down"} />
           </button>
@@ -240,15 +258,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             className="ui-btn ui-btn-ghost ui-iconbtn ovw-menu-btn"
             title={tr("srow.menu")}
             ref={menuBtnRef}
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuAt((m) => (m ? null : "button"));
-            }}
-            // Enter / Space activate this button, not the card. Escape has to reach the
-            // document, where the open menu's esc layer closes it.
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-            }}
+            onClick={() => setMenuAt((m) => (m ? null : "button"))}
           >
             <Icon name="ellipsis" />
           </button>
@@ -265,14 +275,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
                 className={"rail-ord " + ordClass(o.ordinal)}
                 title={tr("common.focus_pane", { ordinal: o.ordinal })}
                 aria-label={tr("common.focus_pane", { ordinal: o.ordinal })}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setActive(o.id);
-                }}
-                onAuxClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-                }}
+                onClick={() => setActive(o.id)}
                 onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
                 onMouseLeave={() => setHover({ session: s.name })}
               >
@@ -364,24 +367,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           {s.lastSay}
         </div>
       )}
-      {/* The menu is a CHILD of the card, and a React event bubbles through the component
-          tree even out of a portal — so without this boundary every menu item also counted as
-          a click on the card: choosing "Stop" opened the session in another pane behind the
-          confirmation dialog (reported 2026-09-12). The rail's row never had this because its
-          menu is a SIBLING of the clickable button; a card is clickable as a whole, so the
-          boundary has to be explicit. Keys stop only when they are the ones the card acts on
-          (Enter / Space): a React stopPropagation also stops the native event at the root, and
-          Escape has to reach the document, where the menu's and its dialogs' esc layers close
-          them. */}
-      <span
-        className="ovw-menu-host"
-        onClick={(e) => e.stopPropagation()}
-        onAuxClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-        }}
-        onContextMenu={(e) => e.stopPropagation()}
-      >
+      <span className="ovw-menu-host">
       {menuAvailable && <SessionMenu
         s={s}
         actions={actions}

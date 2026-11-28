@@ -71,7 +71,7 @@ async function render(sessions: Session[]): Promise<void> {
 
 const sess = (name: string, extra: Partial<Session> = {}): Session => ({ name, kind: "claude", alive: true, state: "idle", createdAt: "2026-11-01T00:00:00Z", ...extra });
 const heads = () => [...host.querySelectorAll(".act-gtitle .ovw-gname")].map((e) => e.textContent);
-const cards = () => [...host.querySelectorAll<HTMLElement>(".ovw-card")].map((e) => (e.getAttribute("title") || "").split("ID: ")[1]);
+const cards = () => [...host.querySelectorAll<HTMLElement>(".ovw-open")].map((e) => (e.getAttribute("title") || "").split("ID: ")[1]);
 
 beforeEach(() => {
   localStorage.clear();
@@ -151,7 +151,7 @@ describe("ActiveSection", () => {
     useWorkspaceStore.setState({ state: "stopped" });
     await render(list);
     expect(host.querySelector(".ovw-menu-btn")).toBeNull();
-    const card = host.querySelector<HTMLElement>(".ovw-card")!;
+    const card = host.querySelector<HTMLElement>(".ovw-open")!;
     const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     card.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(false);
@@ -249,7 +249,7 @@ describe("ActiveSection", () => {
     for (const key of ["Enter", " "]) await act(async () => void fold.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })));
     expect(JSON.stringify(useLayoutStore.getState().layout)).toBe(before);
     // Control: the same middle click on the card itself does open it.
-    await act(async () => void host.querySelector(".ovw-card")!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 })));
+    await act(async () => void host.querySelector(".ovw-open")!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 })));
     expect(JSON.stringify(useLayoutStore.getState().layout)).not.toBe(before);
   });
 
@@ -267,7 +267,7 @@ describe("ActiveSection", () => {
       await act(async () => btn.click());
       expect(host.querySelector<HTMLButtonElement>(".act-gfold")!.getAttribute("aria-expanded")).toBe("false");
       // The folded group's cards are out of the way, the other group is untouched.
-      const visible = [...host.querySelectorAll<HTMLElement>(".ovw-card")].map((e) => (e.getAttribute("title") || "").split("ID: ")[1]);
+      const visible = [...host.querySelectorAll<HTMLElement>(".ovw-open")].map((e) => (e.getAttribute("title") || "").split("ID: ")[1]);
       expect(visible).toEqual(["sp"]);
       const head = host.querySelector(`[data-active-group="${key0}"] .act-gtitle`)!;
       expect(head.textContent).toContain("2 running / 2 total");

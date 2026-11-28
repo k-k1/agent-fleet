@@ -108,15 +108,37 @@
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  cursor: pointer;
   text-align: left;
   color: var(--fg);
+}
+/* "Open the session": one button stretched under the whole card — the Tab stop and the
+   accessible name. Everything else in the card is lifted above it so it keeps its own tooltips
+   and hit-testing; a click on that content opens the session through the article's handlers. */
+.ovw-open {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.ovw-card > :not(.ovw-open) {
+  position: relative;
+  cursor: pointer;
+}
+.ovw-card--dead .ovw-open,
+.ovw-card--dead > :not(.ovw-open) {
+  cursor: default;
 }
 .ovw-card:hover,
 .ovw-card.ovw-card-hover {
   border-color: var(--accent);
 }
-.ovw-card:focus-visible {
+.ovw-open:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -135,9 +157,6 @@
 }
 .ovw-card.ovw-card--stopped {
   opacity: 0.72;
-}
-.ovw-card.ovw-card--dead {
-  cursor: default;
 }
 .ovw-card.ovw-card--dead .ovw-title {
   text-decoration: line-through;
@@ -285,8 +304,7 @@
   line-height: 1.4;
 }
 /* Family fold on a card (ADR 0078's families, folded the way the fleet graph folds its
-   lanes). It sits inside the card's own click target, so its handler stops the event —
-   pressing it must not also open the session. */
+   lanes). It is a sibling of the open button, lifted above it. */
 .ovw-fold {
   flex: none;
   display: inline-flex;
