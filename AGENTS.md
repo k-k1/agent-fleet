@@ -219,7 +219,10 @@ evidence. Pass `--label` when you file it: one of `bug` / `enhancement` /
 `needs-decision` (waits on the owner's decision or an ADR; first body line states the question with its options) or `blocked` (waits on
 something outside the issue; first body line `Waiting on: <what>, <when / #N>`) where
 they apply. Close an issue with a three-line comment: evidence, why, and what would
-reopen it. An issue is public the moment it is filed and skips the secret scans, so no
+reopen it. A live check still owed does not keep an implemented issue open: the last
+PR says `Closes #N`, carries `needs-live-run` and holds the steps in `## Live check`; only
+a check that needs something the release's sandbox pass lacks (real hardware, an outside
+account, a real usage limit) stays as an open `needs-live-run` issue. An issue is public the moment it is filed and skips the secret scans, so no
 real hostnames, account IDs or tokens. Full rule: `docs/CONVENTIONS.md` §10.
 
 ## Running the Console tests

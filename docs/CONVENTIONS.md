@@ -312,8 +312,8 @@ hardware that has not happened, and a residual that a review left.
   `bug`, `enhancement` or `documentation` — and one priority: `priority: high` for data
   integrity, user-facing regressions or operational risk, `priority: medium` for planned
   work after those, `priority: low` for deferred work. Add `follow-up` for something a
-  merged change left behind and `needs-live-run` when it can only be closed by a run on
-  real hardware or a deployment. The issue forms under `.github/ISSUE_TEMPLATE/` set the
+  merged change left behind. `needs-live-run` goes on the PR whose change still needs a
+  run on a deployment, and on an issue only in the case kept open below. The issue forms under `.github/ISSUE_TEMPLATE/` set the
   type for issues filed on github.com; `gh issue create` does not use them, and neither
   sets a priority.
 - **Two labels say why an issue is not ready to build.** Each is removed the moment its
@@ -328,11 +328,17 @@ hardware that has not happened, and a residual that a review left.
 - **Close an issue with a three-line comment**, so the reason survives the closed state:
   the evidence (PR, commit or live-check comment), why it is closed, and what would
   reopen it. Reopening is always fine. The reason is one of:
-  - *Completed*: every acceptance item has been seen. A live check that could not be run
-    is acceptable only when tests cover the behaviour, the comment names them and says
-    "not seen live: …". Whatever can only be shown on real hardware or a deployment gets
-    or keeps `needs-live-run` and stays open; an issue that carries that label is never
-    closed on tests plus "not seen live", only by the run itself.
+  - *Completed*: every acceptance item is built, merged and covered by tests. A live check
+    that is still owed does not keep the issue open: the last PR says `Closes #N`, carries
+    `needs-live-run`, and its `## Live check` section is the one place that check is
+    tracked — the sandbox pass before a release runs it from there. An issue left open for
+    the same check is a second copy nobody clears (measured: the 2026-11-28 inventory found
+    38 such issues, and the verify-in-a-Workspace class had not moved in two days). A failed
+    check reopens the issue, or files a `bug` that links the PR.
+  - The exception: a check that needs something the release's sandbox pass does not have
+    — real hardware, an outside account or organisation, a real usage limit, a specific
+    host. That one stays as an open issue labelled `needs-live-run`, names what it needs,
+    and closes only by the run itself, never on tests plus "not seen live".
   - *Not planned* (`gh issue close N --reason "not planned"`): the premise is gone
     (feature retired, superseded by #N, the CLI or version moved on, measured as no
     longer relevant), or the issue has been idle for 4+ weeks and is not on the current
@@ -345,8 +351,10 @@ hardware that has not happened, and a residual that a review left.
   is concrete, file the rest as a new `follow-up` issue and close the parent with a
   pointer. An ongoing "keep lowering X" issue (a ceiling, a test time) stays open with
   its target stated in the body.
-- **When a PR that only `Refs` an issue is merged, its author comments on the issue**
-  with what remains (the PR's "Not verified" items), so the issue body plus its last comment always say what is left.
+- **A PR says `Refs #N` only while implementation is left** (a part of a series, a
+  finding set aside), not because a live check is owed. When such a PR is merged, its
+  author comments on the issue with what remains to build, so the issue body plus its last
+  comment always say what is left.
 - **Take inventory periodically.** A pass classifies every open issue (done / verify
   here / verify on a deployment / verify unavailable / partial / ready / needs-decision /
   obsolete / waiting) and is recorded as one tracking issue with a table. The
