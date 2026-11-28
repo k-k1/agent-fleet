@@ -163,7 +163,9 @@ describe("AutoRunSection", () => {
       expect(host.textContent).toContain("reviewer-run-a");
       expect(header?.textContent).toBe("4 / 7");
       expect(badge.textContent).toBe("4");
-      expect(badge.dataset.badge).toBe("waiting");
+      // The count is the open runs in the neutral tone; the waiting run is the dot beside it.
+      expect(badge.dataset.badge).toBe("running");
+      expect(icon.querySelector<HTMLElement>(".actbar-cue")?.dataset.badge).toBe("waiting");
       expect(icon.title).toContain("1 auto-run waiting for your answer");
       const input = host.querySelector<HTMLInputElement>(".autorun-filter-bar input")!;
       await act(async () => {

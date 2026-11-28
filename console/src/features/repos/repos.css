@@ -620,6 +620,10 @@
 }
 .launch-split {
   display: flex;
+  flex: none;
+  /* The buttons take their font from here (font: inherit); a bold heading would otherwise make the
+     Active view's copy wider than a Repositories row's. */
+  font-weight: 400;
 }
 /* Old .chip.launch look: accent text on the chip base, teal-ish border. */
 .launch-main,
@@ -2079,4 +2083,13 @@ button.start-place-chip--gone {
 .run-model-more:focus-within .run-model-more-label {
   outline: 2px solid var(--accent, #3b82f6);
   outline-offset: 1px;
+}
+
+/* Held-draft retry toast: "Review draft" and, while an upload or send runs, a cancel button sit
+   beside the message. On a ~320px toast they wrap under it instead of running past the edge. */
+.launch-retry-toast {
+  flex-wrap: wrap;
+}
+.launch-retry-toast-txt {
+  flex: 1 1 12em;
 }

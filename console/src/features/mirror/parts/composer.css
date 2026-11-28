@@ -189,6 +189,24 @@ chip row, ending with the + attach button
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* One-line status on a chip ("Upload pending"). A thumbnail chip is a 56px tile, so the note
+   sits over its bottom edge and may wrap; a file chip shows it under the name. */
+.ma-note {
+  display: block;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--muted);
+}
+.ma-chip:not(.ma-file) .ma-note {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1px 2px;
+  text-align: center;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  pointer-events: none;
+}
 /* + attach button, left of the composer (all pointer types — phones foremost). */
 .mirror-attach-btn {
   flex: none;
