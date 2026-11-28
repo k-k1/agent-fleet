@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -22,6 +24,48 @@ func commandSteps(conv string) fstore.Store[string] {
 	}, conv, ".txt")
 }
 
+// maxCommandSteps is how many recorded commands one conversation keeps, newest step index
+// first. Each file is up to transcript.CapOutput's cap and the hook writes one per run_command,
+// so a long-lived conversation would otherwise grow the state dir without bound. Older rows
+// of the mirror fall back to the unenriched tool line, which is what they showed before the
+// store existed.
+const maxCommandSteps = 500
+
+// pruneCommandSteps removes all but the newest keep recorded steps of one conversation.
+// Best effort: the hook runs as a separate process per event, so two prunes can race, and
+// both only ever remove the oldest entries.
+func pruneCommandSteps(conv string, keep int) {
+	store := commandSteps(conv)
+	ents, err := os.ReadDir(store.Dir())
+	if err != nil || len(ents) <= keep {
+		return
+	}
+	var idxs []int
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".txt") {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSuffix(e.Name(), ".txt")); err == nil {
+			idxs = append(idxs, n)
+		}
+	}
+	if len(idxs) <= keep {
+		return
+	}
+	sort.Ints(idxs)
+	for _, n := range idxs[:len(idxs)-keep] {
+		store.Remove(strconv.Itoa(n))
+	}
+}
+
+// removeCommandSteps deletes every recorded command of one conversation, including a
+// staging directory a killed hook left behind.
+func removeCommandSteps(conv string) {
+	if conversationIDRe.MatchString(conv) {
+		_ = os.RemoveAll(commandSteps(conv).Dir())
+	}
+}
+
 func recordCommandStep(in hookInput) {
 	if in.ToolCall.Name != "run_command" || in.Error != "" || in.StepIdx == nil || *in.StepIdx < 0 ||
 		!conversationIDRe.MatchString(in.ConversationID) {
@@ -35,7 +79,9 @@ func recordCommandStep(in hookInput) {
 	}
 	if cmd := transcript.CapOutput(args.CommandLine); cmd != "" {
 		// Independent atomic writes let background completions arrive out of order.
-		_ = commandSteps(in.ConversationID).Write(strconv.Itoa(*in.StepIdx), cmd)
+		if commandSteps(in.ConversationID).Write(strconv.Itoa(*in.StepIdx), cmd) == nil {
+			pruneCommandSteps(in.ConversationID, maxCommandSteps)
+		}
 	}
 }
 

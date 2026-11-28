@@ -104,6 +104,9 @@ func dropManagedRuntime(m session.Meta) {
 // it. Only purging a trash archive calls it (through RemoveManagedLedger): halt, archive and
 // the trash itself keep it, because each of those can still be resumed.
 func removeManagedLedger(m session.Meta) {
+	if p, ok := registeredCap[agents.SlotPurger](m.Kind); ok {
+		p.PurgeSlot(m)
+	}
 	if rt, ok := managedRuntimeOf(m.Kind); ok {
 		rt.RemoveLedger(m.Name)
 	}

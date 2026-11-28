@@ -2,10 +2,14 @@ package agy
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -115,5 +119,104 @@ func TestCompletedCommandSteps(t *testing.T) {
 	hook("PostToolUse", "another-launch", args(invalid, "invalid ID", "4"))
 	if _, ok := commandSteps(invalid).Read("4"); ok {
 		t.Fatal("stored a command for an invalid conversation ID")
+	}
+}
+
+func stepFiles(t *testing.T, conv string) map[int]bool {
+	t.Helper()
+	ents, err := os.ReadDir(commandSteps(conv).Dir())
+	if err != nil {
+		return nil
+	}
+	got := map[int]bool{}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		n, err := strconv.Atoi(e.Name()[:len(e.Name())-len(".txt")])
+		if err != nil {
+			t.Fatalf("unexpected file %q in the step store", e.Name())
+		}
+		got[n] = true
+	}
+	return got
+}
+
+func TestCommandStepsAreBoundedToTheNewestIndexes(t *testing.T) {
+	const conv = "00010203-0405-4607-8809-0a0b0c0d0e0f"
+	const other = "10111213-1415-4617-9819-1a1b1c1d1e1f"
+	t.Setenv("HOME", t.TempDir())
+	for _, id := range []string{conv, other} {
+		for i := 0; i < 12; i++ {
+			if err := commandSteps(id).Write(strconv.Itoa(i), "cmd"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Numeric order, not lexical: 9 is older than 10.
+	if err := commandSteps(conv).Write("10", "cmd"); err != nil {
+		t.Fatal(err)
+	}
+	pruneCommandSteps(conv, 5)
+	got := stepFiles(t, conv)
+	if len(got) != 5 {
+		t.Fatalf("kept %v, want 5 entries", got)
+	}
+	for _, i := range []int{11, 10, 9, 8, 7} {
+		if !got[i] {
+			t.Errorf("newest step %d was pruned: %v", i, got)
+		}
+	}
+	if len(stepFiles(t, other)) != 12 {
+		t.Error("pruning one conversation touched another")
+	}
+	pruneCommandSteps("no-such-conversation", 5) // a missing directory is not an error
+}
+
+func TestRecordCommandStepPrunesPastTheLimit(t *testing.T) {
+	const conv = "00010203-0405-4607-8809-0a0b0c0d0e0f"
+	t.Setenv("HOME", t.TempDir())
+	for i := 0; i < maxCommandSteps+3; i++ {
+		var in hookInput
+		raw := `{"conversationId":"` + conv + `","stepIdx":` + strconv.Itoa(i) +
+			`,"toolCall":{"name":"run_command","args":{"CommandLine":"ls"}}}`
+		if err := json.Unmarshal([]byte(raw), &in); err != nil {
+			t.Fatal(err)
+		}
+		recordCommandStep(in)
+	}
+	got := stepFiles(t, conv)
+	if len(got) != maxCommandSteps {
+		t.Fatalf("kept %d steps, want %d", len(got), maxCommandSteps)
+	}
+	if got[0] || got[2] || !got[3] || !got[maxCommandSteps+2] {
+		t.Fatalf("pruned the wrong end: oldest kept should be 3, newest %d", maxCommandSteps+2)
+	}
+}
+
+func TestClearResumeAndPurgeSlotRemoveTheConversationsCommandSteps(t *testing.T) {
+	const conv = "00010203-0405-4607-8809-0a0b0c0d0e0f"
+	const other = "10111213-1415-4617-9819-1a1b1c1d1e1f"
+	for name, drop := range map[string]func(session.Meta, string){
+		"ClearResume": func(_ session.Meta, sid string) { agentImpl{}.ClearResume(sid) },
+		"PurgeSlot":   func(m session.Meta, _ string) { agentImpl{}.PurgeSlot(m) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, sid := hookFixture(t, "slot-purge")
+			sids.Write(sid, conv)
+			for _, id := range []string{conv, other} {
+				if err := commandSteps(id).Write("4", "ls"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			drop(m, sid)
+			if _, err := os.Stat(commandSteps(conv).Dir()); err == nil {
+				t.Fatal("the conversation's command steps survived")
+			}
+			if _, ok := commandSteps(other).Read("4"); !ok {
+				t.Fatal("another conversation's command steps were removed")
+			}
+			drop(m, "never-launched-"+filepath.Base(sid)) // no conversation: nothing to do, no panic
+		})
 	}
 }
