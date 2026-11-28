@@ -8,14 +8,14 @@
 // confirmation and the like) stay purely ephemeral.
 // On a phone the stack sits below the top bars instead of at the bottom (toastPlacement.ts), and a
 // tap anywhere outside it dismisses the timed toasts.
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
 import { useT, type MsgKey } from "../lib/i18n/index.ts";
 import { useIsMobile } from "../lib/device.ts";
 import { pushToastLog } from "../lib/toastLog.ts";
 import { registerToastSink } from "./toast.ts";
-import { measureChromeBottom, touchesChrome } from "./toastPlacement.ts";
+import { useChromeBottom } from "./useChromeBottom.ts";
 
 export type ToastKind = "error" | "warn" | "info" | "success";
 
@@ -161,41 +161,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const phone = useIsMobile();
   const shown = items.length > 0;
-  const [top, setTop] = useState<number | null>(null);
-  // Measured before paint, so a toast never flashes at the bottom first. Re-measured when the
-  // stack changes, when the viewport moves (a soft keyboard shifts the frame, app/viewport.ts),
-  // and when the page under the stack changes while it is up: a sticky toast outlives a switch
-  // of pane or studio tab, which brings in or takes away a header (measured: the studio's chat
-  // tab adds one at 213-249px that a stack placed on the form tab covered). Only mutations that
-  // touch a bar count (touchesChrome), coalesced to one measurement per frame; an unchanged top
-  // does not re-render.
-  useLayoutEffect(() => {
-    if (!phone || !shown) return;
-    const sync = () => setTop(measureChromeBottom());
-    sync();
-    let frame = 0;
-    const later = () => {
-      if (!frame) frame = requestAnimationFrame(() => ((frame = 0), sync()));
-    };
-    const mo = new MutationObserver((records) => {
-      if (touchesChrome(records)) later();
-    });
-    // Every attribute, not a list: views show and hide their parts through their own attributes
-    // (the studio's tabs through data-tab on .igen-body), and touchesChrome keeps only those on
-    // an element that holds a bar.
-    mo.observe(document.body, { childList: true, subtree: true, attributes: true });
-    const vv = window.visualViewport;
-    window.addEventListener("resize", sync);
-    vv?.addEventListener("resize", sync);
-    vv?.addEventListener("scroll", sync);
-    return () => {
-      mo.disconnect();
-      if (frame) cancelAnimationFrame(frame);
-      window.removeEventListener("resize", sync);
-      vv?.removeEventListener("resize", sync);
-      vv?.removeEventListener("scroll", sync);
-    };
-  }, [phone, shown, items]);
+  // Where the bars end, for the phone placement (useChromeBottom).
+  const top = useChromeBottom(phone && shown, items);
 
   // A tap outside the stack dismisses the timed toasts, so one covering the content can be put
   // away without aiming at its X. The tap itself still goes through to what it landed on. Like an

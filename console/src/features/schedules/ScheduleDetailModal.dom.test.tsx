@@ -38,6 +38,7 @@ const { useSessionsStore } = await import("../sessions/store.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { activePane, allViews, freshLayout, singlePaneLayout } = await import("../../layout/ops.ts");
 const { getSettings, setSettings } = await import("../../lib/settings.ts");
+const { MOBILE_QUERY } = await import("../../lib/device.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -126,6 +127,9 @@ describe("ScheduleDetailModal reuse navigation", () => {
   const adopted = "sbbbbbb";
   const action = (label: string) =>
     [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label);
+  // The session slug is the shared session link (SessionRefLink), an anchor like the transcript's.
+  const sessionLink = (name: string) =>
+    [...document.querySelectorAll<HTMLElement>(".sched-dd a.md-session-link")].find((a) => a.textContent === name);
 
   beforeEach(() => {
     onCloseSpy.mockClear();
@@ -159,8 +163,9 @@ describe("ScheduleDetailModal reuse navigation", () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Edited booking");
       label.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const link = action(pinned)!;
-    expect(link?.type).toBe("button");
+    const link = sessionLink(pinned)!;
+    expect(link.getAttribute("role")).toBe("link");
+    expect(link.tabIndex).toBe(0);
     await act(async () => link.click());
     expect(activePane(useLayoutStore.getState().layout)).toMatchObject({
       session: pinned,
@@ -187,7 +192,7 @@ describe("ScheduleDetailModal reuse navigation", () => {
       label.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => {
-      action(pinned)!.dispatchEvent(new MouseEvent("click", { bubbles: true, [modifier]: true }));
+      sessionLink(pinned)!.dispatchEvent(new MouseEvent("click", { bubbles: true, [modifier]: true }));
     });
     expect(allViews(useLayoutStore.getState().layout).map((view) => view.session)).toEqual([existing, pinned]);
     await act(async () => action(t("sched.return_to_edit", { name: "Original" }))!.click());
@@ -195,14 +200,16 @@ describe("ScheduleDetailModal reuse navigation", () => {
     expect(scheduleUpdate).not.toHaveBeenCalled();
   });
 
-  it("opens the distinct adopted session and keeps the missing configured target identifiable", async () => {
+  it("opens the distinct adopted session and leaves a vanished configured target as plain text", async () => {
     useSessionsStore.setState({ sessions: [{ name: adopted, kind: "codex", alive: true }] });
     await render("shell", { session_mode: "reuse", reuse_target: pinned, reuse_session: adopted });
-    await act(async () => action(pinned)!.click());
-    expect(document.body.textContent).toContain(t("sched.reuse_unavailable", { name: pinned }));
+    const gone = [...document.querySelectorAll<HTMLElement>(".sched-dd")].find((d) => d.textContent === pinned)!;
+    expect(gone.querySelector("a")).toBeNull();
+    expect(gone.querySelector("button")).toBeNull();
+    await act(async () => gone.click());
     expect(onCloseSpy).not.toHaveBeenCalled();
 
-    await act(async () => action(adopted)!.click());
+    await act(async () => sessionLink(adopted)!.click());
     expect(activePane(useLayoutStore.getState().layout)).toMatchObject({
       session: adopted,
       content: { kind: "terminal", chat: true },
@@ -210,21 +217,78 @@ describe("ScheduleDetailModal reuse navigation", () => {
     expect(onCloseSpy).toHaveBeenCalledOnce();
   });
 
+  it("opens a middle click in a new pane, as every other session link does", async () => {
+    const existing = "scccccc";
+    useLayoutStore.setState({ layout: singlePaneLayout({ kind: "terminal", chat: true }, existing) });
+    useSessionsStore.setState({ sessions: [{ name: pinned, kind: "codex", alive: false }] });
+    await render("codex", { session_mode: "reuse", reuse_target: pinned, reuse_session: pinned });
+    await act(async () => {
+      sessionLink(pinned)!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    });
+    expect(allViews(useLayoutStore.getState().layout).map((view) => view.session)).toEqual([existing, pinned]);
+  });
+
   it("reports a catalogued target that cannot be opened", async () => {
     useSessionsStore.setState({ sessions: [{ name: pinned, kind: "shell", alive: false, resumable: false }] });
     await render("codex", { session_mode: "reuse", reuse_target: pinned, reuse_session: pinned });
-    expect([...document.querySelectorAll("button")].filter((b) => b.textContent === pinned)).toHaveLength(1);
+    expect([...document.querySelectorAll(".sched-dd a.md-session-link")].filter((b) => b.textContent === pinned)).toHaveLength(1);
     const layout = useLayoutStore.getState().layout;
-    await act(async () => action(pinned)!.click());
+    await act(async () => sessionLink(pinned)!.click());
     expect(document.body.textContent).toContain(t("sched.reuse_unavailable", { name: pinned }));
     expect(useLayoutStore.getState().layout).toBe(layout);
     expect(onCloseSpy).not.toHaveBeenCalled();
   });
 
+  describe("return button placement", () => {
+    const realMatchMedia = window.matchMedia;
+    afterEach(() => {
+      window.matchMedia = realMatchMedia;
+    });
+    // useIsMobile() reads the media query at render time, so the device is decided before mounting.
+    const setPhone = (phone: boolean) => {
+      window.matchMedia = ((q: string) => ({
+        matches: phone && q === MOBILE_QUERY,
+        media: q,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia;
+    };
+    async function park() {
+      useSessionsStore.setState({ sessions: [{ name: pinned, kind: "codex", alive: false }] });
+      await render("codex", { spec_label: "Original", session_mode: "reuse", reuse_target: pinned });
+      const label = document.querySelector<HTMLInputElement>("#sched-label")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Draft");
+        label.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => sessionLink(pinned)!.click());
+      return action(t("sched.return_to_edit", { name: "Original" }))!;
+    }
+
+    it("sits below the top bars on a phone, off the opened session's composer", async () => {
+      setPhone(true);
+      const back = await park();
+      expect(back.classList.contains("sched-return-phone")).toBe(true);
+      // No bars in jsdom: the run ends at 0, and the button keeps its 8px off it.
+      expect(back.style.top).toBe("8px");
+    });
+
+    it("keeps the bottom-corner button on a desktop", async () => {
+      setPhone(false);
+      const back = await park();
+      expect(back.classList.contains("sched-return-phone")).toBe(false);
+      expect(back.style.top).toBe("");
+    });
+  });
+
   it.each(["assistant", "new"])("leaves %s targets on their existing path", async (session_mode) => {
     await render("codex", { session_mode, reuse_target: "aaaaaaa", reuse_session: adopted });
-    expect(action("aaaaaaa")).toBeUndefined();
-    expect(action(adopted)).toBeUndefined();
+    expect(sessionLink("aaaaaaa")).toBeUndefined();
+    expect(sessionLink(adopted)).toBeUndefined();
   });
 });
 

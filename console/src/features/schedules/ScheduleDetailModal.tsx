@@ -11,7 +11,7 @@
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { MouseEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -43,6 +43,9 @@ import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { workItemList } from "../workitems/api.ts";
 import { readWorkItems, type WorkItemQuery } from "../workitems/read.ts";
 import { openSessionFromList } from "../sessions/open.ts";
+import { SessionRefLink } from "../sessions/SessionRefLink.tsx";
+import { useIsMobile } from "../../lib/device.ts";
+import { useChromeBottom } from "../../ui/useChromeBottom.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 
 // The agent kinds this picker offers come from the registry cap (AgentCaps.scheduledRuns),
@@ -75,6 +78,10 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const [busy, setBusy] = useState(false);
   const [viewingSession, setViewingSession] = useState(false);
   const returnToEditRef = useRef<HTMLButtonElement>(null);
+  // On a phone the opened session's composer and send button are at the bottom right, where the
+  // return button sits on a desktop. It goes below the top bars instead, like the toasts.
+  const phone = useIsMobile();
+  const returnTop = useChromeBottom(phone && viewingSession);
   useEffect(() => {
     // Run after the departing modal's focus trap restores focus to its opener.
     returnToEditRef.current?.focus();
@@ -258,9 +265,13 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
         ? tr("sched.spec_hint_once")
         : tr("sched.spec_hint_cron");
 
-  function openReuseSession(name: string, e: MouseEvent<HTMLButtonElement>) {
+  // The target is looked up when the link is used, not when it is drawn: the list may have moved
+  // on. SessionRefLink only draws a link for a session the list has, so a miss here is a session
+  // that just went; one the list has but that cannot be opened (a stopped session with no
+  // transcript and no folder) gets the same toast.
+  function openReuseSession(name: string, openInNew: boolean) {
     const target = useSessionsStore.getState().sessions.find((session) => session.name === name);
-    if (!target || !openSessionFromList(target, e.ctrlKey || e.metaKey, running)) {
+    if (!target || !openSessionFromList(target, openInNew, running)) {
       toast(tr("sched.reuse_unavailable", { name }), { kind: "warn" });
       return;
     }
@@ -268,16 +279,14 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
     else onClose();
   }
 
-  const reuseSessionLink = (name?: string) => name && (
-    <button type="button" className="sched-reuse-link" onClick={(e) => openReuseSession(name, e)}>
-      {name}
-    </button>
-  );
+  const reuseSessionLink = (name?: string) => name && <SessionRefLink name={name} onOpen={openReuseSession} />;
 
   // Keep the form state mounted while letting the session pane take focus.
   if (viewingSession) {
     return createPortal(
-      <Button ref={returnToEditRef} type="button" variant="primary" className="sched-return-to-edit" onClick={() => setViewingSession(false)}>
+      <Button ref={returnToEditRef} type="button" variant="primary" className={"sched-return-to-edit" + (phone ? " sched-return-phone" : "")}
+        style={phone && returnTop != null ? { top: returnTop + 8 } : undefined}
+        onClick={() => setViewingSession(false)}>
         {tr("sched.return_to_edit", { name: scheduleTitle(s) })}
       </Button>,
       document.body,
