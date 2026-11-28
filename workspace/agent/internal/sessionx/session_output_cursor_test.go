@@ -135,7 +135,8 @@ func TestOutputStepOutputCursor(t *testing.T) {
 		want  int
 	}{
 		{"empty", nil, "working", stepCursorBase},
-		{"working, last assistant keeps its own index", []transcript.Turn{u, a}, "working", stepCursorBase + 9},
+		{"working, the growing turn is held back from the previous turn's end", []transcript.Turn{u, a}, "working", stepCursorBase + 5},
+		{"working, a lone growing turn is read from the start", []transcript.Turn{a}, "working", stepCursorBase},
 		{"working, last is a user turn", []transcript.Turn{a, u}, "working", stepCursorBase + 5},
 		{"idle is one past the last index", []transcript.Turn{u, a}, "idle", stepCursorBase + 10},
 	} {
@@ -198,8 +199,8 @@ func TestOutputStepIndexedCursorSurvivesInsertedTurn(t *testing.T) {
 	}
 }
 
-// A growing assistant turn keeps its Idx while working, so the next read starts exactly at it
-// (Idx == since) and sees the rest; once idle the cursor moves past it.
+// A growing assistant turn is re-read from the previous turn's end while working, so the next
+// read starts at or before it (Idx >= since) and sees the rest; once idle the cursor moves past it.
 func TestOutputStepIndexedGrowingTurnResumesAtItsIndex(t *testing.T) {
 	turns := []transcript.Turn{
 		{Role: "user", Idx: 40, Text: "go"},
@@ -209,13 +210,13 @@ func TestOutputStepIndexedGrowingTurnResumesAtItsIndex(t *testing.T) {
 	m := stepFixture(t, "agy_step_grow", &turns, &state)
 
 	out, cur := outputRead(t, m.Name, "")
-	if out != "part one" || cur != stepCursorBase+81 {
-		t.Fatalf("working read = %q cursor %d, want the turn held back at index 81", out, cur)
+	if out != "part one" || cur != stepCursorBase+41 {
+		t.Fatalf("working read = %q cursor %d, want the turn held back at index 41", out, cur)
 	}
 	turns[1].Text = "part one and two"
 	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
-	if out != "part one and two" || cur != stepCursorBase+81 {
-		t.Fatalf("resume at the turn's own index = %q cursor %d", out, cur)
+	if out != "part one and two" || cur != stepCursorBase+41 {
+		t.Fatalf("resume at the held-back index = %q cursor %d", out, cur)
 	}
 	turns[1].Text = "part one and two and three"
 	state = "idle"
@@ -228,23 +229,29 @@ func TestOutputStepIndexedGrowingTurnResumesAtItsIndex(t *testing.T) {
 	}
 }
 
-// While working, the growing turn can re-anchor to a lower Idx (agy reads the anchor from a
-// database that was briefly unreadable). The cursor follows it down instead of pinning above it.
-func TestOutputStepIndexedCursorFollowsAReanchoredTurn(t *testing.T) {
-	turns := []transcript.Turn{{Role: "assistant", Idx: 121, Text: "partial"}}
+// The growing turn can re-anchor to a lower Idx (agy reads the anchor from a database that was
+// briefly unreadable), and the answer can finish before the next poll: that very next poll is
+// idle, and still has to deliver the final text.
+func TestOutputStepIndexedDeliversAReanchoredTurnFinishedBeforeTheNextPoll(t *testing.T) {
+	turns := []transcript.Turn{
+		{Role: "assistant", Idx: 99, Text: "earlier"},
+		{Role: "assistant", Idx: 121, Text: "partial"},
+	}
 	state := "working"
 	m := stepFixture(t, "agy_step_anchor", &turns, &state)
 
-	_, cur := outputRead(t, m.Name, "")
-	turns[0].Idx, turns[0].Text = 101, "partial and the rest"
-	out, cur := outputRead(t, m.Name, "since="+strconv.Itoa(cur))
-	if cur != stepCursorBase+101 {
-		t.Fatalf("cursor = %d, want it to follow the turn to index 101", cur)
+	out, cur := outputRead(t, m.Name, "")
+	if out != "earlier\n\npartial" {
+		t.Fatalf("first read = %q", out)
 	}
+	turns[1].Idx, turns[1].Text = 101, "partial and the rest"
 	state = "idle"
 	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
 	if out != "partial and the rest" || cur != stepCursorBase+102 {
-		t.Fatalf("final read = %q cursor %d", out, cur)
+		t.Fatalf("idle read after the re-anchor = %q cursor %d, want the final text and index 102", out, cur)
+	}
+	if out, _ = outputRead(t, m.Name, "since="+strconv.Itoa(cur)); out != "" {
+		t.Fatalf("a finished turn was re-sent: %q", out)
 	}
 }
 

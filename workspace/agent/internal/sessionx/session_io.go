@@ -1587,14 +1587,23 @@ const stepCursorBase = 1 << 40
 // stepOutputCursor is outputTurnCursor in source coordinates, for a transcript whose turns can
 // materialize between already-read ones (TranscriptData.StepIndexed): a count would shift under
 // such an insertion and re-send a finished turn. The cursor is stepCursorBase plus the next
-// Turn.Idx to read; the held-back growing assistant turn keeps its own Idx.
+// Turn.Idx to read.
+//
+// While the session is working the growing assistant turn is held back, and the cursor is the
+// index after the turn BEFORE it, not the growing turn's own Idx: agy can anchor that turn
+// provisionally (its database read failed) and later re-anchor it lower, which would leave a
+// cursor at the provisional index above the finished answer. Turns before the previous one are
+// never re-sent; only that user prompt or gap is, and it has no output.
 func stepOutputCursor(turns []transcript.Turn, state string) int {
 	n := len(turns)
 	if n == 0 {
 		return stepCursorBase
 	}
 	if turns[n-1].Role == "assistant" && state == "working" {
-		return stepCursorBase + turns[n-1].Idx
+		if n == 1 {
+			return stepCursorBase
+		}
+		return stepCursorBase + turns[n-2].Idx + 1
 	}
 	return stepCursorBase + turns[n-1].Idx + 1
 }
