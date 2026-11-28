@@ -30,7 +30,8 @@ import { useQueueSettings } from "../memo/queueSettingsCache.ts";
 import { useShownSchedules } from "../schedules/store.ts";
 import { spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
 import { SessionCard } from "../overview/SessionCard.tsx";
-import { activeGroups, activeLaunchCopies, isUnattendedKind } from "./active.ts";
+import { queueLabel } from "../memo/queueLabel.ts";
+import { AUTORUN_GROUP, activeGroups, activeLaunchCopies, isUnattendedKind } from "./active.ts";
 import type { ActiveGroup } from "./active.ts";
 import { ActiveRepoLaunch } from "./ActiveRepoLaunch.tsx";
 import { useActiveExpanded, useActiveFoldedGroups, useActiveOpenedGroups } from "./store.ts";
@@ -98,8 +99,8 @@ export const ActiveSection = memo(function ActiveSection() {
     if (g.kind === "other") return tr("pj.other_sessions");
     if (g.kind === "schedule") return tr("sched.title");
     if (g.kind !== "autorun") return g.label;
-    if (g.hint) return tr("active.queue_group", { category: g.label, repo: g.hint });
-    return g.label || tr("memo.autorun");
+    // Known queues read as the Auto-run view names them; every other run is "Other runs" there too.
+    return queueLabel({ repo: g.hint, category: g.label }) || (g.key === AUTORUN_GROUP ? tr("autorun.other") : tr("memo.autorun"));
   };
   // Headings and checkout choices are sorted with the locale's collation.
   const locale = useLocale();

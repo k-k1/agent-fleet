@@ -3,6 +3,7 @@
 // repository tree. A row opens the run's session; the sessions the run started (reviewers) sit
 // one level under it, and finished runs fold into "Ended N".
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
+import { queueLabel } from "../memo/queueLabel.ts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { KeyboardEvent, MouseEvent } from "react";
@@ -533,7 +534,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
   }, [shown, activeName, place]);
   const labelOf = (id: string): string => {
     const q = queues.find((x) => x.categoryId === id);
-    return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");
+    return q ? queueLabel(q) || tr("memo.autorun") : tr("autorun.other");
   };
   const [folds, setFolds] = useState<Record<string, CatFold>>({});
   const [q, setQ] = useState("");

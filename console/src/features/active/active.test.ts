@@ -312,13 +312,13 @@ describe("unattended groups", () => {
     ];
     const g = activeGroups(queued, repos, [], null, new Set(["helper"]), undefined, true, 0, queues);
     expect(g.map((x) => x.key).slice(1)).toEqual([
-      "u:autorun:first", "u:autorun:second", "u:autorun", "u:autorun:deleted", "u:schedule",
+      "u:autorun:first", "u:autorun:second", "u:autorun", "u:schedule",
     ]);
     expect(g[1]).toMatchObject({ label: "Zulu", hint: "app", total: 2, alive: 1 });
     expect(names(g[1].sessions)).toEqual(["helper", "reviewer"]);
     expect(names(g[2].sessions)).toEqual(["second"]);
-    expect(names(g[3].sessions)).toEqual(["run"]);
-    expect(names(g[4].sessions)).toEqual(["unknown"]);
+    // The category-less run and the one whose category is gone share one generic group.
+    expect(names(g[3].sessions).sort()).toEqual(["run", "unknown"]);
   });
 
   it("does not list a schedule's worktree child twice when its schedule shows in Sessions", () => {

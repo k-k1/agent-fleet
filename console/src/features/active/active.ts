@@ -285,8 +285,10 @@ export function activeGroups(
     const root = sessionAutoRoot(s, allByName, shown);
     if (!root) continue;
     const autorun = root.origin === "queue";
-    const category = autorun ? root.queueCategoryId : undefined;
-    const key = autorun ? (category ? AUTORUN_GROUP + ":" + category : AUTORUN_GROUP) : SCHEDULE_GROUP;
+    // A category the queue list does not name (deleted settings, list not loaded, no category)
+    // joins the one generic group, as "Other runs" does in the Auto-run view.
+    const named = autorun && root.queueCategoryId ? AUTORUN_GROUP + ":" + root.queueCategoryId : "";
+    const key = autorun ? (queueOrder.has(named) ? named : AUTORUN_GROUP) : SCHEDULE_GROUP;
     const q = queueOrder.get(key)?.q;
     const id: GroupId = { key, kind: autorun ? "autorun" : "schedule", label: q?.category || "", hint: q?.repo || "" };
     const g = members.get(id.key) || { id, sessions: [] };
