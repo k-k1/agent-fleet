@@ -153,29 +153,23 @@ func mcpCallerSession(cwd string) (string, bool) {
 	if mcpCallerSID == "" || !mcpCallerTrusted() {
 		return "", false
 	}
-	var found []string
-	for _, m := range session.ListMetas() {
-		if m.Archived || !session.ValidName(m.Name) {
-			continue
-		}
-		// A kind with no slot mapping is dropped before mcpRunsIn, which stats the session's
-		// directory; the slot id is read once, after the cwd filter, because it is a store read.
+	// A kind with no slot mapping is dropped before mcpRunsIn, which stats the session's
+	// directory; the slot id is read once, after the cwd filter, because it is a store read.
+	name, ok := agents.UniqueSlotForSessionID(session.ListMetas(), mcpCallerSID, func(m session.Meta) string {
 		c, ok := mcpSlotCapability(m.Kind)
 		if !ok || !mcpRunsIn(m, cwd) {
-			continue
+			return ""
 		}
-		if c.SlotSessionID(m) == mcpCallerSID {
-			found = append(found, m.Name)
-		}
-	}
-	if len(found) != 1 {
+		return c.SlotSessionID(m)
+	}, nil)
+	if !ok {
 		return "", false
 	}
-	st, err := agentSessionStatus(found[0])
+	st, err := agentSessionStatus(name)
 	if err != nil || !st.Alive {
 		return "", false
 	}
-	return found[0], true
+	return name, true
 }
 
 // mcpCallerStampTrusted reports whether a stamp on a call can only have come from the plugin.
