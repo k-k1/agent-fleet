@@ -109,6 +109,10 @@ describe("generic disabled-button opacity", () => {
     const shell = strip(readFileSync(path.resolve(__dirname, "../features/mirror/parts/shell.css"), "utf8"));
     const fading = parse(shell).filter((b) => /opacity\s*:(?!\s*1\s*;)/.test(b.body) && /button:disabled/.test(b.selector));
     expect(fading.length).toBeGreaterThan(0);
-    for (const b of fading) expect(b.selector, b.selector).toMatch(/^:where\([^()]*\) button:disabled$/);
+    for (const b of fading) {
+      expect(b.selector, b.selector).toMatch(/^:where\([^()]*\) button:disabled$/);
+      // !important would win over the reset whatever the specificity.
+      expect(b.body, b.selector).not.toMatch(/!\s*important/);
+    }
   });
 });
