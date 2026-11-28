@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -75,8 +74,10 @@ var worktreeRestoreChecked func()
 // worktreeRestoreRecord is a worktree restore's progress, kept next to its archive from the first
 // attempt on. Shelved holds the shelf revision of each session still on the shelf when the
 // first attempt began, so a retry after the member shelved one again leaves it on the shelf.
-// Unread names the sessions whose meta could not be read yet: each gets its revision on the first
-// attempt that can read it, and the restore is not complete until none is left. Ref is the
+// Unread names the sessions whose meta could not be read yet, and Since is when the first attempt
+// began. An unread session that reads again comes back only when it went onto the shelf before
+// Since: one shelved at or after it may be the member's own later shelf action, and stays. The
+// restore is not complete until no unread name is left. Ref is the
 // tombstone's pin, unique per delete: a record a purge failed to remove can never stand in for
 // a later entry that reuses the id.
 type worktreeRestoreRecord struct {
@@ -84,6 +85,7 @@ type worktreeRestoreRecord struct {
 	Ref      string            `json:"ref"`
 	Shelved  map[string]string `json:"shelved"`
 	Unread   []string          `json:"unread,omitempty"`
+	Since    string            `json:"since,omitempty"`
 	Complete bool              `json:"complete,omitempty"`
 }
 
@@ -166,6 +168,9 @@ func loadWorktreeRestoreRecord(trash *os.Root, id string, t gitx.WorktreeTombsto
 			return record, err
 		}
 		record = worktreeRestoreRecord{ID: id, Ref: t.Ref, Shelved: shelved, Unread: unread}
+		if len(unread) > 0 {
+			record.Since = nowUTC().Format(time.RFC3339)
+		}
 		return record, writeRestoreRecord(trash, name, record)
 	case err != nil:
 		return record, fmt.Errorf("%w: could not read worktree restore progress: %w", errRestoreStopped, err)
@@ -186,12 +191,17 @@ func loadWorktreeRestoreRecord(trash *os.Root, id string, t gitx.WorktreeTombsto
 				return record, fmt.Errorf("%w: invalid worktree restore progress for %s", errRestoreStopped, id)
 			}
 		}
-		shelved, unread, err := shelfRevisionsOf(id, record.Unread)
-		if err != nil {
-			return record, err
+		var unread []string
+		for _, n := range record.Unread {
+			m, state := session.ReadMetaState(n)
+			switch {
+			case state == session.MetaUnreadable:
+				unread = append(unread, n)
+			case state == session.MetaOK && m.Archived && shelvedBefore(m.ArchivedAt, record.Since):
+				record.Shelved[n] = m.ShelfRevision
+			}
 		}
 		if len(unread) < len(record.Unread) {
-			maps.Copy(record.Shelved, shelved)
 			record.Unread = unread
 			if err := writeRestoreRecord(trash, name, record); err != nil {
 				return record, err
@@ -199,6 +209,17 @@ func loadWorktreeRestoreRecord(trash *os.Root, id string, t gitx.WorktreeTombsto
 		}
 	}
 	return record, nil
+}
+
+// shelvedBefore reports whether archivedAt is strictly before since, both RFC 3339. Either one
+// missing or unreadable answers false: when in doubt the session stays on the shelf.
+func shelvedBefore(archivedAt, since string) bool {
+	a, err := time.Parse(time.RFC3339, archivedAt)
+	if err != nil {
+		return false
+	}
+	b, err := time.Parse(time.RFC3339, since)
+	return err == nil && a.Before(b)
 }
 
 // shelfRevisionsOf is the shelf revision of each named session still on the shelf, and the names

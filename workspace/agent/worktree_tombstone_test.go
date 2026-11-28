@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -38,6 +39,7 @@ func tombstoneSetup(t *testing.T) tombstoneEnv {
 	mux.HandleFunc("GET /repos/{name}/recreate", handleRecreatePlan)
 	mux.HandleFunc("POST /repos/{name}/recreate", handleRecreateWorktree)
 	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
+	mux.HandleFunc("POST /sessions/{name}/restore", sessionx.HandleRestoreSession)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -311,19 +313,28 @@ func TestWorktreePurgeUnpinsOutsideTheCleanupLock(t *testing.T) {
 	}
 }
 
+// unreadableShelvedMeta corrupts aisub01's meta after the delete shelved it and answers the meta
+// as it was, its shelf date moved an hour back so it reads as older than any restore attempt.
+func unreadableShelvedMeta(t *testing.T) session.Meta {
+	t.Helper()
+	m, ok := session.ReadMeta("aisub01")
+	if !ok || !m.Archived {
+		t.Fatalf("aisub01 was not shelved: %+v", m)
+	}
+	m.ArchivedAt = time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	if err := os.WriteFile(session.MetaPath("aisub01"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 // A shelved session whose meta cannot be read does not hold the folder back: the restore puts
 // the worktree and the readable sessions back and reports the unreadable one, and once its meta
 // reads again a retry takes it off the shelf without undoing a shelf action taken meanwhile.
 func TestWorktreeRestoreWithAnUnreadableShelvedMeta(t *testing.T) {
 	e := tombstoneSetup(t)
 	id := worktreeDeletedWithEntry(t, e)
-	good, err := os.ReadFile(session.MetaPath("aisub01"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(session.MetaPath("aisub01"), []byte("{not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	good := unreadableShelvedMeta(t)
 	path := "/cleanup/archives/" + id + "/restore"
 	if code := errCodeOf(t, e.srv, "POST", path, http.StatusConflict); code != "restore_incomplete" {
 		t.Fatalf("restore code = %q, want restore_incomplete", code)
@@ -336,7 +347,7 @@ func TestWorktreeRestoreWithAnUnreadableShelvedMeta(t *testing.T) {
 	}
 
 	do(t, e.srv, "POST", "/sessions/aiaaaa1/archive", nil, http.StatusOK, nil)
-	if err := os.WriteFile(session.MetaPath("aisub01"), good, 0o600); err != nil {
+	if err := session.WriteMetaChecked(good); err != nil {
 		t.Fatal(err)
 	}
 	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
@@ -345,6 +356,27 @@ func TestWorktreeRestoreWithAnUnreadableShelvedMeta(t *testing.T) {
 	}
 	if m, ok := session.ReadMeta("aiaaaa1"); !ok || !m.Archived {
 		t.Fatalf("the retry undid the newer shelf action: %+v", m)
+	}
+}
+
+// A session that could not be read at the first attempt, and that the member shelves again once
+// it reads, stays on the shelf: its new shelf date is not before the first attempt.
+func TestWorktreeRestoreKeepsAReshelvedOnceUnreadableSession(t *testing.T) {
+	e := tombstoneSetup(t)
+	id := worktreeDeletedWithEntry(t, e)
+	good := unreadableShelvedMeta(t)
+	path := "/cleanup/archives/" + id + "/restore"
+	if code := errCodeOf(t, e.srv, "POST", path, http.StatusConflict); code != "restore_incomplete" {
+		t.Fatalf("restore code = %q, want restore_incomplete", code)
+	}
+	if err := session.WriteMetaChecked(good); err != nil {
+		t.Fatal(err)
+	}
+	do(t, e.srv, "POST", "/sessions/aisub01/restore", nil, http.StatusOK, nil)
+	do(t, e.srv, "POST", "/sessions/aisub01/archive", nil, http.StatusOK, nil)
+	do(t, e.srv, "POST", path, nil, http.StatusOK, nil)
+	if m, ok := session.ReadMeta("aisub01"); !ok || !m.Archived {
+		t.Fatalf("the retry undid the member's shelf action: %+v", m)
 	}
 }
 
