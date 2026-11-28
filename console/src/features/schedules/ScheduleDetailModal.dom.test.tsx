@@ -29,8 +29,13 @@ vi.mock("../../core/api/client.ts", () => ({
   isTransientErr: () => false,
 }));
 
+// Nothing here presses a menu item; the menu only needs the actions object to exist.
+vi.mock("../sessions/useSessionActions.tsx", () => ({
+  useSessionActions: () => new Proxy({}, { get: () => async () => {} }),
+}));
+
 const { ScheduleDetailModal } = await import("./ScheduleDetailModal.tsx");
-const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
+const { ToastProvider, useToast } = await import("../../ui/ToastProvider.tsx");
 const { scheduleUpdate, scheduleApprove } = await import("./api.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
@@ -52,10 +57,17 @@ const flush = async () => {
 const onCloseSpy = vi.fn();
 const onStaleSpy = vi.fn();
 
+let fire: ReturnType<typeof useToast>;
+function Grab() {
+  fire = useToast();
+  return null;
+}
+
 async function render(agentKind?: string, extra: Record<string, unknown> = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
+        <Grab />
         <ScheduleDetailModal
           s={{ ...base, agent_kind: agentKind, ...extra } as never}
           onClose={onCloseSpy}
@@ -239,6 +251,28 @@ describe("ScheduleDetailModal reuse navigation", () => {
     expect(onCloseSpy).not.toHaveBeenCalled();
   });
 
+  it("opens the session menu from the link and keeps the draft and the modal when it closes", async () => {
+    useSessionsStore.setState({ sessions: [{ name: pinned, kind: "codex", alive: false }] });
+    await render("codex", { spec_label: "Original", session_mode: "reuse", reuse_target: pinned });
+    const label = document.querySelector<HTMLInputElement>("#sched-label")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Draft");
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const rightClick = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 40, clientY: 50 });
+    await act(async () => void sessionLink(pinned)!.dispatchEvent(rightClick));
+    expect(rightClick.defaultPrevented).toBe(true);
+    expect(document.querySelector(".sess-menu")).not.toBeNull();
+    expect(onCloseSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector(".sess-menu")).toBeNull();
+    expect(document.querySelector(".sched-detail-modal")).not.toBeNull();
+    expect(document.querySelector<HTMLInputElement>("#sched-label")?.value).toBe("Draft");
+  });
+
   describe("return button placement", () => {
     const realMatchMedia = window.matchMedia;
     afterEach(() => {
@@ -277,18 +311,59 @@ describe("ScheduleDetailModal reuse navigation", () => {
       expect(back.style.top).toBe("8px");
     });
 
+    it("follows the bars and leaves the toasts the space below it", async () => {
+      // jsdom has no layout: give the top bar and the return button boxes of their own. The
+      // button's box follows its inline `top`, as a laid-out fixed element's would.
+      const topbar = document.createElement("div");
+      topbar.className = "topbar";
+      document.body.appendChild(topbar);
+      const realRect = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        const box = (top: number, height: number) => ({ top, bottom: top + height, left: 0, right: 390, width: 390, height, x: 0, y: top, toJSON() {} }) as DOMRect;
+        if (this.classList.contains("topbar")) return box(0, 40);
+        if (this.hasAttribute("data-toast-chrome")) return box(parseFloat((this as HTMLElement).style.top) || 0, 31);
+        return realRect.call(this);
+      };
+      try {
+        setPhone(true);
+        const back = await park();
+        // Below a 40px bar, not at 8px: the measured height is followed, and the button is not
+        // counted in its own measurement (it would otherwise creep down by its height).
+        expect(back.style.top).toBe("48px");
+        expect(back.hasAttribute("data-toast-chrome")).toBe(true);
+        // Setting that top is itself a mutation of a bar, which schedules another measurement.
+        await act(async () => void (await new Promise((r) => setTimeout(r, 60))));
+        expect(back.style.top).toBe("48px");
+        await act(async () => fire("a notice that stays", { kind: "info", duration: 0 }));
+        // The stack starts under the button (48 + 31 + 8), so the button is never covered.
+        const stack = document.querySelector<HTMLElement>(".ui-toasts")!;
+        expect(stack.style.top).toBe("87px");
+        expect(back.style.top).toBe("48px");
+      } finally {
+        Element.prototype.getBoundingClientRect = realRect;
+        topbar.remove();
+      }
+    });
+
     it("keeps the bottom-corner button on a desktop", async () => {
       setPhone(false);
       const back = await park();
       expect(back.classList.contains("sched-return-phone")).toBe(false);
+      expect(back.hasAttribute("data-toast-chrome")).toBe(false);
       expect(back.style.top).toBe("");
     });
   });
 
   it.each(["assistant", "new"])("leaves %s targets on their existing path", async (session_mode) => {
-    await render("codex", { session_mode, reuse_target: "aaaaaaa", reuse_session: adopted });
-    expect(sessionLink("aaaaaaa")).toBeUndefined();
-    expect(sessionLink(adopted)).toBeUndefined();
+    // Both sessions exist, so a link that wrongly appeared could not be mistaken for the
+    // plain-text fallback of a missing one.
+    useSessionsStore.setState({
+      sessions: [{ name: "aaaaaaa", kind: "codex", alive: true }, { name: adopted, kind: "codex", alive: true }],
+    });
+    await render("codex", { session_mode, reuse_target: "aaaaaaa", reuse_session: adopted, owner_conv: "conv-1" });
+    expect(document.querySelector(".sched-dd a.md-session-link")).toBeNull();
+    const cells = [...document.querySelectorAll(".sched-dd")].map((d) => d.textContent);
+    if (session_mode === "assistant") expect(cells).toContain("aaaaaaa");
   });
 });
 

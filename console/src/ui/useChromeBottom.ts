@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useState, type RefObject } from "react";
 import { measureChromeBottom, touchesChrome } from "./toastPlacement.ts";
 
 /** useChromeBottom returns where the run of bars at the top of the frame ends (toastPlacement.ts),
@@ -11,12 +11,15 @@ import { measureChromeBottom, touchesChrome } from "./toastPlacement.ts";
  *  outlives a switch of pane or studio tab, which brings in or takes away a header (measured: the
  *  studio's chat tab adds one at 213-249px that a stack placed on the form tab covered). Only
  *  mutations that touch a bar count (touchesChrome), coalesced to one measurement per frame; an
- *  unchanged value does not re-render. */
-export function useChromeBottom(active: boolean, remeasureKey?: unknown): number | null {
+ *  unchanged value does not re-render.
+ *
+ *  `self` is the element the value places, when it is itself marked data-toast-chrome so that the
+ *  toasts stay below it: it is left out of its own measurement. */
+export function useChromeBottom(active: boolean, remeasureKey?: unknown, self?: RefObject<Element | null>): number | null {
   const [top, setTop] = useState<number | null>(null);
   useLayoutEffect(() => {
     if (!active) return;
-    const sync = () => setTop(measureChromeBottom());
+    const sync = () => setTop(measureChromeBottom(document, self?.current));
     sync();
     let frame = 0;
     const later = () => {
@@ -40,6 +43,6 @@ export function useChromeBottom(active: boolean, remeasureKey?: unknown): number
       vv?.removeEventListener("resize", sync);
       vv?.removeEventListener("scroll", sync);
     };
-  }, [active, remeasureKey]);
+  }, [active, remeasureKey, self]);
   return top;
 }

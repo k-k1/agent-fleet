@@ -46,11 +46,15 @@ export function chromeBottom(boxes: Box[], viewportWidth: number): number {
   return y;
 }
 
-export function measureChromeBottom(doc: Document = document): number {
-  const boxes = [...doc.querySelectorAll(TOAST_CHROME_SELECTOR)].map((e) => {
-    const r = e.getBoundingClientRect();
-    return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, pane: e.closest(".pane") ?? undefined };
-  });
+// `ignore` leaves one element (and what it holds) out: a floating element that places itself under
+// the bars must not count itself, or each measurement would push it down by its own height.
+export function measureChromeBottom(doc: Document = document, ignore?: Element | null): number {
+  const boxes = [...doc.querySelectorAll(TOAST_CHROME_SELECTOR)]
+    .filter((e) => !ignore || !ignore.contains(e))
+    .map((e) => {
+      const r = e.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, pane: e.closest(".pane") ?? undefined };
+    });
   return chromeBottom(boxes, doc.documentElement.clientWidth || window.innerWidth);
 }
 

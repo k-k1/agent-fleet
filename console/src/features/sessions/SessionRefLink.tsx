@@ -39,7 +39,7 @@ export function SessionRefLink({
       },
       hasMenu ? (n, x, y) => menuRef.current?.(n, x, y) : undefined,
     );
-    if (className) a.classList.add(...className.split(" "));
+    a.classList.add(...(className?.match(/\S+/g) ?? []));
     el.append(a);
     return () => a.remove();
   }, [name, exists, hasMenu, className]);
