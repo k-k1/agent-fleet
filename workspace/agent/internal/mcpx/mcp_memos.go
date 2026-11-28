@@ -535,6 +535,8 @@ func memoStartAfterProblem(args json.RawMessage, answer string, now time.Time) s
 	var out struct {
 		StartAfter string `json:"startAfter"`
 		Existing   bool   `json:"existing"`
+		State      string `json:"state"`
+		DeliveryID string `json:"deliveryId"`
 	}
 	if json.Unmarshal([]byte(answer), &out) != nil {
 		return ""
@@ -544,9 +546,21 @@ func memoStartAfterProblem(args json.RawMessage, answer string, now time.Time) s
 		return ""
 	}
 	if out.Existing {
+		// update_memo is refused (409) for a note a run has claimed, and while a hand send is taking one
+		// (the answer hides that), so the advice is left out for the first and conditional for the second.
+		// A missing state says nothing about the note, so it claims nothing either.
+		switch {
+		case out.State == "":
+			return "Nothing was added: the queue already holds a note for the same item, and it was returned " +
+				"unchanged, so it does NOT carry the start time you asked for. Do not report it as set; tell your user."
+		case (out.State != "held" && out.State != "pending") || out.DeliveryID != "":
+			return "Nothing was added: a run has already taken the note this queue holds for the same item, and it " +
+				"was returned unchanged, so it does NOT carry the start time you asked for. It can no longer be " +
+				"edited. Do not report the time as set; tell your user."
+		}
 		return "Nothing was added: the queue already holds a waiting note for the same item, and it was returned " +
-			"unchanged, so it does NOT carry the start time you asked for. Do not report it as set; tell your user, " +
-			"or set it on that note with update_memo."
+			"unchanged, so it does NOT carry the start time you asked for. Do not report it as set; tell your user. " +
+			"While the note still waits and is not being sent, update_memo can set it."
 	}
 	if out.StartAfter == "" && !want.After(now.Add(memoStartAfterSlack)) {
 		return ""
