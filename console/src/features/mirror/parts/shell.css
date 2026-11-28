@@ -51,7 +51,10 @@ and "load older history" states
 :where(.mirrorview, .shared-view) button:hover:not(:disabled) {
   background: var(--btn-h);
 }
-:where(.mirrorview, .shared-view) button:disabled {
+/* Question options are exempt: an inert option is quieted by border, background and marker in
+   question.css, and fading its text here escapes the Text contrast setting (answered cards were
+   about 2:1 in the light theme). */
+:where(.mirrorview, .shared-view) button:disabled:not(.mq-opt) {
   opacity: 0.4;
   cursor: default;
 }
