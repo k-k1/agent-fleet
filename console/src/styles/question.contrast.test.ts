@@ -100,12 +100,18 @@ describe("answered question card text", () => {
 
 // The generic disabled-button fade in the mirror shell reached the answered card's options (they are
 // disabled <button>s) and dimmed their text to about 2:1 in the light theme; the cascade is invisible to
-// the dom tests, so pin the exemption in the source.
+// the dom tests, so pin the exemption in the source. It must be wrapped in :where(): a bare :not(.mq-opt)
+// raises the rule's specificity and lets it beat every `.x:disabled` opacity elsewhere (pending.css,
+// composer.css, marks.css).
 describe("generic disabled-button opacity", () => {
-  it("does not apply to question options", () => {
+  it("skips question options in every shell without changing specificity", () => {
     const shell = strip(readFileSync(path.resolve(__dirname, "../features/mirror/parts/shell.css"), "utf8"));
     const fading = parse(shell).filter((b) => /opacity\s*:\s*(?!1\s*;)/.test(b.body) && /button:disabled/.test(b.selector));
     expect(fading.length).toBeGreaterThan(0);
-    for (const b of fading) expect(b.selector, b.selector).toMatch(/:not\(\.mq-opt\)/);
+    for (const b of fading) {
+      const parts = b.selector.split(/,(?![^(]*\))/).map((x) => x.trim());
+      expect(parts.length).toBeGreaterThanOrEqual(1);
+      for (const part of parts) expect(part, part).toMatch(/button:disabled:where\(:not\(\.mq-opt\)\)$/);
+    }
   });
 });
