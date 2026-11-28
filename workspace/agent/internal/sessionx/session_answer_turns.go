@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -171,6 +172,19 @@ func HandleSessionAnswerTurns(w http.ResponseWriter, r *http.Request) {
 		turns = claude.CollectTurnsUncapped(lines, lo, hi, claude.RewoundPrompts(lines))
 	} else {
 		td, _ := AgentOf(meta.Kind).Transcript(meta)
+		if td.StepIndexed {
+			// before and firstLine are Turn.Idx here, as on /messages: a count would shift
+			// when a late turn lands between two pages, repeating or skipping a turn.
+			query := url.Values{"tail": {"1"}, "limit": {strconv.Itoa(limit)}}
+			if before > 0 {
+				query.Set("before", strconv.Itoa(before))
+			}
+			page, _, first, _, more := stepIndexedMessageWindow(td.Turns, query, false)
+			httpx.WriteJSON(w, http.StatusOK, answerTurnsReply{
+				Name: name, Messages: slimTurns(page), Status: state, FirstLine: max(first, 0), HasMore: more,
+			})
+			return
+		}
 		total = len(td.Turns)
 		hi := total
 		if before > 0 {

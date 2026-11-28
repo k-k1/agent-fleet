@@ -117,3 +117,71 @@ func TestOutputTurnCursor(t *testing.T) {
 		}
 	}
 }
+
+// stepTurnsAgent is turnsAgent for a StepIndexed kind.
+type stepTurnsAgent struct{ turnsAgent }
+
+func (a stepTurnsAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
+	return agents.TranscriptData{Turns: *a.turns, StepIndexed: true}, true
+}
+
+func TestOutputStepOutputCursor(t *testing.T) {
+	u := transcript.Turn{Role: "user", Idx: 4}
+	a := transcript.Turn{Role: "assistant", Idx: 9}
+	for _, tc := range []struct {
+		name  string
+		turns []transcript.Turn
+		state string
+		want  int
+	}{
+		{"empty", nil, "working", 0},
+		{"working, last assistant keeps its own index", []transcript.Turn{u, a}, "working", 9},
+		{"working, last is a user turn", []transcript.Turn{a, u}, "working", 5},
+		{"idle is one past the last index", []transcript.Turn{u, a}, "idle", 10},
+	} {
+		if got := stepOutputCursor(tc.turns, tc.state); got != tc.want {
+			t.Errorf("%s: cursor = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A late turn that lands between two already-read ones shifts every later position, so a count
+// cursor would re-send the turn it had just read. The step cursor does neither that nor skip
+// the turn written after it.
+func TestOutputStepIndexedCursorSurvivesInsertedTurn(t *testing.T) {
+	peekFixture(t, true)
+	m := session.Meta{Name: "agy_step_cur", Dir: t.TempDir(), Kind: session.KindAgy}
+	session.WriteMeta(m)
+	turns := []transcript.Turn{
+		{Role: "user", Idx: 0, Text: "go"},
+		{Role: "assistant", Idx: 1, Text: "first"},
+		{Role: "user", Idx: 10, Text: "more"},
+		{Role: "assistant", Idx: 11, Text: "second"},
+	}
+	state := "idle"
+	t.Cleanup(agentreg.SwapForTest(session.KindAgy, stepTurnsAgent{turnsAgent{agentreg.Of(session.KindAgy), &turns, &state}}))
+
+	out, cur := outputRead(t, m.Name, "")
+	if out != "first\n\nsecond" || cur != 12 {
+		t.Fatalf("first read = %q cursor %d, want both turns and cursor 12", out, cur)
+	}
+	// Two rows materialize before the cursor, then a new turn arrives after it.
+	turns = append(turns[:2], append([]transcript.Turn{
+		{Role: "user", Idx: 4, Text: "failed prompt"},
+		{Role: "assistant", Idx: 5},
+	}, turns[2:]...)...)
+	turns = append(turns, transcript.Turn{Role: "assistant", Idx: 13, Text: "third"})
+	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "third" || cur != 14 {
+		t.Fatalf("read after the insertion = %q cursor %d, want only \"third\" and cursor 14", out, cur)
+	}
+	out, cur = outputRead(t, m.Name, "since="+strconv.Itoa(cur))
+	if out != "" || cur != 14 {
+		t.Fatalf("a finished turn was re-sent: %q cursor %d", out, cur)
+	}
+	// A transient empty read does not rewind the caller's cursor.
+	turns = nil
+	if _, cur = outputRead(t, m.Name, "since=14"); cur != 14 {
+		t.Fatalf("empty read moved the cursor to %d", cur)
+	}
+}

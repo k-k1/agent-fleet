@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1577,6 +1578,21 @@ func outputTurnCursor(turns []transcript.Turn, state string) int {
 	return n
 }
 
+// stepOutputCursor is outputTurnCursor in source coordinates, for a transcript whose turns can
+// materialize between already-read ones (TranscriptData.StepIndexed): a count would shift under
+// such an insertion and re-send a finished turn. The cursor is the next Turn.Idx to read, and
+// the held-back growing assistant turn keeps its own Idx.
+func stepOutputCursor(turns []transcript.Turn, state string) int {
+	n := len(turns)
+	if n == 0 {
+		return 0
+	}
+	if turns[n-1].Role == "assistant" && state == "working" {
+		return turns[n-1].Idx
+	}
+	return turns[n-1].Idx + 1
+}
+
 // HandleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the
 // session's assistant text appended since the cursor, plus a new cursor and the
 // current status. cursor is a line index into claude's jsonl transcript, or a count of
@@ -1652,7 +1668,13 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	if !terminalTraits(meta.Kind).TranscriptLines {
 		td, _ := AgentOf(meta.Kind).Transcript(meta)
 		var gb strings.Builder
-		for i := since; i < len(td.Turns); i++ {
+		// A step-indexed transcript reads from the first turn whose Idx reaches since;
+		// the others read from the since-th turn.
+		first := since
+		if td.StepIndexed {
+			first = sort.Search(len(td.Turns), func(i int) bool { return td.Turns[i].Idx >= since })
+		}
+		for i := first; i < len(td.Turns); i++ {
 			t := td.Turns[i]
 			if t.Role == "assistant" && t.Text != "" {
 				if gb.Len() > 0 {
@@ -1662,6 +1684,10 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		raw, cursor = gb.String(), outputTurnCursor(td.Turns, state)
+		if td.StepIndexed {
+			// An empty or briefly shrunken read must not rewind a cursor the caller holds.
+			cursor = max(since, stepOutputCursor(td.Turns, state))
+		}
 	} else {
 		sid := session.UUID(meta.Dir, name)
 		tlines := claude.TranscriptLines(sid)
