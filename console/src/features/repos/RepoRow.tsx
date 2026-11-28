@@ -29,6 +29,7 @@ import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
+import { LaunchKindItems, LaunchSplit } from "./LaunchSplit.tsx";
 import { AheadBehind } from "./AheadBehind.tsx";
 import type { LaunchAccess, LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import { canFastForwardFromParent, parentFFMenuLabel, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
@@ -304,63 +305,26 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
           <div className={"launch-wrap" + (showLaunch ? " launch-wrap--open" : "")} ref={wrapRef} onClick={(e) => e.stopPropagation()}>
             {/* Split button: launch opens the modal; the ▼ caret opens the quick
                 per-kind dropdown (instant launch, no prompt). */}
-            <div className="launch-split">
-              <button
-                type="button"
-                className="launch-main"
-                title={
-                  running
-                    ? agentKinds.length
-                      ? tr("repo.launch_title")
-                      : tr("repo.no_agents")
-                    : tr("mirror.ws_stopped")
-                }
-                disabled={!running || !agentKinds.length}
-                onClick={() => {
-                  setLaunchKind("");
-                  setLaunchModal(true);
-                }}
-              >
-                <Icon name="play" /> {tr("launch.launch")}
-              </button>
-              <button
-                type="button"
-                className="launch-caret"
-                title={running ? tr("repo.quick_launch") : tr("mirror.ws_stopped")}
-                disabled={!running}
-                onClick={() => setShowLaunch((v) => !v)}
-              >
-                <Icon name="chevron-down" />
-              </button>
-            </div>
+            <LaunchSplit
+              running={running}
+              hasAgents={agentKinds.length > 0}
+              onMain={() => {
+                setLaunchKind("");
+                setLaunchModal(true);
+              }}
+              onCaret={() => setShowLaunch((v) => !v)}
+            />
             {showLaunch &&
               createPortal(
                 <div className="ui-menu launch-menu" ref={launchMenuRef} onMouseDown={(e) => e.stopPropagation()}>
-                  {kinds.map((k) => (
-                    <button
-                      key={k}
-                      type="button"
-                      className="ui-menu-item"
-                      title={tr("repo.launch_new_pane")}
-                      onClick={(e) => {
-                        setShowLaunch(false);
-                        quick(k, e.ctrlKey || e.metaKey);
-                      }}
-                      onMouseDown={(e) => e.button === 1 && e.preventDefault()}
-                      onAuxClick={(e) => {
-                        if (e.button === 1) {
-                          e.preventDefault();
-                          setShowLaunch(false);
-                          quick(k, true);
-                        }
-                      }}
-                    >
-                      <Icon name={kindIcon(k)} /> {kindLabel(k)}
-                    </button>
-                  ))}
-                  {imagegenAvailable && (
-                    <>
-                      <div className="ui-menu-sep" role="separator" />
+                  <LaunchKindItems
+                    kinds={kinds}
+                    onPick={(k, split) => {
+                      setShowLaunch(false);
+                      quick(k, split);
+                    }}
+                  >
+                    {imagegenAvailable && (
                       <button
                         type="button"
                         className="ui-menu-item"
@@ -371,8 +335,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
                       >
                         <Icon name="wand" /> {tr("repo.start_studio")}
                       </button>
-                    </>
-                  )}
+                    )}
+                  </LaunchKindItems>
                 </div>,
                 document.body,
               )}

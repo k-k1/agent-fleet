@@ -13,6 +13,9 @@ import { Icon } from "../../ui/Icon.tsx";
 import { tCount, useLocale, useT } from "../../lib/i18n/index.ts";
 import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
+import { useRepoRailContext } from "../repos/useRepoRail.ts";
+import { useQuickLaunch } from "../repos/useQuickLaunch.ts";
+import { agentOf } from "../../agents/registry.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
@@ -76,6 +79,10 @@ export const ActiveSection = memo(function ActiveSection() {
   const { queues } = useQueueSettings((tenant ?? "") + "\u0000" + identity);
   // The app-level StartHost owns connection and catalogue reads for the launch dialog.
   const running = useWorkspaceStore((s) => s.state) === "running";
+  // The kinds the ▼ menu offers and the quick launch, both shared with the Repositories rows.
+  const rail = useRepoRailContext();
+  const quickLaunch = useQuickLaunch(rail.access);
+  const hasAgents = rail.launchKinds.some((k) => agentOf(k).caps.runsInDir);
   const layout = useLayoutStore((s) => s.layout);
   const sPanes = useMemo(() => (paneCount(layout) > 1 ? sessionPanes(layout) : null), [layout]);
   const activeSession = activePane(layout)?.session ?? null;
@@ -140,7 +147,7 @@ export const ActiveSection = memo(function ActiveSection() {
                     )}
                   </button>
                 </h3>
-                {g.kind === "repo" && <ActiveRepoLaunch label={g.hint} copies={launchCopies.get(g.key) ?? []} running={running} />}
+                {g.kind === "repo" && <ActiveRepoLaunch label={g.hint} copies={launchCopies.get(g.key) ?? []} running={running} kinds={rail.launchKinds} hasAgents={hasAgents} quickLaunch={quickLaunch} />}
               </div>
               {!isFolded(g) && (
               <div className="act-cards" role="list">
