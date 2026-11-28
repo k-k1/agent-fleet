@@ -11,6 +11,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -63,6 +64,22 @@ func pruneCommandSteps(conv string, keep int) {
 func removeCommandSteps(conv string) {
 	if conversationIDRe.MatchString(conv) {
 		_ = os.RemoveAll(commandSteps(conv).Dir())
+	}
+}
+
+// dropSlotCommandSteps removes the command steps of the conversations slotSid names, unless
+// another slot still names the same one: a slot that adopted a sibling's conversation by
+// mistake must not take the sibling's steps with it.
+func dropSlotCommandSteps(slotSid string) {
+	convs := map[string]bool{sids.Read(slotSid): true, hookConversation(slotSid): true}
+	for _, m := range session.ListMetas() {
+		if other := session.UUID(m.Dir, m.Name); m.Kind == session.KindAgy && other != slotSid {
+			delete(convs, sids.Read(other))
+			delete(convs, hookConversation(other))
+		}
+	}
+	for conv := range convs {
+		removeCommandSteps(conv)
 	}
 }
 

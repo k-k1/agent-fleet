@@ -3,7 +3,6 @@ package agy
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -197,26 +196,104 @@ func TestRecordCommandStepPrunesPastTheLimit(t *testing.T) {
 func TestClearResumeAndPurgeSlotRemoveTheConversationsCommandSteps(t *testing.T) {
 	const conv = "00010203-0405-4607-8809-0a0b0c0d0e0f"
 	const other = "10111213-1415-4617-9819-1a1b1c1d1e1f"
-	for name, drop := range map[string]func(session.Meta, string){
-		"ClearResume": func(_ session.Meta, sid string) { agentImpl{}.ClearResume(sid) },
-		"PurgeSlot":   func(m session.Meta, _ string) { agentImpl{}.PurgeSlot(m) },
-	} {
-		t.Run(name, func(t *testing.T) {
+	drops := map[string]func(session.Meta){
+		"ClearResume": func(m session.Meta) { agentImpl{}.ClearResume(session.UUID(m.Dir, m.Name)) },
+		"PurgeSlot":   func(m session.Meta) { agentImpl{}.PurgeSlot(m) },
+	}
+	write := func(t *testing.T, ids ...string) {
+		t.Helper()
+		for _, id := range ids {
+			if err := commandSteps(id).Write("4", "ls"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	exists := func(id string) bool {
+		_, err := os.Stat(commandSteps(id).Dir())
+		return err == nil
+	}
+	for name, drop := range drops {
+		t.Run(name+"/sid names the conversation", func(t *testing.T) {
 			m, sid := hookFixture(t, "slot-purge")
 			sids.Write(sid, conv)
-			for _, id := range []string{conv, other} {
-				if err := commandSteps(id).Write("4", "ls"); err != nil {
-					t.Fatal(err)
-				}
-			}
-			drop(m, sid)
-			if _, err := os.Stat(commandSteps(conv).Dir()); err == nil {
+			write(t, conv, other)
+			drop(m)
+			if exists(conv) {
 				t.Fatal("the conversation's command steps survived")
 			}
-			if _, ok := commandSteps(other).Read("4"); !ok {
+			if !exists(other) {
 				t.Fatal("another conversation's command steps were removed")
 			}
-			drop(m, "never-launched-"+filepath.Base(sid)) // no conversation: nothing to do, no panic
 		})
+		t.Run(name+"/only the hook record names it", func(t *testing.T) {
+			m, _ := hookFixture(t, "slot-purge")
+			var in hookInput
+			if err := json.Unmarshal([]byte(`{"conversationId":"`+conv+`"}`), &in); err != nil {
+				t.Fatal(err)
+			}
+			recordGen(m.Name, "SessionStart", in, time.Now())
+			write(t, conv)
+			drop(m)
+			if exists(conv) {
+				t.Fatal("steps recorded before the poll adopted the conversation survived")
+			}
+		})
+		t.Run(name+"/another slot shares the conversation", func(t *testing.T) {
+			m, sid := hookFixture(t, "slot-purge")
+			sibling := session.Meta{Dir: m.Dir, Name: "slot-sibling", Kind: session.KindAgy}
+			session.WriteMeta(sibling)
+			sids.Write(sid, conv)
+			sids.Write(session.UUID(sibling.Dir, sibling.Name), conv)
+			write(t, conv)
+			drop(m)
+			if !exists(conv) {
+				t.Fatal("the steps went although another slot still names the conversation")
+			}
+			session.RemoveMeta(m.Name) // a purged session's meta is gone by then
+			drop(sibling)
+			if exists(conv) {
+				t.Fatal("the steps stayed after the last slot naming the conversation was dropped")
+			}
+		})
+		t.Run(name+"/never launched", func(t *testing.T) {
+			m, sid := hookFixture(t, "slot-purge")
+			sids.Write(sid, conv)
+			write(t, conv)
+			fresh := session.Meta{Dir: m.Dir, Name: "slot-fresh", Kind: session.KindAgy}
+			session.WriteMeta(fresh)
+			drop(fresh)
+			if !exists(conv) {
+				t.Fatal("dropping a slot with no conversation removed another slot's steps")
+			}
+		})
+	}
+}
+
+// Rows past the bound lose the command text and keep their outcome; rows inside it are
+// enriched exactly as before.
+func TestPrunedStepsFallBackToThePlainToolLine(t *testing.T) {
+	const conv = "00010203-0405-4607-8809-0a0b0c0d0e0f"
+	t.Setenv("HOME", t.TempDir())
+	store := commandSteps(conv)
+	for _, i := range []int{1, 2} {
+		if err := store.Write(strconv.Itoa(i), "echo "+strconv.Itoa(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pruneCommandSteps(conv, 1) // keeps step 2 only
+	log := strings.Join([]string{
+		`{"step_index":1,"source":"MODEL","type":"GENERIC","status":"DONE","content":"Command exited with code 0."}`,
+		`{"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","content":"Command exited with code 0."}`,
+	}, "\n")
+	turns := parseTranscript(strings.NewReader(log), nil, nil, readCommandStep(conv))
+	if len(turns) != 1 || len(turns[0].Parts) != 2 {
+		t.Fatalf("unexpected turns: %+v", turns)
+	}
+	old, kept := turns[0].Parts[0], turns[0].Parts[1]
+	if old.Info != "exit code 0" || old.Command != "" {
+		t.Errorf("pruned row = %+v, want the plain outcome without a command", old)
+	}
+	if kept.Info != "echo 2 · exit code 0" || kept.Command != "echo 2" {
+		t.Errorf("kept row = %+v, want the enriched row", kept)
 	}
 }
