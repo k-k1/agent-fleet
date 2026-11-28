@@ -111,7 +111,7 @@ export function MemberView({
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const [limit, setLimit] = useState<number | string>(member.max_sessions ?? 0);
-  const [memoRunLimit, setMemoRunLimit] = useState<number | string>(member.memo_run_limit || "");
+  const [memoRunLimit, setMemoRunLimit] = useState<number | string>(member.memo_run_limit ?? 0);
   // The three workspace size axes. Memory is stored in bytes and edited in MB, CPU in
   // Fargate units (1024 = 1 vCPU) and disk in GiB — 0 means "unset → deployment default"
   // on every axis. They are independent on purpose (ADR 0044 decision 1): the presets below
@@ -429,9 +429,10 @@ export function MemberView({
     }
   };
   const saveLimit = async () => {
-    const runLimit = Number(memoRunLimit);
-    if (memoRunLimit !== "" && (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 10)) {
-      toast(tr("admin.memo_run_limit_range"));
+    // Same convention as the session limit: 0 (or blank) = the tenant's default.
+    const runLimit = Number(memoRunLimit) || 0;
+    if (!Number.isInteger(runLimit) || runLimit < 0 || runLimit > 10) {
+      toast(tr("admin.memo_run_limit_member_range"));
       return;
     }
     const res = await putUserLimits({
@@ -454,7 +455,7 @@ export function MemberView({
     setSavedLimits({
       max_sessions: +limit || 0,
       memo_run_limit: limits?.memo_run_limit ?? runLimit,
-      memo_run_limit_effective: limits?.memo_run_limit_effective ?? (runLimit || member.memo_run_limit_default || 4),
+      memo_run_limit_effective: limits?.memo_run_limit_effective ?? (runLimit || member.memo_run_limit_default),
       mem_limit: Math.round(+memMb || 0) * 1048576,
       cpu_limit: Math.round(+cpuUnits || 0),
       disk_gb: Math.round(+diskGb || 0),
@@ -625,10 +626,9 @@ export function MemberView({
         <h4>{tr("admin.ws_size_heading")}</h4>
         <div className="ws-size-now">
           <MemberSizeChips m={cur} sizing={sizing} />
-          {!cur.mem_limit && !cur.disk_gb && !cur.max_sessions && (
+          {!cur.mem_limit && !cur.disk_gb && !cur.max_sessions && !cur.memo_run_limit && (
             <span className="muted">{tr("admin.ws_size_unset")}</span>
           )}
-          <span className="muted">{tr("admin.memo_run_limit_effective", { n: cur.memo_run_limit_effective ?? 4 })}</span>
           {/* Hidden while the editor is open: pressing it again re-seeds every field from
               the stored values, so it would throw away whatever was typed with no warning
               and no undo. Cancel is the way out, and it says so. */}
@@ -637,7 +637,7 @@ export function MemberView({
               className="ws-size-edit"
               onClick={() => {
                 setLimit(cur.max_sessions ?? 0);
-                setMemoRunLimit(cur.memo_run_limit || "");
+                setMemoRunLimit(cur.memo_run_limit ?? 0);
                 setMemMb(cur.mem_limit ? Math.round(cur.mem_limit / 1048576) : 0);
                 setCpuUnits(cur.cpu_limit ?? 0);
                 setDiskGb(cur.disk_gb ?? 0);
@@ -789,9 +789,11 @@ export function MemberView({
                 <span className="af-unit">{tr("admin.max_sessions_zero")}</span>
               </div>
               <div className="admin-fld">
-                <FieldLabel htmlFor="md-memo-run-limit" plain className="af-cap" info={tr("admin.memo_run_limit_range")}>{tr("admin.memo_run_limit")}</FieldLabel>
-                <input id="md-memo-run-limit" type="number" min="1" max="10" value={memoRunLimit} onChange={(e) => setMemoRunLimit(e.target.value)} />
-                <span className="af-unit">{tr("admin.memo_run_limit_inherit", { n: cur.memo_run_limit_default ?? 4 })}</span>
+                <FieldLabel htmlFor="md-memo-run-limit" plain className="af-cap" info={tr("admin.memo_run_limit_member_range")}>{tr("admin.memo_run_limit")}</FieldLabel>
+                <input id="md-memo-run-limit" type="number" min="0" max="10" value={memoRunLimit} onChange={(e) => setMemoRunLimit(e.target.value)} />
+                <span className="af-unit">
+                  {cur.memo_run_limit_default !== undefined ? tr("admin.memo_run_limit_zero_n", { n: cur.memo_run_limit_default }) : tr("admin.memo_run_limit_zero")}
+                </span>
               </div>
             </div>
             <div className="le-actions">
