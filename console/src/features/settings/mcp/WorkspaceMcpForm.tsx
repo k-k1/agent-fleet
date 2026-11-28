@@ -31,7 +31,9 @@ export function WorkspaceMcpForm({ slug, preset, rows, onSaved, onCancel, onConf
   const existing = new Set(rows.map((row) => row.name.toLowerCase()));
   const services = preset.services.filter((service) => selected.includes(service.id) && !existing.has(service.name));
   const scopes = [...new Set(services.flatMap((service) => service[bundle]))].sort();
-  const valid = clientId.trim() && secret.trim() && secret.trim() !== MASKED && services.length > 0;
+  // Without PUBLIC_BASE_URL the Control Plane omits the redirect URI; registering a made-up one
+  // makes every sign-in fail, so saving is blocked until the operator sets it.
+  const valid = !!preset.redirect_uri && clientId.trim() && secret.trim() && secret.trim() !== MASKED && services.length > 0;
   const test = async (service: WorkspaceMcpService) => {
     setTesting(service.id);
     setProbes((current) => ({ ...current, [service.id]: undefined }));
@@ -77,7 +79,9 @@ export function WorkspaceMcpForm({ slug, preset, rows, onSaved, onCancel, onConf
         <p className="ps-note">{tr("admin.mcp_workspace_client_hint")}</p>
         <div className="ssm-fgrid">
           <Field label={tr("admin.mcp_workspace_redirect")} wide>
-            <code className="mcp-probe-mono">{preset.redirect_uri || "{PUBLIC_BASE_URL}/oauth2/mcp/callback"}</code>
+            {preset.redirect_uri
+              ? <code className="mcp-probe-mono">{preset.redirect_uri}</code>
+              : <p role="alert" className="admin-hint admin-hint--warn">{tr("admin.mcp_workspace_no_base_url")}</p>}
           </Field>
           <Field label={tr("admin.mcp_oauth_client_id")} req>
             <input {...NO_AUTOFILL} className="cinput mono" aria-label={tr("admin.mcp_oauth_client_id")} maxLength={255}

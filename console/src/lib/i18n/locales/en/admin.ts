@@ -109,6 +109,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_workspace": "Google Workspace preset",
   "admin.mcp_workspace_client_hint": "Create a Web application OAuth client in Google Auth Platform and select “Use this client for an AI-powered agent”. Use the same client for all the selected services.",
   "admin.mcp_workspace_redirect": "Authorized redirect URI",
+  "admin.mcp_workspace_no_base_url": "This deployment has no PUBLIC_BASE_URL, so there is no redirect URI to register with Google. Sign-in would fail even after you save, so saving is disabled. Ask the operator to set PUBLIC_BASE_URL.",
   "admin.mcp_workspace_bundle": "Scope bundle",
   "admin.mcp_workspace_bundle_hint": "Standard adds selected write permissions, such as drafting Gmail messages and editing documents.",
   "admin.mcp_workspace_read_only": "Read-only",
