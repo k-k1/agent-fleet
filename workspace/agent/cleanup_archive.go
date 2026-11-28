@@ -488,7 +488,8 @@ func restoreLeftHalfDone(m cleanupManifest) bool {
 	return false
 }
 
-// purgeCleanupArchive removes one archive and returns its manifest. It does not touch the
+// purgeCleanupArchive removes one archive, drops its worktree pin and returns its manifest. Not
+// for use under the cleanup lock (see unpinPurged). It does not touch the
 // managed ledgers: whether a session's ledger may go depends on every OTHER archive too, which
 // the caller checks once for everything it purged (dropPurgedLedgers).
 func purgeCleanupArchive(id string) (cleanupManifest, error) {
@@ -497,7 +498,11 @@ func purgeCleanupArchive(id string) (cleanupManifest, error) {
 		return cleanupManifest{}, err
 	}
 	defer root.Close()
-	return purgeCleanupArchiveIn(root, id)
+	man, err := purgeCleanupArchiveIn(root, id)
+	if err == nil {
+		unpinPurged(man)
+	}
+	return man, err
 }
 
 func purgeCleanupArchiveIn(root *os.Root, id string) (cleanupManifest, error) {
@@ -531,15 +536,34 @@ func purgeCleanupArchiveIn(root *os.Root, id string) (cleanupManifest, error) {
 	if err := rmtree.RemoveAllIn(root, spaceTrashName(id)); err != nil {
 		return empty, err
 	}
-	for _, name := range []string{spaceRestoreRecordName(id), id + ".json", id + ".tar.gz"} {
+	// Restore progress goes only once the archive cannot be restored any more: a purge that stops
+	// before that keeps an entry whose next restore must still find what it already did. A
+	// purge of an id whose tarball is already gone still clears what an earlier purge left.
+	// Left behind, a record blocks its id for a space (entryIDFree) and is ignored by a worktree
+	// entry with another pin.
+	dropProgress := func() {
+		_ = root.Remove(spaceRestoreRecordName(id))
+		_ = root.Remove(worktreeRestoreRecordName(id))
+	}
+	for _, name := range []string{id + ".json", id + ".tar.gz"} {
 		if err := root.Remove(name); err != nil && (!errors.Is(err, fs.ErrNotExist) || name == id+".tar.gz") {
+			if errors.Is(err, fs.ErrNotExist) {
+				dropProgress()
+			}
 			return empty, err
 		}
 	}
+	dropProgress()
+	return man, nil
+}
+
+// unpinPurged lets gc have a purged worktree entry's commits. Run it outside the cleanup lock:
+// update-ref runs the repository's reference-transaction hook, which may call back into the
+// Agent and wait on the deletion gate a restore holds while it waits for the cleanup lock.
+func unpinPurged(man cleanupManifest) {
 	if man.Worktree != nil {
 		gitx.UnpinDeletedWorktree(*man.Worktree)
 	}
-	return man, nil
 }
 
 // dropPurgedLedgers removes the managed kinds' ClientMessageID ledger of each session a purged
@@ -852,7 +876,7 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 	restored["sessions"] = sessions
 	restored["branches"] = branches
 	if m.Worktree != nil {
-		if err := restoreDeletedWorktree(*m.Worktree); err != nil {
+		if err := restoreDeletedWorktree(root, id, archiveInfo, *m.Worktree); err != nil {
 			return nil, err
 		}
 		restored["worktree"] = m.Worktree.Name

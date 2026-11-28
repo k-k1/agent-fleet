@@ -91,7 +91,7 @@ func entryIDFree(trash *os.Root, id string) bool {
 	if !validArchiveID(id) {
 		return false
 	}
-	for _, name := range []string{id + ".json", id + ".tar.gz", spaceTrashName(id), restoringMarkerName(id), spaceRestoreRecordName(id)} {
+	for _, name := range []string{id + ".json", id + ".tar.gz", spaceTrashName(id), restoringMarkerName(id), spaceRestoreRecordName(id), worktreeRestoreRecordName(id)} {
 		if _, err := trash.Lstat(name); !errors.Is(err, fs.ErrNotExist) {
 			return false
 		}
@@ -401,20 +401,15 @@ func resumeSpaceRestore(trash *os.Root, id, dir string, t spaceTombstone) error 
 		if err != nil {
 			return spaceRestoreMoveError(err, t.Folder)
 		}
-		record = spaceRestoreRecord{ID: id, Folder: t.Folder, Identity: identity, Shelved: map[string]string{}}
-		for _, sessionName := range t.Shelved {
-			if !session.ValidName(sessionName) {
-				return fmt.Errorf("archive %s has an invalid shelved session name", id)
-			}
-			m, state := session.ReadMetaState(sessionName)
-			if state == session.MetaUnreadable {
-				return fmt.Errorf("%w: could not read session %s", errRestoreStopped, sessionName)
-			}
-			if state == session.MetaOK && m.Archived {
-				record.Shelved[sessionName] = m.ShelfRevision
-			}
+		shelved, unread, err := shelfRevisionsOf(id, t.Shelved)
+		if err != nil {
+			return err
 		}
-		if err := writeSpaceRestoreRecord(trash, name, record); err != nil {
+		if len(unread) > 0 {
+			return fmt.Errorf("%w: could not read session %s", errRestoreStopped, unread[0])
+		}
+		record = spaceRestoreRecord{ID: id, Folder: t.Folder, Identity: identity, Shelved: shelved}
+		if err := writeRestoreRecord(trash, name, record); err != nil {
 			return err
 		}
 	case err != nil:
@@ -465,16 +460,17 @@ func resumeSpaceRestore(trash *os.Root, id, dir string, t spaceTombstone) error 
 		spaceBeforeRestoreComplete()
 	}
 	record.Complete = true
-	return writeSpaceRestoreRecord(trash, name, record)
+	return writeRestoreRecord(trash, name, record)
 }
 
-func writeSpaceRestoreRecord(trash *os.Root, name string, record spaceRestoreRecord) error {
+// writeRestoreRecord stores a space or worktree restore's progress record next to its archive.
+func writeRestoreRecord(trash *os.Root, name string, record any) error {
 	data, err := json.Marshal(record)
 	if err == nil {
 		err = writeArchiveFile(trash, name, data)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: could not record space restore progress: %w", errRestoreStopped, err)
+		return fmt.Errorf("%w: could not record restore progress: %w", errRestoreStopped, err)
 	}
 	return nil
 }

@@ -6,10 +6,14 @@ package main
 // the sessions the delete shelved, and purging it drops the pin so gc may collect the commits.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -67,10 +71,36 @@ func (e *restoreConflict) Error() string { return e.msg }
 // steps that use it. Nil in production.
 var worktreeRestoreChecked func()
 
+// worktreeRestoreRecord is a worktree restore's progress, kept next to its archive from the first
+// attempt on. Shelved holds the shelf revision of each session still on the shelf when the
+// first attempt began, so a retry after the member shelved one again leaves it on the shelf.
+// Unread names the sessions whose meta could not be read yet, and Since is when the first attempt
+// began. An unread session that reads again comes back only when it went onto the shelf before
+// Since: one shelved at or after it may be the member's own later shelf action, and stays. The
+// restore is not complete until no unread name is left. Ref is the
+// tombstone's pin, unique per delete: a record a purge failed to remove can never stand in for
+// a later entry that reuses the id.
+type worktreeRestoreRecord struct {
+	ID       string            `json:"id"`
+	Ref      string            `json:"ref"`
+	Shelved  map[string]string `json:"shelved"`
+	Unread   []string          `json:"unread,omitempty"`
+	Since    string            `json:"since,omitempty"`
+	Complete bool              `json:"complete,omitempty"`
+}
+
+func worktreeRestoreRecordName(id string) string { return id + ".worktree-restore" }
+
+// Test seams: after the first attempt's shelf scan, after the folder is back and before its
+// sessions are, and after the sessions are back and before the record says so. Nil in
+// production.
+var worktreeRestoreScanned, worktreeRestoreRecreated, worktreeBeforeRestoreComplete func()
+
 // restoreDeletedWorktree puts a deleted worktree back from its tombstone, then takes the
 // sessions its delete shelved off the shelf. A folder already back (recreated since) is left
-// as it is, and only the sessions are restored.
-func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
+// as it is, and only the sessions are restored. trash, id and archive name the entry t came
+// from; its progress record lives there.
+func restoreDeletedWorktree(trash *os.Root, id string, archive os.FileInfo, t gitx.WorktreeTombstone) error {
 	if _, ok := gitx.ResolveRepoDir(t.Name); !ok || !gitx.IsReposEntryPath(t.Path, t.Name) {
 		return fmt.Errorf("the worktree %s was not under the repositories folder", t.Name)
 	}
@@ -81,28 +111,156 @@ func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
 		worktreeRestoreChecked()
 	}
 	var err error
-	sessionx.WithDeletionGate(func() { err = recreateFromTombstone(dir, t) })
-	if err != nil {
-		return err
+	// Order: deletion gate, cleanup lock, session meta lock. The gate is held through the shelf
+	// work so a new delete cannot shelve again between the folder coming back and its sessions.
+	sessionx.WithDeletionGate(func() {
+		var record worktreeRestoreRecord
+		sessionx.WithCleanupLock(func() {
+			if err = checkRestoreArchive(trash, id, archive); err == nil {
+				record, err = loadWorktreeRestoreRecord(trash, id, t)
+			}
+		})
+		if err != nil {
+			return
+		}
+		if err = recreateFromTombstone(dir, t); err != nil || record.Complete {
+			return
+		}
+		if worktreeRestoreRecreated != nil {
+			worktreeRestoreRecreated()
+		}
+		sessionx.WithCleanupLock(func() {
+			// A purge that won since the first check has taken the record with the archive. The
+			// folder is back by now, so its sessions still come back as the record read above
+			// says; only the progress has nowhere left to go.
+			purged := checkRestoreArchive(trash, id, archive) != nil
+			if err = restoreShelvedRevisions(dir, t.Shelved, record.Shelved); err != nil {
+				return
+			}
+			if len(record.Unread) > 0 {
+				err = fmt.Errorf("%w: could not read session %s", errRestoreStopped, strings.Join(record.Unread, ", "))
+				return
+			}
+			if purged {
+				return
+			}
+			if worktreeBeforeRestoreComplete != nil {
+				worktreeBeforeRestoreComplete()
+			}
+			record.Complete = true
+			err = writeRestoreRecord(trash, worktreeRestoreRecordName(id), record)
+		})
+	})
+	return err
+}
+
+// loadWorktreeRestoreRecord reads the progress an earlier attempt left, or records the shelf
+// revisions now when this is the first attempt.
+func loadWorktreeRestoreRecord(trash *os.Root, id string, t gitx.WorktreeTombstone) (worktreeRestoreRecord, error) {
+	var record worktreeRestoreRecord
+	name := worktreeRestoreRecordName(id)
+	data, err := readArchiveFile(trash, name)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// An unreadable meta does not hold the folder back: it stays unread in the record and
+		// the restore reports it after putting back everything else.
+		// Since is read before the scan: a member's shelf action does not wait for this restore,
+		// and one taken while the scan runs must not date from before it.
+		since := nowUTC().Format(time.RFC3339)
+		shelved, unread, err := shelfRevisionsOf(id, t.Shelved)
+		if err != nil {
+			return record, err
+		}
+		if worktreeRestoreScanned != nil {
+			worktreeRestoreScanned()
+		}
+		record = worktreeRestoreRecord{ID: id, Ref: t.Ref, Shelved: shelved, Unread: unread}
+		if len(unread) > 0 {
+			record.Since = since
+		}
+		return record, writeRestoreRecord(trash, name, record)
+	case err != nil:
+		return record, fmt.Errorf("%w: could not read worktree restore progress: %w", errRestoreStopped, err)
 	}
-	return restoreShelvedSessions(dir, t.Shelved)
+	if err := json.Unmarshal(data, &record); err != nil || record.ID != id || record.Shelved == nil {
+		return record, fmt.Errorf("%w: invalid worktree restore progress for %s", errRestoreStopped, id)
+	}
+	if record.Ref != t.Ref {
+		// Left by a purged entry that had this id: not this entry's progress.
+		if err := trash.Remove(name); err != nil {
+			return record, fmt.Errorf("%w: could not drop stale worktree restore progress: %w", errRestoreStopped, err)
+		}
+		return loadWorktreeRestoreRecord(trash, id, t)
+	}
+	if len(record.Unread) > 0 {
+		for _, n := range record.Unread {
+			if !slices.Contains(t.Shelved, n) {
+				return record, fmt.Errorf("%w: invalid worktree restore progress for %s", errRestoreStopped, id)
+			}
+		}
+		var unread []string
+		for _, n := range record.Unread {
+			m, state := session.ReadMetaState(n)
+			switch {
+			case state == session.MetaUnreadable:
+				unread = append(unread, n)
+			case state == session.MetaOK && m.Archived && shelvedBefore(m.ArchivedAt, record.Since):
+				record.Shelved[n] = m.ShelfRevision
+			}
+		}
+		if len(unread) < len(record.Unread) {
+			record.Unread = unread
+			if err := writeRestoreRecord(trash, name, record); err != nil {
+				return record, err
+			}
+		}
+	}
+	return record, nil
 }
 
-// The tombstone remains available after an incomplete restore. On retry, sessions already
-// back or now in another folder are left alone.
-func restoreShelvedSessions(dir string, names []string) error {
-	return restoreShelvedRevisions(dir, names, nil)
+// shelvedBefore reports whether archivedAt is strictly before since, both RFC 3339. Either one
+// missing or unreadable answers false: when in doubt the session stays on the shelf.
+func shelvedBefore(archivedAt, since string) bool {
+	a, err := time.Parse(time.RFC3339, archivedAt)
+	if err != nil {
+		return false
+	}
+	b, err := time.Parse(time.RFC3339, since)
+	return err == nil && a.Before(b)
 }
 
+// shelfRevisionsOf is the shelf revision of each named session still on the shelf, and the names
+// whose meta could not be read. A session that is gone or already off the shelf is left out of
+// both, and so never restored by a retry.
+func shelfRevisionsOf(id string, names []string) (shelved map[string]string, unread []string, err error) {
+	shelved = map[string]string{}
+	for _, name := range names {
+		if !session.ValidName(name) {
+			return nil, nil, fmt.Errorf("archive %s has an invalid shelved session name", id)
+		}
+		m, state := session.ReadMetaState(name)
+		switch {
+		case state == session.MetaUnreadable:
+			unread = append(unread, name)
+		case state == session.MetaOK && m.Archived:
+			shelved[name] = m.ShelfRevision
+		}
+	}
+	return shelved, unread, nil
+}
+
+// restoreShelvedRevisions takes off the shelf each named session that revisions tracks, still
+// carries the tracked revision and still lives in dir. A session shelved again since has a new
+// revision and stays; one already back or now in another folder is left alone.
 func restoreShelvedRevisions(dir string, names []string, revisions map[string]string) error {
 	var restoreErr error
 	for _, name := range names {
 		revision, tracked := revisions[name]
-		if revisions != nil && !tracked {
+		if !tracked {
 			continue
 		}
 		if err := sessionx.RestoreShelvedSession(name, func(m session.Meta) bool {
-			return (revisions == nil || m.ShelfRevision == revision) && gitx.SessionLivesIn(m, dir)
+			return m.ShelfRevision == revision && gitx.SessionLivesIn(m, dir)
 		}); err != nil {
 			restoreErr = errors.Join(restoreErr, fmt.Errorf("could not restore session %s: %w", name, err))
 		}
