@@ -119,9 +119,8 @@
 .wi-row:hover {
   background: var(--hover, rgba(127, 127, 127, 0.08));
 }
-/* Dim the title on completed Jira rows to keep both cues and row controls legible. */
-.wi-row--done:not(.wi-row--jira),
-.wi-row--done.wi-row--jira .wi-title {
+/* One rule for every provider: a completed row is dimmed as a whole. */
+.wi-row--done {
   opacity: 0.55;
 }
 
@@ -179,18 +178,26 @@
   block-size: 8px;
   border: 1px solid currentColor;
   border-radius: 50%;
-  color: var(--muted);
+  color: #6e7781;
 }
 .wi-jira-state--other {
   border-style: dashed;
 }
 .wi-jira-state--in_progress {
-  color: var(--accent);
   background: linear-gradient(90deg, currentColor 50%, transparent 50%);
 }
 .wi-jira-state--done {
-  color: var(--ok);
   background: currentColor;
+}
+/* Fixed tones from stateBadge, the same hexes as the detail pill (.wi-dstate), not theme variables. */
+.wi-jira-state.tone-blue {
+  color: #0c66e4;
+}
+.wi-jira-state.tone-green {
+  color: #1f883d;
+}
+.wi-jira-state.tone-grey {
+  color: #6e7781;
 }
 
 .wi-issue-progress {

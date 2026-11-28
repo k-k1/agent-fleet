@@ -445,6 +445,8 @@ describe("WorkItemsSection", () => {
       const row = host.querySelector(".wi-row")!;
       expect(row.querySelector(".wi-jira-task .codicon-check")).not.toBeNull();
       expect(row.querySelector(`.wi-jira-state--${state}`)?.getAttribute("title")).toBe(t(`wi.state_${state}`));
+      // The rail cue takes its tone from stateBadge, as the detail pill does.
+      expect(row.querySelector(`.wi-jira-state.tone-${tone}`)).not.toBeNull();
       expect(row.getAttribute("aria-label")).toContain(t(`wi.state_${state}`));
       await openRow();
       expect(document.querySelector(".wi-dhead .wi-jira-task .codicon-check")).not.toBeNull();
