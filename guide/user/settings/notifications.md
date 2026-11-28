@@ -75,6 +75,7 @@ The section is shown only on a deployment where the administrator has switched W
 | A plan is waiting for approval | A session needs you to approve a plan |
 | A permission request is waiting | A session asks for a permission |
 | A turn has finished | A session finished its turn and waits for you |
+| An auto-run turn has failed | A turn of an auto-run's own session failed. It is separate from "A turn has finished": turning that off does not stop failure pushes, and turning this off does not stop finished-turn pushes. It follows the Auto-run row below |
 
 4. Under "**Send a push for sessions started by**", choose who started the session. Each row has two switches: "**The session**" (the session itself) and "**Sessions it starts**" (the reviewers and helpers it starts)
 

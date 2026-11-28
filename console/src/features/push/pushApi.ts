@@ -46,7 +46,7 @@ export interface PushDevice {
 }
 
 /** The kinds a member may turn off for push; the CP refuses any other (pushsrv.PrefKinds). */
-export const PUSH_KINDS = ["question", "plan-approval", "permission-request", "answer-ready"] as const;
+export const PUSH_KINDS = ["question", "plan-approval", "permission-request", "answer-ready", "turn-failed"] as const;
 export type PushKind = (typeof PUSH_KINDS)[number];
 
 /**

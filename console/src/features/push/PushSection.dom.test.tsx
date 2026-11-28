@@ -104,7 +104,7 @@ describe("PushSection", () => {
   it("shows the per-kind choices from the server and the device list", async () => {
     const host = await mount();
     const boxes = [...host.querySelectorAll<HTMLInputElement>(".push-kind input")];
-    expect(boxes.map((b) => b.checked)).toEqual([true, true, true, false]);
+    expect(boxes.map((b) => b.checked)).toEqual([true, true, true, false, true]);
     expect(host.querySelector(".push-devices")?.textContent).toContain("Safari / iOS");
   });
   it("saves a turned-off kind as the full off list", async () => {
@@ -113,6 +113,14 @@ describe("PushSection", () => {
     await act(async () => void q.click());
     await flush();
     expect(puts).toEqual([{ off: ["answer-ready", "question"] }]);
+  });
+  it("saves the auto-run failure switch by its own label and keeps the kinds already off", async () => {
+    const host = await mount();
+    const box = [...host.querySelectorAll<HTMLLabelElement>(".push-kind")].find((l) => l.textContent?.includes(t("push.kind_turn_failed")))!.querySelector("input")!;
+    expect(box.checked).toBe(true);
+    await act(async () => void box.click());
+    await flush();
+    expect(puts).toEqual([{ off: ["answer-ready", "turn-failed"] }]);
   });
   it("shows the origin switches as three rows of two, from the saved list", async () => {
     offOrigins = ["autorun-child"];

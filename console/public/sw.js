@@ -98,6 +98,7 @@ const PUSH_TEXT = {
     "plan-approval": "プランの承認待ちです",
     "permission-request": "権限の許可待ちです",
     "answer-ready": "ターンが終わりました",
+    "turn-failed": "自動実行のターンが失敗しました",
     other: "セッションが待っています",
   },
   en: {
@@ -105,6 +106,7 @@ const PUSH_TEXT = {
     "plan-approval": "A plan is waiting for approval",
     "permission-request": "A permission request is waiting",
     "answer-ready": "A turn has finished",
+    "turn-failed": "An auto-run turn failed",
     other: "A session needs you",
   },
 };

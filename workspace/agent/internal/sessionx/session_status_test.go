@@ -669,6 +669,13 @@ func TestQueuedPolledFailuresAfterContinuationHaveDistinctOutboxIDs(t *testing.T
 	if len(events) != 2 || events[0].Kind != "turn-failed" || events[1].Kind != "turn-failed" || events[0].ID == events[1].ID {
 		t.Fatalf("outbox events = %+v", events)
 	}
+	// The meta carries no queue origin, as when Put's own metadata read fails: the event must
+	// still name auto-run, or the push switch for the wrong row decides it.
+	for _, e := range events {
+		if e.OriginRoot != notice.OriginRootAutorun || e.OriginChild {
+			t.Fatalf("turn-failed origin = (%q, %v), want (autorun, false)", e.OriginRoot, e.OriginChild)
+		}
+	}
 }
 
 func TestQueuedManagedFailureDoesNotUseTerminalFailureID(t *testing.T) {
