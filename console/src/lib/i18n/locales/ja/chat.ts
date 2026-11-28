@@ -120,6 +120,7 @@ export const chat = {
   "chat.suggest_none": "返信候補を作れませんでした（会話が浅いか、利用できる AI がありません）",
   "chat.suggest_failed": "返信候補の生成に失敗しました",
   "chat.remove": "削除",
+  "chat.remove_named": "{name} を削除",
   "chat.uploading": "アップロード中…",
   "chat.stop": "停止",
   "chat.send": "送信",

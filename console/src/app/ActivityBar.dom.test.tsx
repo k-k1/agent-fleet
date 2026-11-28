@@ -27,6 +27,7 @@ import type { FleetNotification } from "../features/notifications/store.ts";
 import { useWorkItemStore } from "../features/workitems/store.ts";
 import { useSeenStore } from "../features/workitems/seen.ts";
 import { useAutoRunStore } from "../features/autorun/store.ts";
+import { useQueueSettingsCache } from "../features/memo/queueSettingsCache.ts";
 import type { RunDelivery } from "../features/autorun/runs.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
@@ -185,6 +186,47 @@ describe("ActivityBar auto-run view", () => {
     // Waiting stays while the view is open: looking at the row does not answer the session.
     await act(async () => btn("autorun").click());
     expect(badge("autorun")?.textContent).toBe("2");
+  });
+
+  describe("with the open-run count", () => {
+    const capacity = (open: number) => useQueueSettingsCache.setState({ tenant: scopeNow(), runCapacity: { open, limit: 8 }, known: true });
+    const cue = () => btn("autorun").querySelector<HTMLElement>(".actbar-cue");
+    const count = () => btn("autorun").querySelector<HTMLElement>(".actbar-badge.has-count");
+    afterEach(() => useQueueSettingsCache.getState().reset());
+
+    it("keeps the count neutral and shows a run waiting for an answer as a separate amber dot", async () => {
+      useSessionsStore.setState({ sessions: [run("a", "question"), run("b", "working"), run("c", "working"), run("d", "working"), run("e", "working")] });
+      served(["a", "b", "c", "d", "e"].map((n, i): [string, RunDelivery] => [n, dlv("d" + i, "open")]));
+      capacity(5);
+      await mount();
+      expect(count()?.textContent).toBe("5");
+      expect(count()?.dataset.badge).toBe("running");
+      expect(cue()?.dataset.badge).toBe("waiting");
+      expect(cue()?.textContent).toBe("");
+      expect(btn("autorun").title).toContain(tCount("rail.badge.runs", 1));
+    });
+
+    it("shows an unacknowledged failure as a separate red dot beside the neutral count", async () => {
+      useSessionsStore.setState({ sessions: [run("a", "working"), run("b", "working", { alive: false })] });
+      served([["a", dlv("d1", "open")], ["b", dlv("d2", "closed", "clean", "turn-failed")]]);
+      capacity(1);
+      await mount();
+      expect(count()?.dataset.badge).toBe("running");
+      expect(count()?.textContent).toBe("1");
+      expect(cue()?.dataset.badge).toBe("failed");
+      await act(async () => btn("autorun").click());
+      expect(cue()).toBeNull();
+      expect(count()?.textContent).toBe("1");
+    });
+
+    it("has no dot while nothing waits or failed", async () => {
+      useSessionsStore.setState({ sessions: [run("a", "working")] });
+      served([["a", dlv("d1", "open")]]);
+      capacity(1);
+      await mount();
+      expect(count()?.dataset.badge).toBe("running");
+      expect(cue()).toBeNull();
+    });
   });
 
   it("marks a failed run with a red dot until the view is opened, then keeps it acknowledged", async () => {

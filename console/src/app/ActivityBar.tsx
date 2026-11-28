@@ -216,6 +216,11 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
       {views.map((v) => {
         const badge = badges[v.id];
         const count = badge?.openRuns ?? badge?.count;
+        // An open-run count is an inventory, not a request: it keeps the neutral running tone, and
+        // the waiting / failed state it comes with is the separate dot beside it.
+        const openCount = badge?.openRuns !== undefined && badge.tone !== "running";
+        const countTone = openCount ? "running" : badge?.tone;
+        const cue = openCount && (badge?.tone === "waiting" || badge?.tone === "failed") ? badge.tone : null;
         const description = badge ? badgeText(badge, tr, v.id) : "";
         const active = shown && view === v.id;
         const name = tr(v.label);
@@ -238,10 +243,11 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
             <Icon name={v.icon} />
             {v.mark && <Icon name={v.mark} className="actbar-mark" />}
             {badge && (
-              <span className={"actbar-badge tone-" + badge.tone + (count != null ? " has-count" : "")} data-badge={badge.tone}>
+              <span className={"actbar-badge tone-" + countTone + (count != null ? " has-count" : "")} data-badge={countTone}>
                 {count != null ? (count > 99 ? "99+" : count) : ""}
               </span>
             )}
+            {cue && <span className={"actbar-badge actbar-cue tone-" + cue} data-badge={cue} />}
           </button>
         );
       })}

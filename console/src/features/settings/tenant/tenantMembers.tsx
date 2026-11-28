@@ -717,6 +717,14 @@ export function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) 
   }
   if (m.disk_gb) out.push(<span key="disk" className="mr-size muted">{tr("admin.roster_disk", { n: String(m.disk_gb) })}</span>);
   if (m.max_sessions) out.push(<span key="s" className="mr-lim muted">s≤{m.max_sessions}</span>);
+  // Only an override: a member on the tenant default says nothing, like every chip here.
+  if (m.memo_run_limit) {
+    out.push(
+      <span key="r" className="mr-lim muted" title={tr("admin.memo_run_limit_effective", { n: m.memo_run_limit })}>
+        {tr("admin.memo_run_limit_chip", { n: m.memo_run_limit })}
+      </span>,
+    );
+  }
   return <>{out}</>;
 }
 

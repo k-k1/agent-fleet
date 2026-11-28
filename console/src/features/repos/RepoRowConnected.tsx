@@ -5,13 +5,9 @@
 // in ReposSection lives here once.
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { apiJSON, errDetail, errText, repoSetLock } from "../../core/api/client.ts";
+import { apiJSON, errText, repoSetLock } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { agentOf } from "../../agents/registry.ts";
-import { resolveEffortChoice, resolveEffortOverride, writeRepoLast, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
-import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
-import { resolveQuickLaunchModel } from "../../lib/agentModels.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useReposStore } from "./store.ts";
 import type { Repo } from "./store.ts";
@@ -19,11 +15,11 @@ import { useFilesStore } from "../files/store.ts";
 import type { Session } from "../../types/session.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
-import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
 import { RepoRow } from "./RepoRow.tsx";
 import { parentFFFailedText, parentFFSuccessText } from "./parentSync.ts";
 import { postFastForward } from "./staleIndexLock.ts";
 import { useStartWork } from "./useStartWork.ts";
+import { useQuickLaunch } from "./useQuickLaunch.ts";
 import { SvnAuthModal } from "./SvnAuthModal.tsx";
 import { GitflowInitModal } from "./GitflowInitModal.tsx";
 import { DeleteCopyModal } from "./DeleteCopyModal.tsx";
@@ -31,9 +27,6 @@ import { StopSessionsModal } from "./StopSessionsModal.tsx";
 import { liveSessionCount } from "./stopTree.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { RepoRailContext } from "./useRepoRail.ts";
-import { quickLaunchRoute } from "../../agents/launchAccess.ts";
-import { quickLaunchModel, routeSelectionBody } from "./bedrockProfiles.ts";
-import { policyRefusalKey, policyRefusalOf } from "./launchPolicy.ts";
 
 interface RepoRowConnectedProps {
   r: Repo;
@@ -60,15 +53,14 @@ interface RepoRowConnectedProps {
 }
 
 export function RepoRowConnected({ r, ctx, node, onToggle, sess, termChip, unread, peek, alsoRunning, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
-  const settings = useSettings(); // default model for a claude launch
   const tr = useT();
   const toast = useToast();
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const setActive = useLayoutStore((s) => s.setActive);
   const refreshRepos = useReposStore((s) => s.refresh);
-  const refreshSessions = useSessionsStore((s) => s.refresh);
   const startWork = useStartWork({ policyInline: true });
+  const quickLaunch = useQuickLaunch(ctx.access);
   // SVN re-authentication (docs/log/41 amendment). Owned here rather than in RepoRow
   // because both routes into it are here: the menu item, and an update that came back
   // svn_auth_required — the failure IS the moment to ask, and answering it retries.
@@ -185,69 +177,8 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, termChip, unrea
       // force question is asked per row there instead of as a second dialog.
       onDelete={() => setDelOpen(true)}
       onOpenArchived={r.path ? () => useSessionUI.getState().openArchived(r.path) : undefined}
-      // Quick launch (▼ / right-click): no prompt, straight to a session.
-      onLaunch={async (kind, split) => {
-        const { model: hasModel, effort: hasEffort } = agentOf(kind).caps;
-        const defaults = agentLaunchDefault(settings, kind);
-        // Shared per-kind chain: repo last-used → kind default (repoLast.ts resolveModel).
-        // resolveQuickLaunchModel is a no-op for every kind but lcpp — it exists because this
-        // path has no mounted picker to react to a catalog fetch the way useAutoConcreteModel
-        // does (docs/log/109), so it awaits the live catalog once here instead.
-        const model = hasModel ? await resolveQuickLaunchModel(kind, resolveModel(kind, r.name, defaults.model)) : "";
-        const effortChoice = hasEffort ? resolveEffortChoice(kind, r.name, defaults.effort) : "";
-        const effort = hasEffort ? resolveEffortOverride(kind, effortChoice, defaults.effort) : "";
-        // Kinds that can start in plan mode (planMode or tuiStartMode) honour the saved
-        // default, so the per-repo start mode picked in the launch modal also applies to a
-        // quick launch.
-        const startMode =
-          agentOf(kind).caps.planMode || agentOf(kind).caps.tuiStartMode
-            ? resolveStartMode(kind, r.name, defaults.startMode)
-            : "normal";
-        // The route follows the member's saved default, the same rules as the dialog's preselect
-        // (ADR 0138 D11b). A default that cannot be used, or a kind that cannot launch without a
-        // route choice, opens the dialog instead of running on a route the member did not choose.
-        const plan = quickLaunchRoute(kind, ctx.access.kinds, settings.agentLaunchDefaults[kind]?.route);
-        if (plan === "dialog") return "dialog";
-        const body: Record<string, unknown> = { dir: r.path, kind };
-        if (plan.route) body.route = routeSelectionBody(plan.route.route, plan.route.connection);
-        // A quick launch defaults to managed like any new session (docs/log/27 §9.2 —
-        // opencode). The CLI is reachable through the driver choice in the start-work modal.
-        if (agentOf(kind).managedDriver) body.driver = "managed";
-        // A remembered model that runs only on a route (a Bedrock one) is not sent with no route;
-        // the dialog opens instead so a model can be chosen.
-        const q = quickLaunchModel(kind, model, !!plan.route);
-        if (q === "dialog") return "dialog";
-        if (q.model) body.model = q.model;
-        if (effort) body.effort = effort;
-        body.mode = startMode;
-        let res = await apiJSON("api/sessions", "POST", body);
-        // An old Agent (the P1.5 generation) rejects managed outright; retry with tui.
-        if (res?.error && body.driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
-          delete body.driver;
-          if (!agentOf(kind).caps.tuiEffort) delete body.effort;
-          if (!agentOf(kind).caps.tuiStartMode) delete body.mode;
-          res = await apiJSON("api/sessions", "POST", body);
-        }
-        if (res && res.error) {
-          // A refusal of the credential policy is said in the Console's own words, and what the
-          // menu offers is asked again.
-          const policy = policyRefusalOf(res.error);
-          if (policy) {
-            toast(tr(policyRefusalKey(policy)));
-            void ctx.access.refresh();
-            return;
-          }
-          // errDetail: a generic code (runtime_failed and friends) carries the why in message only.
-          toast(tr("rp.launch_failed", { err: errDetail(res.error) }));
-          return;
-        }
-        writeRepoLast(r.name, kind, hasModel ? model : undefined, effortChoice, startMode);
-        void refreshSessions();
-        const chat = agentOf(kind).caps.chat;
-        (chat
-          ? split ? openSessionChatSplit : openSessionChat
-          : split ? openSessionTerminalSplit : openSessionTerminal)(res.name);
-      }}
+      // Quick launch (▼): no prompt, straight to a session. Shared with the Active view's heading.
+      onLaunch={(kind, split) => quickLaunch(r, kind, split)}
       // Start work: worktree (default) or in-place, with an optional first prompt the
       // Agent delivers once the CLI is ready. Shared with the Start hub (useStartWork).
       onStartWork={(opts) => startWork({ dir: r.path || "", repo: r.name }, opts)}

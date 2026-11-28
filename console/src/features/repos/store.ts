@@ -164,7 +164,10 @@ interface LaunchTargetStore {
    * working copy — new worktree or an existing one — before the launch dialog opens).
    * The dialog would otherwise re-default to "new worktree" and undo that answer. */
   inPlace: boolean;
-  open(r: Repo, existingBranch?: string, inPlace?: boolean): void;
+  /** Preselect this agent kind in the dialog ("" = the dialog's own pick). Set when a quick
+   *  launch needs a choice only the dialog offers (a route) and hands the kind over. */
+  initialKind: string;
+  open(r: Repo, existingBranch?: string, inPlace?: boolean, initialKind?: string): void;
   clear(): void;
 }
 
@@ -172,8 +175,9 @@ export const useLaunchTarget = create<LaunchTargetStore>((set) => ({
   target: null,
   existingBranch: "",
   inPlace: false,
-  open: (r, existingBranch = "", inPlace = false) => set({ target: r, existingBranch, inPlace }),
-  clear: () => set({ target: null, existingBranch: "", inPlace: false }),
+  initialKind: "",
+  open: (r, existingBranch = "", inPlace = false, initialKind = "") => set({ target: r, existingBranch, inPlace, initialKind }),
+  clear: () => set({ target: null, existingBranch: "", inPlace: false, initialKind: "" }),
 }));
 
 /** The work item a launch was seeded from (docs/log/80). */
