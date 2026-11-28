@@ -119,10 +119,11 @@
 .wi-row:hover {
   background: var(--hover, rgba(127, 127, 127, 0.08));
 }
-/* One rule for every provider: a completed row dims its text parts. The row itself is not
-   faded, because opacity would also wash out the focus ring, hover background, unread dot,
-   state/type cues, started badge and external link (measured: focus ring 6.1:1 -> 2.5:1). */
-.wi-row--done :is(.wi-key, .wi-title, .wi-meta, .wi-when, .wi-comments) {
+/* One rule for every provider: a completed row dims its title only. Fading the row would wash
+   out the focus ring, hover background, unread dot, state/type cues, started badge and external
+   link (measured: focus ring 6.1:1 -> 2.5:1), and the key, time and meta lines keep their
+   contrast so a finished item can still be found by key. */
+.wi-row--done .wi-title {
   opacity: 0.55;
 }
 
@@ -181,12 +182,17 @@
   border: 1px solid currentColor;
   border-radius: 50%;
   color: #6e7781;
+  /* The fixed tones are not theme-adaptive, so the mark carries its own light backing and ring:
+     the outline and the half fill then stay distinguishable on any pane background (a dark
+     Slate pane gave #0c66e4 only 2.9:1). */
+  background-color: #fff;
+  box-shadow: 0 0 0 1px #fff;
 }
 .wi-jira-state--other {
   border-style: dashed;
 }
 .wi-jira-state--in_progress {
-  background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+  background: linear-gradient(90deg, currentColor 50%, transparent 50%), #fff;
 }
 .wi-jira-state--done {
   background: currentColor;
