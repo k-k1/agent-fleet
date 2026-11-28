@@ -963,21 +963,25 @@
 /* --- merge (ADR 0061, 2026-10-25 note on #2632) ----------------------------- */
 
 .wi-dmergeinfo {
-  border: 1px solid var(--border2);
-  border-radius: 6px;
-  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
   overflow-wrap: anywhere;
 }
 .wi-dmergeinfo h4,
 .wi-dmergeinfo p {
   margin: 0;
 }
+.wi-dmergeinfo h4 {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
 .wi-dmergeinfo ul {
   margin: 0;
   padding-inline-start: 1.25em;
-}
-.wi-dmergeinfo h4 {
-  margin-bottom: 4px;
 }
 .wi-dfoot--wrap {
   flex-wrap: wrap;
